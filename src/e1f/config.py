@@ -122,7 +122,6 @@ Examples:
             exchange = data.get('exchange', '')
             print(f"{isin:<14} {name:<50} {ticker:<12} {exchange}")
         print(f"\nTotal: {len(etfs)} ETFs")
-        print(f"Config: {args.config}")
         return 0
 
     if args.command == 'add':
