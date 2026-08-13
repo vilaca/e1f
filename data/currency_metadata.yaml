@@ -1,0 +1,372 @@
+DE0005933956:
+  currency: EUR
+  symbol: EXW1:GER:EUR
+  xid: '261511'
+DE000A0D8Q07:
+  currency: EUR
+  symbol: EXSI:GER:EUR
+  xid: '1693079'
+DE000ETFL284:
+  currency: EUR
+  symbol: EL42:GER:EUR
+  xid: '19467185'
+FR0007054358:
+  currency: EUR
+  symbol: MSE:PAR:EUR
+  xid: '205707'
+FR0010261198:
+  currency: EUR
+  symbol: MEU:PAR:EUR
+  xid: '3919732'
+FR0010717116:
+  currency: LSE
+  symbol: FAR:LSE
+  xid: '524109506'
+IE0008471009:
+  currency: EUR
+  symbol: EUEA:AEX:EUR
+  xid: '102745'
+IE000QMIHY81:
+  currency: EUR
+  symbol: H41H:FRA:EUR
+  xid: '774584392'
+IE000YYE6WK5:
+  currency: USD
+  symbol: DFNS:LSE:USD
+  xid: '794599596'
+IE0031442068:
+  currency: USD
+  symbol: IDUS:LSE:USD
+  xid: '5495140'
+IE00B0M62Q58:
+  currency: USD
+  symbol: IDWR:LSE:USD
+  xid: '5495141'
+IE00B0M63516:
+  currency: USD
+  symbol: IDBZ:LSE:USD
+  xid: '5495144'
+IE00B1TXK627:
+  currency: USD
+  symbol: DH2O:LSE:USD
+  xid: '7012028'
+IE00B1XNHC34:
+  currency: GBX
+  symbol: INRG:LSE:GBX
+  xid: '8038361'
+IE00B1YZSC51:
+  currency: EUR
+  symbol: IMEU:AEX:EUR
+  xid: '8601084'
+IE00B27YCK28:
+  currency: USD
+  symbol: DLTM:LSE:USD
+  xid: '8967068'
+IE00B3F81409:
+  currency: USD
+  symbol: AGGG:LSE:USD
+  xid: '440639899'
+IE00B3F81R35:
+  currency: EUR
+  symbol: IEAC:LSE:EUR
+  xid: '17599449'
+IE00B3RBWM25:
+  currency: GBP
+  symbol: VWRL:LSE:GBP
+  xid: '46487967'
+IE00B3VSSL01:
+  currency: USD
+  symbol: XLKS:LSE:USD
+  xid: '22356280'
+IE00B3WJKG14:
+  currency: USD
+  symbol: IUIT:LSE:USD
+  xid: '93233034'
+IE00B3YCGJ38:
+  currency: USD
+  symbol: SPXS:LSE:USD
+  xid: '24497790'
+IE00B3ZW0K18:
+  currency: EUR
+  symbol: IUSE:LSE:EUR
+  xid: '26712993'
+IE00B44Z5B48:
+  currency: USD
+  symbol: ACWD:LSE:USD
+  xid: '36517792'
+IE00B4K48X80:
+  currency: EUR
+  symbol: IMAE:AEX:EUR
+  xid: '21213176'
+IE00B4L5Y983:
+  currency: USD
+  symbol: IWDA:LSE:USD
+  xid: '21061415'
+IE00B4L5YC18:
+  currency: USD
+  symbol: IEMA:LSE:USD
+  xid: '21061423'
+IE00B4WPHX27:
+  currency: USD
+  symbol: COMF:LSE:USD
+  xid: '23826137'
+IE00B4WXJJ64:
+  currency: EUR
+  symbol: EUNH:FRA:EUR
+  xid: '21347833'
+IE00B4X9L533:
+  currency: GBX
+  symbol: HMWO:LSE:GBX
+  xid: '28148551'
+IE00B52VJ196:
+  currency: EUR
+  symbol: IESE:AEX:EUR
+  xid: '34688051'
+IE00B53H0131:
+  currency: USD
+  symbol: UC14:LSE:USD
+  xid: '69727619'
+IE00B53HP851:
+  currency: GBP
+  symbol: CSUKX:SWX:GBP
+  xid: '21945387'
+IE00B53L3W79:
+  currency: EUR
+  symbol: CSSX5E:SWX:EUR
+  xid: '24186018'
+IE00B53QG562:
+  currency: EUR
+  symbol: CSEMU:SWX:EUR
+  xid: '21945379'
+IE00B53SZB19:
+  currency: USD
+  symbol: CNDX:LSE:USD
+  xid: '26390447'
+IE00B579F325:
+  currency: USD
+  symbol: SGLD:LSE:USD
+  xid: '19727456'
+IE00B5BMR087:
+  currency: USD
+  symbol: CSPX:LSE:USD
+  xid: '26390464'
+IE00B60SWW18:
+  currency: GBX
+  symbol: S600:LSE:GBX
+  xid: '76169857'
+IE00B60SWY32:
+  currency: GBX
+  symbol: MXEU:LSE:GBX
+  xid: '76169855'
+IE00B6R52259:
+  currency: USD
+  symbol: ISAC:LSE:USD
+  xid: '39134732'
+IE00B6YX5C33:
+  currency: USD
+  symbol: SPY5:LSE:USD
+  xid: '44472661'
+IE00B6YX5D40:
+  currency: EUR
+  symbol: SPYD:GER:EUR
+  xid: '38678132'
+IE00B810Q511:
+  currency: GBP
+  symbol: VUKE:LSE:GBP
+  xid: '46487964'
+IE00B8FHGS14:
+  currency: USD
+  symbol: MVOL:LSE:USD
+  xid: '52698304'
+IE00B8GKDB10:
+  currency: USD
+  symbol: VHYD:LSE:USD
+  xid: '58234822'
+IE00B945VV12:
+  currency: GBP
+  symbol: VEUR:LSE:GBP
+  xid: '58234821'
+IE00B9M6RS56:
+  currency: EUR
+  symbol: EMBE:LSE:EUR
+  xid: '59527107'
+IE00BD6FTQ80:
+  currency: USD
+  symbol: CMOD:LSE:USD
+  xid: '377694284'
+IE00BDBRDM35:
+  currency: LSE
+  symbol: 0GGH:LSE
+  xid: '440621976'
+IE00BDFL4P12:
+  currency: GBX
+  symbol: COMM:LSE:GBX
+  xid: '417879497'
+IE00BF4RFH31:
+  currency: USD
+  symbol: WSML:LSE:USD
+  xid: '461892139'
+IE00BFMXXD54:
+  currency: USD
+  symbol: VUAA:LSE:USD
+  xid: '534460756'
+IE00BFMXYP42:
+  currency: GBP
+  symbol: VUKG:LSE:GBP
+  xid: '534466115'
+IE00BFXR6159:
+  currency: GBX
+  symbol: ENCG:LSE:GBX
+  xid: '667697184'
+IE00BFY0GT14:
+  currency: EUR
+  symbol: SPPW:GER:EUR
+  xid: '519953640'
+IE00BG13YH41:
+  currency: EUR
+  symbol: IEDL:LSE:EUR
+  xid: '456651999'
+IE00BHZPJ890:
+  currency: USD
+  symbol: EEDS:LSE:USD
+  xid: '521448067'
+IE00BK1PV551:
+  currency: USD
+  symbol: XDWL:LSE:USD
+  xid: '428302846'
+IE00BK5BQT80:
+  currency: USD
+  symbol: VWRA:LSE:USD
+  xid: '544896897'
+IE00BK5BQV03:
+  currency: USD
+  symbol: VHVE:LSE:USD
+  xid: '554557969'
+IE00BK5BQX27:
+  currency: EUR
+  symbol: VWCG:GER:EUR
+  xid: '544533916'
+IE00BKM4GZ66:
+  currency: USD
+  symbol: EIMI:LSE:USD
+  xid: '75070652'
+IE00BKWQ0Q14:
+  currency: EUR
+  symbol: ERO:PAR:EUR
+  xid: '81496301'
+IE00BKX55T58:
+  currency: USD
+  symbol: VDEV:LSE:USD
+  xid: '79000171'
+IE00BM67HK77:
+  currency: EUR
+  symbol: XDWH:GER:EUR
+  xid: '95685933'
+IE00BM67HW99:
+  currency: EUR
+  symbol: XDPE:GER:EUR
+  xid: '84594042'
+IE00BMW42413:
+  currency: EUR
+  symbol: ESIT:GER:EUR
+  xid: '630035309'
+IE00BQQP9F84:
+  currency: USD
+  symbol: GDX:LSE:USD
+  xid: '87075954'
+IE00BYYXBF44:
+  currency: GBX
+  symbol: HDEM:LSE:GBX
+  xid: '97968029'
+IE00BZ1NCS44:
+  currency: GBP
+  symbol: ROLG:LSE:GBP
+  xid: '492957133'
+LU0274209237:
+  currency: EUR
+  symbol: XMEU:GER:EUR
+  xid: '6107328'
+LU0274211217:
+  currency: EUR
+  symbol: XESX:GER:EUR
+  xid: '6107313'
+LU0292104469:
+  currency: EUR
+  symbol: XS8R:GER:EUR
+  xid: '7140087'
+LU0328475792:
+  currency: EUR
+  symbol: XSX6:GER:EUR
+  xid: '14962082'
+LU0378818131:
+  currency: EUR
+  symbol: DBZB:GER:EUR
+  xid: '13376612'
+LU0380865021:
+  currency: GBX
+  symbol: XESC:LSE:GBX
+  xid: '16915255'
+LU0446734104:
+  currency: EUR
+  symbol: UIMA:AEX:EUR
+  xid: '94983749'
+LU0846194776:
+  currency: GBX
+  symbol: XD5E:LSE:GBX
+  xid: '53105565'
+LU0908500753:
+  currency: EUR
+  symbol: MEUD:PAR:EUR
+  xid: '57210679'
+LU0908508731:
+  currency: GBX
+  symbol: XG7S:LSE:GBX
+  xid: '68946267'
+LU1437015735:
+  currency: EUR
+  symbol: CEU2:PAR:EUR
+  xid: '101954529'
+LU1437018838:
+  currency: EUR
+  symbol: EPRA:PAR:EUR
+  xid: '101937628'
+LU1437024729:
+  currency: GBX
+  symbol: GAGG:LSE:GBX
+  xid: '415678235'
+LU1681038243:
+  currency: EUR
+  symbol: 6AQQ:GER:EUR
+  xid: '25687247'
+LU1681045024:
+  currency: EUR
+  symbol: ALAT:PAR:EUR
+  xid: '34285627'
+LU1681045297:
+  currency: USD
+  symbol: ALAU:LSE:USD
+  xid: '37821466'
+LU1681045370:
+  currency: EUR
+  symbol: AEEM:PAR:EUR
+  xid: '28037017'
+LU1681047236:
+  currency: EUR
+  symbol: V50A:GER:EUR
+  xid: '23164200'
+LU1681048630:
+  currency: EUR
+  symbol: GLUX:GER:EUR
+  xid: '23451280'
+LU1737652310:
+  currency: EUR
+  symbol: 10AI:FRA:EUR
+  xid: '451992817'
+LU1931974262:
+  currency: EUR
+  symbol: PR1E:GER:EUR
+  xid: '521358423'
+LU2089238039:
+  currency: EUR
+  symbol: PRAE:FRA:EUR
+  xid: '572875443'

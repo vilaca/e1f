@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "e1f"
+version = "0.1.0"
+description = "ETF universe config and price fetching into SQLite (ftgo / yfinance)."
+readme = "README.md"
+requires-python = ">=3.14"
+license = { file = "LICENSE" }
+dependencies = [
+    "pandas",
+    "PyYAML",
+    "requests",
+    "yfinance",
+    "ftgo",
+]
+
+[project.scripts]
+e1f = "e1f.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
