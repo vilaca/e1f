@@ -21,7 +21,7 @@ dependencies = [
 e1f = "e1f.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

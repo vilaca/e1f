@@ -69,5 +69,6 @@ exponential backoff otherwise.
 
 ```bash
 pip install -e '.[dev]'
-pytest
+pytest                                          # run the suite
+pytest --cov=src/e1f --cov-report=term-missing  # with coverage
 ```
