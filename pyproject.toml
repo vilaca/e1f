@@ -7,7 +7,7 @@ name = "e1f"
 version = "0.1.0"
 description = "ETF universe config and price fetching into SQLite (ftgo / yfinance)."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
