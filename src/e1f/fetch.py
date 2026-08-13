@@ -18,21 +18,22 @@ import sqlite3
 import sys
 import time
 import warnings
-from typing import Dict, Optional, Tuple
+from collections.abc import Mapping
+from typing import Any, ClassVar, cast
 
 import pandas as pd
 import requests
 import yaml
 import yfinance as yf
-from ftgo import get_xid, get_historical_prices
+from ftgo import get_historical_prices, get_xid
 
 from e1f.common import (
-    ConfigManager,
-    ETFDefinition,
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     DEFAULT_START_DATE,
+    ConfigManager,
+    ETFDefinition,
     call_with_retry,
 )
 
@@ -47,7 +48,7 @@ class DataExtractor:
         config_path: str = DEFAULT_CONFIG,
         db_path: str = DEFAULT_DB,
         start_date: str = DEFAULT_START_DATE,
-        end_date: Optional[str] = None,
+        end_date: str | None = None,
         force_refresh: bool = False,
         currency_meta_path: str = DEFAULT_CURRENCY_META
     ):
@@ -67,19 +68,19 @@ class DataExtractor:
         self._ftgo_meta = self._load_currency_meta()
 
         # Cache
-        self._data_cache = {}
+        self._data_cache: dict[str, Any] = {}
 
         self._init_database()
 
     @staticmethod
     def _summary(isin: str, name: str, source: str, df: pd.DataFrame,
-                 ticker: str = None) -> str:
+                 ticker: str | None = None) -> str:
         """One-line result: ISIN, name, ticker, count, source and date range."""
         span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
         tag = f" ({ticker})" if ticker else ""
         return f"{isin} {name}{tag} — {len(df)} days - {source} - {span}"
 
-    def _load_universe(self) -> Dict[str, ETFDefinition]:
+    def _load_universe(self) -> dict[str, ETFDefinition]:
         """Load ETF universe from config."""
         config = self.config_manager.config
         universe = {}
@@ -89,29 +90,28 @@ class DataExtractor:
             universe[isin] = ETFDefinition.from_config(isin, data)
         return universe
 
-    def _load_currency_meta(self) -> dict:
+    def _load_currency_meta(self) -> dict[str, Any]:
         if os.path.exists(self.currency_meta_path):
             with open(self.currency_meta_path) as f:
                 return yaml.safe_load(f) or {}
         return {}
 
-    def _save_currency_meta(self):
+    def _save_currency_meta(self) -> None:
         with open(self.currency_meta_path, 'w') as f:
             yaml.dump(self._ftgo_meta, f, default_flow_style=False, sort_keys=True)
 
-    # Quote currencies we might see in ftgo symbols / fund names.
-    _KNOWN_CCYS = {'USD', 'EUR', 'GBP', 'GBX', 'CHF', 'JPY', 'CAD',
-                   'AUD', 'SEK', 'NOK', 'DKK', 'HKD', 'SGD'}
+    _KNOWN_CCYS: ClassVar[set[str]] = {'USD', 'EUR', 'GBP', 'GBX', 'CHF', 'JPY', 'CAD',
+                                       'AUD', 'SEK', 'NOK', 'DKK', 'HKD', 'SGD'}
 
     @classmethod
-    def _base_currency(cls, name: str) -> Optional[str]:
+    def _base_currency(cls, name: str) -> str | None:
         """The fund's share-class currency, parsed from its name.
 
         e.g. "iShares Core S&P 500 UCITS ETF USD (Acc)" -> "USD".
         """
         for tok in reversed(re.findall(r'\b[A-Z]{3}\b', name or '')):
             if tok in cls._KNOWN_CCYS:
-                return tok
+                return str(tok)
         return None
 
     @staticmethod
@@ -119,7 +119,7 @@ class DataExtractor:
         """ftgo symbols look like "CSPX:LSE:USD"; currency is the last part."""
         return symbol.split(':')[-1] if ':' in symbol else ''
 
-    def _resolve_ftgo(self, isin: str) -> dict:
+    def _resolve_ftgo(self, isin: str) -> dict[str, str]:
         """Resolve an ISIN to a pinned ftgo security {xid, symbol, currency}.
 
         Searches ftgo by ISIN (precise). Prefers the listing quoted in the
@@ -129,7 +129,7 @@ class DataExtractor:
         Markets search ordering changes. Raises ValueError if nothing matches.
         """
         if isin in self._ftgo_meta:
-            return self._ftgo_meta[isin]
+            return cast(dict[str, str], self._ftgo_meta[isin])
 
         matches = get_xid(isin, display_mode="all")  # raises if no matches
         base = self._base_currency(matches.iloc[0].get('name', ''))
@@ -145,7 +145,7 @@ class DataExtractor:
         logger.info(f"pinned ftgo resolution {isin} -> {symbol} (xid {resolved['xid']})")
         return resolved
 
-    def _init_database(self):
+    def _init_database(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prices (
@@ -155,13 +155,9 @@ class DataExtractor:
                     PRIMARY KEY (isin, date)
                 )
             """)
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_prices_isin_date
-                ON prices (isin, date)
-            """)
             conn.commit()
 
-    def _is_cached(self, isin: str) -> Tuple[bool, Optional[pd.DataFrame]]:
+    def _is_cached(self, isin: str) -> tuple[bool, pd.DataFrame | None]:
         if self.force_refresh:
             return False, None
 
@@ -191,10 +187,10 @@ class DataExtractor:
 
             return True, df
 
-    def _save_prices(self, isin: str, df: pd.DataFrame):
+    def _save_prices(self, isin: str, df: pd.DataFrame) -> None:
         prices = df[['Close']].copy()
         prices.columns = ['close']            # flattens yfinance's MultiIndex too
-        prices.index = pd.to_datetime(prices.index).strftime('%Y-%m-%d %H:%M:%S')
+        prices.index = pd.to_datetime(prices.index).strftime('%Y-%m-%d')
         rows = [(isin, date, float(close)) for date, close in prices['close'].items()]
 
         # By default keep already-stored closes and only add new dates; --force
@@ -210,7 +206,7 @@ class DataExtractor:
             )
             conn.commit()
 
-    def _fetch_ftgo(self, isin: str, start: Optional[pd.Timestamp] = None) -> Optional[pd.DataFrame]:
+    def _fetch_ftgo(self, isin: str, start: pd.Timestamp | None = None) -> pd.DataFrame | None:
         start = start if start is not None else self.start_date
         try:
             xid = call_with_retry(
@@ -229,7 +225,7 @@ class DataExtractor:
                 df = df.rename(columns={'date': 'Date', 'close': 'Close'})
                 df['Date'] = pd.to_datetime(df['Date'])
                 df = df.set_index('Date')
-                return df[['Close']]
+                return cast(pd.DataFrame, df[['Close']])
         except ValueError as e:
             # get_xid raises this when the ISIN isn't on FT Markets; fall back
             # to yfinance rather than aborting. Other ValueErrors propagate.
@@ -245,7 +241,9 @@ class DataExtractor:
         """yfinance raises non-requests errors for rate limits; match by text."""
         return '429' in str(e) or 'rate limit' in str(e).lower()
 
-    def _fetch_yfinance(self, ticker: str, start: Optional[pd.Timestamp] = None) -> Optional[Tuple[pd.DataFrame, str]]:
+    def _fetch_yfinance(
+        self, ticker: str, start: pd.Timestamp | None = None
+    ) -> tuple[pd.DataFrame, str] | None:
         start = start if start is not None else self.start_date
         try:
             tickers_to_try = [ticker]
@@ -254,17 +252,19 @@ class DataExtractor:
                     tickers_to_try.append(ticker + suffix)
 
             for t in tickers_to_try:
-                df = call_with_retry(
-                    f"yfinance {t}",
-                    lambda: yf.download(t, start=start, end=self.end_date, progress=False),
-                    retries=2,
-                    is_retryable=self._yf_rate_limited,
-                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    df = call_with_retry(
+                        f"yfinance {t}",
+                        lambda t=t: yf.download(t, start=start, end=self.end_date, progress=False),  # type: ignore[misc]
+                        retries=2,
+                        is_retryable=self._yf_rate_limited,
+                    )
                 if df is not None and not df.empty:
                     if t != ticker:
                         logger.info(f"yfinance fallback ok: {ticker} -> {t}")
                     return df[['Close']], t
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — yfinance raises arbitrary exception types
             logger.warning(f"yfinance failed for {ticker} after retries: {e}")
         return None
 
@@ -279,8 +279,9 @@ class DataExtractor:
                 parse_dates=['date']
             )
 
-    def fetch(self, isin: Optional[str] = None) -> pd.DataFrame:
+    def fetch(self, isin: str | None = None) -> pd.DataFrame:
         """Fetch data for specific ISIN or all ETFs and persist to the DB."""
+        etfs: Mapping[str, ETFDefinition | None]
         if isin:
             etfs = {isin: self.etf_universe.get(isin)}
             if not etfs[isin]:
@@ -289,14 +290,14 @@ class DataExtractor:
             etfs = self.etf_universe
 
         data_dict = {}
-        for isin, etf in etfs.items():
+        for etf_isin, etf in etfs.items():
             if not etf:
                 continue
 
-            cached, existing = self._is_cached(isin)
+            cached, existing = self._is_cached(etf_isin)
             if cached and existing is not None and not existing.empty:
-                logger.info(self._summary(isin, etf.name, "cache", existing))
-                data_dict[isin] = existing['close']
+                logger.info(self._summary(etf_isin, etf.name, "cache", existing))
+                data_dict[etf_isin] = existing['close']
                 continue
 
             # Incremental: only pull dates after what we already have, unless
@@ -304,36 +305,39 @@ class DataExtractor:
             have_existing = existing is not None and not existing.empty
             since = None
             if have_existing and not self.force_refresh:
+                assert existing is not None
                 since = existing.index.max() + pd.Timedelta(days=1)
 
             fetched = None  # (source, label) on success
             # ftgo resolves by ISIN (a single, pinned security), so try it once.
-            df = self._fetch_ftgo(isin, since)
+            df = self._fetch_ftgo(etf_isin, since)
             if df is not None and not df.empty:
-                self._save_prices(isin, df)
-                fetched = ("ftgo", self._ftgo_meta.get(isin, {}).get('symbol'))
+                self._save_prices(etf_isin, df)
+                fetched = ("ftgo", self._ftgo_meta.get(etf_isin, {}).get('symbol'))
             else:
                 # yfinance is ticker-based; try each configured ticker.
-                for ticker in etf.tickers:
+                for i, ticker in enumerate(etf.tickers):
+                    if i > 0:
+                        time.sleep(0.5)
                     result = self._fetch_yfinance(ticker, since)
                     if result is not None:
                         df, actual_ticker = result
-                        self._save_prices(isin, df)
+                        self._save_prices(etf_isin, df)
                         fetched = ("yfinance", actual_ticker)
                         break
-                    time.sleep(0.5)
 
             if fetched:
                 source, ticker = fetched
-                full = self._stored_series(isin)
-                logger.info(self._summary(isin, etf.name, source, full, ticker))
-                data_dict[isin] = full['close']
+                full = self._stored_series(etf_isin)
+                logger.info(self._summary(etf_isin, etf.name, source, full, ticker))
+                data_dict[etf_isin] = full['close']
             elif have_existing:
+                assert existing is not None
                 # Nothing new upstream; keep what's already stored.
-                logger.info(self._summary(isin, etf.name, "cache", existing))
-                data_dict[isin] = existing['close']
+                logger.info(self._summary(etf_isin, etf.name, "cache", existing))
+                data_dict[etf_isin] = existing['close']
             else:
-                logger.warning(f"✗ {isin} {etf.name} — all sources failed")
+                logger.warning(f"✗ {etf_isin} {etf.name} — all sources failed")
 
         if not data_dict:
             raise RuntimeError("No data fetched")
@@ -341,19 +345,19 @@ class DataExtractor:
         combined = pd.DataFrame(data_dict)
         combined = combined.sort_index().ffill().dropna()
 
-        if combined.index.tz is not None:
-            combined.index = combined.index.tz_localize(None)
+        dt_index = cast(pd.DatetimeIndex, combined.index)
+        if dt_index.tz is not None:
+            combined.index = dt_index.tz_localize(None)
 
         self._data_cache = data_dict
         return combined
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
-    warnings.filterwarnings('ignore')
     # ftgo logs its own progress using the DDMMYYYY strings it requires;
     # quiet it and emit our own yyyy-mm-dd lines instead.
     logging.getLogger("ftgo").setLevel(logging.WARNING)
@@ -401,7 +405,7 @@ Examples:
             f"Fetched {len(prices.columns)} ETFs, {len(prices)} observations "
             f"({prices.index.min():%Y-%m-%d} to {prices.index.max():%Y-%m-%d})"
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
         return 1
     return 0

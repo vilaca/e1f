@@ -17,9 +17,11 @@ import os
 import sqlite3
 import sys
 
+import numpy as np
+import pandas as pd
 import yaml
 
-from e1f.common import ConfigManager, DEFAULT_CONFIG, DEFAULT_DB, DEFAULT_CURRENCY_META
+from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager
 
 
 def _db_has_prices(db_path: str) -> bool:
@@ -32,7 +34,7 @@ def _db_has_prices(db_path: str) -> bool:
         ).fetchone() is not None
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="e1f config",
         description="Build the ETF universe YAML from ISINs (via OpenFIGI)",
@@ -93,7 +95,7 @@ Examples:
     validate_parser.add_argument('--min-years', type=float, default=3.0,
                                  help='Minimum history in years (default: 3)')
     validate_parser.add_argument('--min-fill', type=float, default=0.6,
-                                 help='Minimum data fill rate 0–1 (default: 0.6)')
+                                 help='Minimum data fill rate 0-1 (default: 0.6)')
     validate_parser.add_argument('--max-vol', type=float, default=0.02,
                                  help='Ann vol below this flags as cash-like (default: 0.02)')
 
@@ -230,13 +232,10 @@ Examples:
         return 0
 
     if args.command == 'validate':
-        import numpy as np
-        import pandas as pd
-
         TRADING_YEAR = 252
 
         cm = ConfigManager(args.config)
-        config_isins = dict(cm.list())
+        config_meta = dict(cm.list())
 
         if not _db_has_prices(args.db):
             print(f"✗ No price data in {args.db} — run 'e1f fetch' first")
@@ -249,7 +248,7 @@ Examples:
             )
 
         db_isins = set(price_df['isin'].unique())
-        config_isin_set = set(config_isins.keys())
+        config_isin_set = set(config_meta.keys())
 
         # --- Config vs DB sync ---
         only_config = sorted(config_isin_set - db_isins)
@@ -278,7 +277,7 @@ Examples:
         ann_vol = wide.pct_change().std() * np.sqrt(TRADING_YEAR)
         stats = stats.merge(ann_vol.rename('ann_vol').reset_index(), on='isin', how='left')
         stats['name'] = stats['isin'].map(
-            lambda x: config_isins.get(x, {}).get('name', 'Unknown')[:35]
+            lambda x: config_meta.get(x, {}).get('name', 'Unknown')[:35]
         )
 
         # --- History breakdown ---
@@ -286,9 +285,9 @@ Examples:
         print("=== History Breakdown ===")
         tiers = [
             ('>= 10yr', stats['years'] >= 10),
-            ('5–10yr',  (stats['years'] >= 5) & (stats['years'] < 10)),
-            ('3–5yr',   (stats['years'] >= 3) & (stats['years'] < 5)),
-            ('1–3yr',   (stats['years'] >= 1) & (stats['years'] < 3)),
+            ('5-10yr',  (stats['years'] >= 5) & (stats['years'] < 10)),
+            ('3-5yr',   (stats['years'] >= 3) & (stats['years'] < 5)),
+            ('1-3yr',   (stats['years'] >= 1) & (stats['years'] < 3)),
             ('< 1yr',   stats['years'] < 1),
         ]
         for label, mask in tiers:
@@ -309,13 +308,15 @@ Examples:
         if not short.empty:
             print(f"Short history (< {args.min_years:.0f}yr):")
             for _, r in short.iterrows():
-                print(f"  {r['isin']}  {r['name']:<35}  {int(r['n_days']):>4} days  from {r['first_date'].date()}")
+                print(f"  {r['isin']}  {r['name']:<35}  "
+                      f"{int(r['n_days']):>4} days  from {r['first_date'].date()}")
                 flagged.append(r['isin'])
 
         if not sparse.empty:
             print(f"Sparse data (fill < {args.min_fill:.0%}):")
             for _, r in sparse.iterrows():
-                print(f"  {r['isin']}  {r['name']:<35}  {int(r['n_days'])}/{int(r['expected'])} days  ({r['fill_rate']:.0%})")
+                print(f"  {r['isin']}  {r['name']:<35}  "
+                      f"{int(r['n_days'])}/{int(r['expected'])} days  ({r['fill_rate']:.0%})")
                 flagged.append(r['isin'])
 
         if not cash.empty:

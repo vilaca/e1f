@@ -45,7 +45,7 @@ def write_db(path, isin_closes):
             conn.executemany(
                 'INSERT INTO prices VALUES (?, ?, ?)',
                 [(isin, d.strftime('%Y-%m-%d %H:%M:%S'), float(c))
-                 for d, c in zip(dates, closes)],
+                 for d, c in zip(dates, closes, strict=False)],
             )
 
 
@@ -124,7 +124,8 @@ def test_remove_deletes_everywhere(paths, capsys):
     assert f'{ISIN_C}: not found in any file' in out
     assert read_config_isins(paths['config']) == {ISIN_B}
     assert read_db_isins(paths['db']) == {ISIN_B}
-    assert set(yaml.safe_load(open(paths['meta']))) == {ISIN_B}
+    with open(paths['meta']) as f:
+        assert set(yaml.safe_load(f)) == {ISIN_B}
 
 
 def test_remove_without_db(paths):
@@ -151,7 +152,8 @@ def test_trim_keeps_intersection(paths, capsys):
     assert rc == 0
     assert read_config_isins(paths['config']) == {ISIN_B}
     assert read_db_isins(paths['db']) == {ISIN_B}
-    assert set(yaml.safe_load(open(paths['meta']))) == {ISIN_B}
+    with open(paths['meta']) as f:
+        assert set(yaml.safe_load(f)) == {ISIN_B}
 
 
 def test_trim_in_sync_is_noop(paths, capsys):

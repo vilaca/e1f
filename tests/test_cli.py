@@ -2,7 +2,7 @@
 
 import pytest
 
-import e1f.cli as cli
+from e1f import cli
 
 
 def test_no_args_prints_help_and_returns_1(capsys):

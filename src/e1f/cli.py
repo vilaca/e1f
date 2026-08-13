@@ -37,7 +37,7 @@ Run 'e1f <command> --help' for command-specific options.
     return parser
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
 

@@ -1,6 +1,6 @@
 """Retry/backoff helper: honors Retry-After, falls back to exponential backoff."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
 import pytest
@@ -24,7 +24,7 @@ def test_retry_after_seconds_parses_delay_seconds():
 
 
 def test_retry_after_seconds_parses_http_date():
-    future = datetime.now(timezone.utc) + timedelta(seconds=30)
+    future = datetime.now(UTC) + timedelta(seconds=30)
     value = format_datetime(future, usegmt=True)
     assert 25 < _retry_after_seconds(FakeResponse(headers={'Retry-After': value})) <= 30
 
@@ -111,7 +111,8 @@ def test_is_retryable_extends_to_non_requests_errors(monkeypatch):
             raise RuntimeError('429 Too Many Requests')
         return 'ok'
 
-    retryable = lambda e: '429' in str(e)
+    def retryable(e: Exception) -> bool:
+        return '429' in str(e)
     assert call_with_retry('test', flaky, is_retryable=retryable) == 'ok'
 
 

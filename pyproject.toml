@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 license = { file = "LICENSE" }
 dependencies = [
+    "numpy",
     "pandas",
     "PyYAML",
     "requests",
@@ -21,7 +22,29 @@ dependencies = [
 e1f = "e1f.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP", "SIM", "PLR", "BLE", "DTZ", "RUF"]
+ignore = [
+    "PLR0911",  # too-many-return-statements in config.main (subcommand dispatch)
+    "PLR0912",  # too-many-branches in config.main
+    "PLR0913",  # too-many-arguments: call_with_retry has a deliberate keyword-only API
+    "PLR0917",  # too-many-positional: DataExtractor.__init__ uses keyword args in practice
+    "PLR0915",  # too-many-statements in config.main
+    "PLR2004",  # magic-value-comparison: HTTP status codes (429, 500, 600) are self-documenting
+]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "ftgo.*"]
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
