@@ -42,7 +42,7 @@ e1f fetch IE00BM67HK77    # a single ISIN
 e1f fetch --force         # ignore the cache and re-download
 ```
 
-Defaults: config `config/etf_universe.yaml`, database `data/e1f.db`,
+Defaults: config `data/etf_universe.yaml`, database `data/e1f.db`,
 start date `2000-01-01` (earlier than any UCITS ETF, so the first fetch returns
 each ETF's full history from inception). Paths resolve against the project root,
 so the commands work from any directory. Override with `--config`, `--db`, and

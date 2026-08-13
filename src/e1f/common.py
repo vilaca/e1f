@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # package: src/e1f/common.py -> repo root), so an editable install works
 # from any cwd. The --config / --db / --currency-meta flags remain the overrides.
 _ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = str(_ROOT / "config" / "etf_universe.yaml")
+DEFAULT_CONFIG = str(_ROOT / "data" / "etf_universe.yaml")
 DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution per ISIN
 DEFAULT_START_DATE = "2000-01-01"  # earlier than any UCITS ETF; sources return from inception
