@@ -18,7 +18,6 @@ import sqlite3
 import sys
 import time
 import warnings
-from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
 import pandas as pd
@@ -34,6 +33,7 @@ from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     DEFAULT_START_DATE,
+    call_with_retry,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,12 +65,6 @@ class DataExtractor:
         # security we fetch can't drift as FT Markets search ordering changes.
         self.currency_meta_path = currency_meta_path
         self._ftgo_meta = self._load_currency_meta()
-
-        # Rate limiting
-        self._ftgo_throttled = False
-        self._ftgo_wait_until = None
-        self._yf_throttled = False
-        self._yf_wait_until = None
 
         # Cache
         self._data_cache = {}
@@ -217,21 +211,18 @@ class DataExtractor:
             conn.commit()
 
     def _fetch_ftgo(self, isin: str, start: Optional[pd.Timestamp] = None) -> Optional[pd.DataFrame]:
-        if self._ftgo_throttled:
-            if self._ftgo_wait_until and datetime.now() < self._ftgo_wait_until:
-                wait_seconds = (self._ftgo_wait_until - datetime.now()).total_seconds()
-                time.sleep(wait_seconds + 1)
-                self._ftgo_throttled = False
-            else:
-                self._ftgo_throttled = False
-
         start = start if start is not None else self.start_date
         try:
-            xid = self._resolve_ftgo(isin)['xid']
-            df = get_historical_prices(
-                xid,
-                start.strftime("%d%m%Y"),
-                self.end_date.strftime("%d%m%Y")
+            xid = call_with_retry(
+                f"ftgo resolve {isin}", lambda: self._resolve_ftgo(isin)
+            )['xid']
+            df = call_with_retry(
+                f"ftgo prices {isin}",
+                lambda: get_historical_prices(
+                    xid,
+                    start.strftime("%d%m%Y"),
+                    self.end_date.strftime("%d%m%Y")
+                ),
             )
 
             if df is not None and not df.empty:
@@ -246,31 +237,15 @@ class DataExtractor:
                 raise
             logger.info(f"ftgo has no data for {isin}, falling back")
         except requests.RequestException as e:
-            error_str = str(e)
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            if status == 429 or '429' in error_str or 'rate limit' in error_str.lower():
-                self._ftgo_throttled = True
-                wait_match = re.search(r'wait\s+(\d+)\s*(?:second|minute)', error_str, re.IGNORECASE)
-                if wait_match:
-                    value = int(wait_match.group(1))
-                    wait_seconds = value * 60 if 'minute' in wait_match.group(0).lower() else value
-                else:
-                    wait_seconds = 60
-                self._ftgo_wait_until = datetime.now() + timedelta(seconds=wait_seconds)
-                logger.warning(f"ftgo rate limited. Waiting {wait_seconds}s")
-            else:
-                logger.warning(f"ftgo request failed for {isin}: {e}")
+            logger.warning(f"ftgo request failed for {isin} after retries: {e}")
         return None
 
-    def _fetch_yfinance(self, ticker: str, start: Optional[pd.Timestamp] = None) -> Optional[Tuple[pd.DataFrame, str]]:
-        if self._yf_throttled:
-            if self._yf_wait_until and datetime.now() < self._yf_wait_until:
-                wait_seconds = (self._yf_wait_until - datetime.now()).total_seconds()
-                time.sleep(wait_seconds + 1)
-                self._yf_throttled = False
-            else:
-                self._yf_throttled = False
+    @staticmethod
+    def _yf_rate_limited(e: Exception) -> bool:
+        """yfinance raises non-requests errors for rate limits; match by text."""
+        return '429' in str(e) or 'rate limit' in str(e).lower()
 
+    def _fetch_yfinance(self, ticker: str, start: Optional[pd.Timestamp] = None) -> Optional[Tuple[pd.DataFrame, str]]:
         start = start if start is not None else self.start_date
         try:
             tickers_to_try = [ticker]
@@ -279,16 +254,18 @@ class DataExtractor:
                     tickers_to_try.append(ticker + suffix)
 
             for t in tickers_to_try:
-                df = yf.download(t, start=start, end=self.end_date, progress=False)
+                df = call_with_retry(
+                    f"yfinance {t}",
+                    lambda: yf.download(t, start=start, end=self.end_date, progress=False),
+                    retries=2,
+                    is_retryable=self._yf_rate_limited,
+                )
                 if df is not None and not df.empty:
                     if t != ticker:
                         logger.info(f"yfinance fallback ok: {ticker} -> {t}")
                     return df[['Close']], t
         except Exception as e:
-            if '429' in str(e) or 'rate limit' in str(e).lower():
-                self._yf_throttled = True
-                self._yf_wait_until = datetime.now() + timedelta(seconds=60)
-                logger.warning("yfinance rate limited. Waiting 60s")
+            logger.warning(f"yfinance failed for {ticker} after retries: {e}")
         return None
 
     def _stored_series(self, isin: str) -> pd.DataFrame:

@@ -6,15 +6,20 @@ The ``config`` command writes the universe; the ``fetch`` command reads it
 back.
 """
 
+import logging
 import os
 import re
+import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import requests
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # Resolve default inputs/outputs against the project root (two levels above this
 # package: src/e1f/common.py -> repo root), so an editable install works
@@ -24,6 +29,63 @@ DEFAULT_CONFIG = str(_ROOT / "config" / "etf_universe.yaml")
 DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution per ISIN
 DEFAULT_START_DATE = "2000-01-01"  # earlier than any UCITS ETF; sources return from inception
+
+
+def _retry_after_seconds(response) -> Optional[float]:
+    """Parse a Retry-After header (delay-seconds or HTTP-date)."""
+    if response is None:
+        return None
+    value = (response.headers.get('Retry-After') or '').strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        return max(0.0, (parsedate_to_datetime(value)
+                         - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
+def call_with_retry(
+    description: str,
+    func: Callable[[], Any],
+    *,
+    retries: int = 3,
+    base_delay: float = 2.0,
+    max_delay: float = 300.0,
+    is_retryable: Optional[Callable[[Exception], bool]] = None,
+) -> Any:
+    """Call func(), retrying transient failures with backoff.
+
+    Retryable by default: HTTP 429, HTTP 5xx, and requests connection
+    errors. `is_retryable` extends this for libraries that raise
+    non-requests exceptions (e.g. yfinance). When the server sends a
+    Retry-After header it is honored; otherwise the wait grows
+    exponentially (base_delay * 2**attempt, capped at max_delay).
+    """
+    for attempt in range(retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            response = getattr(e, 'response', None)
+            status = getattr(response, 'status_code', None)
+            retryable = (
+                status == 429
+                or (status is not None and 500 <= status < 600)
+                or (isinstance(e, requests.RequestException) and status is None)
+                or (is_retryable is not None and is_retryable(e))
+            )
+            if not retryable or attempt == retries:
+                raise
+            wait = _retry_after_seconds(response)
+            if wait is None:
+                wait = min(max_delay, base_delay * 2 ** attempt)
+            logger.info(
+                f"{description}: attempt {attempt + 1}/{retries + 1} failed ({e}); "
+                f"retrying in {wait:.0f}s"
+            )
+            time.sleep(wait)
 
 
 @dataclass
@@ -66,14 +128,18 @@ class OpenFIGIResolver:
 
         payload = [{"idType": "ID_ISIN", "idValue": isin}]
 
-        try:
-            response = self.session.post(
+        def _post():
+            r = self.session.post(
                 self.BASE_URL,
                 json=payload,
                 headers=self.headers,
                 timeout=10
             )
-            response.raise_for_status()
+            r.raise_for_status()
+            return r
+
+        try:
+            response = call_with_retry(f"OpenFIGI resolve {isin}", _post)
             data = response.json()
 
             if not data or not data[0].get('data'):

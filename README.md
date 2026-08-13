@@ -60,6 +60,11 @@ London/Xetra listings).
 The SQLite DB stores a single `prices` table (`isin`, `date`, `close`), so it
 can be read directly with any SQLite client or `pandas.read_sql`.
 
+All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
+rate limits (HTTP 429) and server errors are retried with backoff, honoring
+the server's `Retry-After` header when present and falling back to
+exponential backoff otherwise.
+
 ## Development
 
 ```bash
