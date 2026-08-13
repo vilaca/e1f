@@ -160,7 +160,7 @@ class OpenFIGIResolver:
         except requests.exceptions.RequestException as e:
             print(f"✗ API error for {isin}: {e}")
             return None
-        except (KeyError, IndexError, ValueError) as e:
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as e:
             print(f"✗ Error parsing response for {isin}: {e}")
             return None
 
