@@ -22,7 +22,7 @@ dependencies = [
 e1f = "e1f.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "import-linter"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "import-linter", "vulture"]
 
 [tool.ruff]
 src = ["src"]
