@@ -1,0 +1,25 @@
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,7 @@
+ # e1f
+
+-Build an ETF universe from ISINs and fetch historical prices into SQLite.
+-Prices come from ftgo (FT Markets) with an optional yfinance fallback (`--fallback`).
++Build a ETF universe from ISINs and fetch historical prices into SQLite.
++Prices come from ftgo (FT Markets) with a yfinance fallback.
+
+ ## Setup
+
+@@ -20,7 +20,7 @@ This installs the `e1f` command.
+
+ 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
+-2. **`e1f fetch`** — populate the SQLite price DB (ftgo, with an optional yfinance fallback via `--fallback`).
++2. **`e1f fetch`** — populate the SQLite price DB (ftgo, with a yfinance fallback).
+
+@@ -53,8 +53,7 @@ ftgo resolves securities **by ISIN** and pins the first match in
+ `data/currency_metadata.yaml`, preferring the listing quoted in the fund's own
+ share-class currency, so the fetched security can't drift as FT Markets search
+-ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
++ordering changes. When ftgo has no data for an ISIN, fetching falls back to
+ yfinance using the tickers from the config (trying `.L` and `.DE` suffixes for
+ London/Xetra listings).

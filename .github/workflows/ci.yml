@@ -25,7 +25,24 @@ jobs:
 
       # shellcheck is pre-installed on ubuntu-latest; the gate skips gracefully
       # if not available locally (install with: brew install shellcheck).
+      # actionlint is installed below in the dedicated job.
 
       # Same script CI and developers run locally — the single definition of green.
-      - name: Run checks
-        run: ./scripts/check.sh
+      - name: Run checks (excluding actions gate — handled in actionlint job)
+        run: ./scripts/check.sh lint layers shell types test
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint
+        run: |
+          curl -sL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar xz actionlint
+          sudo mv actionlint /usr/local/bin/actionlint
+
+      # shellcheck needed so actionlint can lint embedded run: blocks.
+      # Pre-installed on ubuntu-latest.
+      - name: Run actions gate
+        run: ./scripts/check.sh actions
