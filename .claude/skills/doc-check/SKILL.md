@@ -73,8 +73,7 @@ Flag anything named in prose that no longer resolves or no longer matches.
 
 ## 3. ADR conventions
 
-Read both existing ADRs (`ADR-0001`, `ADR-0002`) to learn the template, then
-check every `ADR/*.md`:
+Read all existing `ADR/*.md` files to learn the template, then check each one:
 
 - Opens with `# ADR-NNNN — Title` (H1, em-dash, no "Status:" field).
 - Has a `**Scope:**` line immediately after the title.

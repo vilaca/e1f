@@ -20,7 +20,7 @@ This installs the `e1f` command.
 The tool exposes two subcommands around a shared config/DB:
 
 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-2. **`e1f fetch`** — populate the SQLite price DB (ftgo, with an optional yfinance fallback via `--fallback`).
+2. **`e1f fetch`** — populate the SQLite price DB.
 
 ```bash
 # 1. Add ETFs by ISIN (auto-resolves name, tickers, exchange, FIGI)
