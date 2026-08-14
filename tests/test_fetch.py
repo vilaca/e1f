@@ -4,6 +4,7 @@ Network sources (ftgo / yfinance) are mocked at the module boundary.
 """
 
 import sqlite3
+from contextlib import closing
 
 import pandas as pd
 import pytest
@@ -54,7 +55,7 @@ def test_symbol_currency():
 
 def test_init_creates_prices_table(tmp_path):
     ext = make_extractor(tmp_path)
-    with sqlite3.connect(ext.db_path) as conn:
+    with closing(sqlite3.connect(ext.db_path)) as conn:
         cols = conn.execute('PRAGMA table_info(prices)').fetchall()
     assert [c[1] for c in cols] == ['isin', 'date', 'close']
 
@@ -93,8 +94,9 @@ def test_is_cached_empty_db(tmp_path):
 def test_is_cached_when_current(tmp_path):
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    with sqlite3.connect(ext.db_path) as conn:
+    with closing(sqlite3.connect(ext.db_path)) as conn:
         conn.execute('INSERT INTO prices VALUES (?, ?, ?)', (ISIN, today, 100.0))
+        conn.commit()
     cached, df = ext._is_cached(ISIN)
     assert cached is True and len(df) == 1
 
@@ -182,8 +184,9 @@ def test_fetch_yfinance_all_empty(tmp_path, monkeypatch):
 def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    with sqlite3.connect(ext.db_path) as conn:
+    with closing(sqlite3.connect(ext.db_path)) as conn:
         conn.execute('INSERT INTO prices VALUES (?, ?, ?)', (ISIN, today, 100.0))
+        conn.commit()
     monkeypatch.setattr(ext, '_fetch_ftgo',
                         lambda *a, **k: pytest.fail('should not hit network'))
     combined = ext.fetch()

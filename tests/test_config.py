@@ -1,6 +1,7 @@
 """e1f config subcommands: list/add/update/remove/trim/validate."""
 
 import sqlite3
+from contextlib import closing
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ def write_config(path, isins):
 
 def write_db(path, isin_closes):
     """isin_closes: {isin: list-of-close-prices} on recent consecutive business days."""
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         conn.execute('CREATE TABLE prices (isin TEXT, date TEXT, close REAL, '
                      'PRIMARY KEY (isin, date))')
         for isin, closes in isin_closes.items():
@@ -47,6 +48,7 @@ def write_db(path, isin_closes):
                 [(isin, d.strftime('%Y-%m-%d %H:%M:%S'), float(c))
                  for d, c in zip(dates, closes, strict=False)],
             )
+        conn.commit()
 
 
 def write_meta(path, isins):
@@ -60,7 +62,7 @@ def read_config_isins(path):
 
 
 def read_db_isins(path):
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         return {r[0] for r in conn.execute('SELECT DISTINCT isin FROM prices')}
 
 
