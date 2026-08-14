@@ -12,7 +12,7 @@
 # invocation reports all problems and names each failing gate.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 # Coverage floor. Ratchet up as coverage grows; never down without a recorded
 # reason. Current coverage is ~94%.
