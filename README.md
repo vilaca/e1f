@@ -1,11 +1,11 @@
 # e1f
 
-Build a UCITS ETF universe from ISINs and fetch historical prices into SQLite.
+Build a ETF universe from ISINs and fetch historical prices into SQLite.
 Prices come from ftgo (FT Markets) with a yfinance fallback.
 
 ## Setup
 
-Requires Python 3.14.
+Requires Python 3.11+.
 
 ```bash
 python3 -m venv .venv
@@ -43,7 +43,7 @@ e1f fetch --force         # ignore the cache and re-download
 ```
 
 Defaults: config `data/etf_universe.yaml`, database `data/e1f.db`,
-start date `2000-01-01` (earlier than any UCITS ETF, so the first fetch returns
+start date `2000-01-01` (earlier than any ETF, so the first fetch returns
 each ETF's full history from inception). Paths resolve against the project root,
 so the commands work from any directory. Override with `--config`, `--db`, and
 `--start` (see each command's `--help`).

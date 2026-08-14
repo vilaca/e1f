@@ -70,9 +70,6 @@ class DataExtractor:
         self.currency_meta_path = currency_meta_path
         self._ftgo_meta = self._load_currency_meta()
 
-        # Cache
-        self._data_cache: dict[str, Any] = {}
-
         self._init_database()
 
     @staticmethod
@@ -352,7 +349,6 @@ class DataExtractor:
         if dt_index.tz is not None:
             combined.index = dt_index.tz_localize(None)
 
-        self._data_cache = data_dict
         return combined
 
 
