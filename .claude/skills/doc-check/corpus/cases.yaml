@@ -1,0 +1,44 @@
+# doc-check regression corpus
+#
+# Each case pins a verdict the judge must reproduce when the doc-check prompt
+# or model changes. Run the corpus before committing a new version of SKILL.md
+# or switching models.
+#
+# VIOLATED cases re-introduce real past bugs caught by doc-check.
+# HOLDS (restraint) cases must NOT be flagged — they fail the corpus if the
+# judge is too eager. Both kinds are required to prevent judge drift in either
+# direction.
+#
+# To run: invoke /doc-check with the diff content from each .diff file and
+# verify the verdict matches. Record any divergence as a calibration issue.
+
+cases:
+  - name: fallback_not_opt_in
+    verdict: VIOLATED
+    section: "2 (stale claims)"
+    finding: >
+      README implies yfinance fallback is automatic when ftgo has no data,
+      but it requires the explicit --fallback flag. A user following the README
+      would not know to pass --fallback and would see no fallback behaviour.
+    diff: violated_fallback_not_opt_in.diff
+
+  - name: schema_columns_in_prose
+    verdict: VIOLATED
+    section: "1 (prose restating code shape)"
+    finding: >
+      README enumerates SQLite column names (isin, date, close) directly in
+      prose. These are frozen in src/e1f/fetch.py and tested in
+      tests/test_contracts.py. Prose that copies column names will silently
+      diverge if the schema changes.
+    diff: violated_schema_columns_in_prose.diff
+
+  - name: price_sources_summary_ok
+    verdict: HOLDS
+    section: "4 (redundancy)"
+    note: >
+      The README Price sources section summarises ADR-0002 at a high level.
+      This looks like redundancy but is intentional — a README reader needs
+      orientation without opening the ADR. The section must NOT be flagged as
+      a second source of truth. Flag only if it contradicts the ADR, not merely
+      for summarising it.
+    diff: holds_price_sources_summary.diff

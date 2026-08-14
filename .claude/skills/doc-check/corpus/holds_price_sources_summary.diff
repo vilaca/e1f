@@ -1,0 +1,23 @@
+--- a/README.md
++++ b/README.md
+@@ -49,6 +49,18 @@ so the commands work from any directory. Override with `--config`, `--db`, and
+ `--start` (see each command's `--help`).
+
++## Price sources
++
++ftgo resolves securities **by ISIN** and pins the first match in
++`data/currency_metadata.yaml`, preferring the listing quoted in the fund's own
++share-class currency, so the fetched security can't drift as FT Markets search
++ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
++yfinance using the tickers from the config (trying `.L` and `.DE` suffixes for
++London/Xetra listings).
++
++The SQLite DB stores a single `prices` table (schema in `src/e1f/fetch.py`), so it
++can be read directly with any SQLite client or `pandas.read_sql`.
++
++All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
++rate limits (HTTP 429) and server errors are retried with backoff, honoring
++the server's `Retry-After` header when present and falling back to
++exponential backoff otherwise.
++
+ ## Development
