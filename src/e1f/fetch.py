@@ -5,9 +5,10 @@ Usage:
     e1f fetch                 # fetch all ETFs in the config
     e1f fetch IE00BM67HK77    # fetch a single ISIN
     e1f fetch --force         # ignore the cache and re-download
+    e1f fetch --fallback      # fall back to yfinance when ftgo has no data
 
-Prices are sourced from ftgo (FT Markets) with a yfinance fallback, and stored
-in a SQLite DB.
+Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
+(enabled via --fallback), and stored in a SQLite DB.
 """
 
 import argparse
@@ -50,6 +51,7 @@ class DataExtractor:
         start_date: str = DEFAULT_START_DATE,
         end_date: str | None = None,
         force_refresh: bool = False,
+        fallback: bool = False,
         currency_meta_path: str = DEFAULT_CURRENCY_META
     ):
         self.config_path = config_path
@@ -57,6 +59,7 @@ class DataExtractor:
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date) if end_date else pd.Timestamp.now()
         self.force_refresh = force_refresh
+        self.fallback = fallback
 
         # Load config
         self.config_manager = ConfigManager(config_path)
@@ -314,7 +317,7 @@ class DataExtractor:
             if df is not None and not df.empty:
                 self._save_prices(etf_isin, df)
                 fetched = ("ftgo", self._ftgo_meta.get(etf_isin, {}).get('symbol'))
-            else:
+            elif self.fallback:
                 # yfinance is ticker-based; try each configured ticker.
                 for i, ticker in enumerate(etf.tickers):
                     if i > 0:
@@ -387,6 +390,8 @@ Examples:
     parser.add_argument('--db', '-d', default=DEFAULT_DB, help='Database file path')
     parser.add_argument('--start', '-s', default=DEFAULT_START_DATE, help='Start date')
     parser.add_argument('--force', '-f', action='store_true', help='Force refresh')
+    parser.add_argument('--fallback', action='store_true',
+                        help='Fall back to yfinance when ftgo has no data')
     parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                         help='Pinned ftgo resolution / currency sidecar path')
 
@@ -398,6 +403,7 @@ Examples:
             db_path=args.db,
             start_date=args.start,
             force_refresh=args.force,
+            fallback=args.fallback,
             currency_meta_path=args.currency_meta
         )
         prices = extractor.fetch(args.isin)

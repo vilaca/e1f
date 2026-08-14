@@ -192,7 +192,7 @@ def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
 
 def test_fetch_ftgo_then_yfinance_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
-    ext = make_extractor(tmp_path)
+    ext = make_extractor(tmp_path, fallback=True)
     monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: None)
     monkeypatch.setattr(ext, '_fetch_yfinance',
                         lambda ticker, start=None: (close_df([100.0, 101.0]), ticker))
@@ -200,6 +200,15 @@ def test_fetch_ftgo_then_yfinance_fallback(tmp_path, monkeypatch):
     combined = ext.fetch()
     assert list(combined[ISIN].dropna()) == [100.0, 101.0]
     assert len(ext._stored_series(ISIN)) == 2  # persisted
+
+
+def test_fetch_no_fallback_skips_yfinance(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)  # fallback=False by default
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: None)
+    monkeypatch.setattr(ext, '_fetch_yfinance',
+                        lambda *a, **k: pytest.fail('yfinance should not be called'))
+    with pytest.raises(RuntimeError, match='No data fetched'):
+        ext.fetch()
 
 
 def test_fetch_raises_when_all_sources_fail(tmp_path, monkeypatch):
