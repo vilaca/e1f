@@ -22,7 +22,7 @@ dependencies = [
 e1f = "e1f.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "import-linter"]
 
 [tool.ruff]
 src = ["src"]
@@ -45,6 +45,18 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["yfinance.*", "ftgo.*"]
 ignore_missing_imports = true
+
+[tool.importlinter]
+root_packages = ["e1f"]
+
+[[tool.importlinter.contracts]]
+name = "Module layers: cli -> config/fetch -> common"
+type = "layers"
+layers = [
+    "e1f.cli",
+    "e1f.config | e1f.fetch",
+    "e1f.common",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
