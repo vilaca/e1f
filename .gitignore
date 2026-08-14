@@ -219,3 +219,6 @@ __marimo__/
 
 # Local price database
 data/*.db
+
+# Local Claude Code settings (personal permission allowlists)
+.claude/settings.local.json
