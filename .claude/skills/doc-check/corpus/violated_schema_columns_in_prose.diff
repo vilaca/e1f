@@ -1,7 +1,0 @@
---- a/README.md
-+++ b/README.md
-@@ -60,7 +60,7 @@ London/Xetra listings).
-
--The SQLite DB stores a single `prices` table (schema in `src/e1f/fetch.py`), so it
-+The SQLite DB stores a single `prices` table (`isin`, `date`, `close`), so it
- can be read directly with any SQLite client or `pandas.read_sql`.

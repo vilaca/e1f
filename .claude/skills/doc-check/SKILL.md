@@ -115,15 +115,14 @@ rewording, and re-run `scripts/check.sh` if any source files changed.
 
 ## 8. Regression corpus (run when the prompt or model changes)
 
-`.claude/skills/doc-check/corpus/` holds cases that pin expected verdicts.
-Run before committing a new version of this skill or switching models.
+`.claude/skills/doc-check/corpus/cases.yaml` holds cases that pin expected
+verdicts. Run before committing a new version of this skill or switching models.
 
-For each case in `corpus/cases.yaml`:
-1. Read the `.diff` file — it shows the change that introduces (or intentionally
-   does not introduce) the problem.
-2. Apply the judgment: would this diff, in the context of the current repo, be
-   flagged by doc-check?
-3. Verify the verdict matches `cases.yaml` (`VIOLATED` or `HOLDS`).
+For each case:
+1. Read the `finding:` description — it describes the doc state under test.
+2. Apply the judgment: would this scenario, in the context of the current repo,
+   be flagged by doc-check?
+3. Verify the verdict matches (`VIOLATED` or `HOLDS`).
 
 A `HOLDS` mismatch (judge flags something that should pass) is a false-positive
 failure — the prompt is too eager. A `VIOLATED` mismatch (judge misses a real
