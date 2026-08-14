@@ -5,7 +5,7 @@ Usage:
     e1f config add IE00BM67HK77
     e1f config add IE00BM67HK77 IE00BDBRDM35 IE00BKM4GZ66
     e1f config list
-    e1f config update IE00BM67HK77
+    e1f config update IE00BM67HK77 IE00BDBRDM35
     e1f config trim
 
 Each ISIN is resolved via OpenFIGI (name, tickers, exchange, FIGI) and written
@@ -50,8 +50,9 @@ Examples:
   # List all ETFs in the config
   e1f config list
 
-  # Refresh an ETF's metadata from OpenFIGI
+  # Refresh one or more ETFs' metadata from OpenFIGI
   e1f config update IE00BM67HK77
+  e1f config update IE00BM67HK77 IE00BDBRDM35
 
   # Check config/DB sync, history depth, and data quality
   e1f config validate
@@ -68,7 +69,7 @@ Examples:
     subparsers.add_parser('list', help='List all ETFs')
 
     update_parser = subparsers.add_parser('update', help='Update ETF metadata')
-    update_parser.add_argument('isin', help='ISIN to update')
+    update_parser.add_argument('isins', nargs='+', help='ISINs to update')
 
     remove_parser = subparsers.add_parser(
         'remove',
@@ -136,8 +137,13 @@ Examples:
 
     if args.command == 'update':
         config = ConfigManager(args.config)
-        success = config.update(args.isin)
-        return 0 if success else 1
+        success = 0
+        for isin in args.isins:
+            if config.update(isin):
+                success += 1
+            print()
+        print(f"✓ Updated {success}/{len(args.isins)} ETFs")
+        return 0 if success == len(args.isins) else 1
 
     if args.command == 'remove':
         cm = ConfigManager(args.config)

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import requests
 import yaml
@@ -100,7 +100,7 @@ class ETFDefinition:
     figi: str = ""
 
     @classmethod
-    def from_config(cls, isin: str, data: dict[str, Any]) -> ETFDefinition:
+    def from_config(cls, isin: str, data: dict[str, Any]) -> Self:
         return cls(
             isin=isin,
             name=data.get('name', isin),
