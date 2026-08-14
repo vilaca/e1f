@@ -1,0 +1,49 @@
+# e1f
+
+ETF universe config and historical price fetching into SQLite.
+
+## Running checks
+
+```bash
+./scripts/check.sh              # all gates: lint, layers, types, test + coverage
+./scripts/check.sh lint         # single gate (lint | layers | types | test)
+uv run pytest                   # tests only, no coverage floor
+```
+
+The script is the single definition of "green". CI runs the same script.
+
+## Layout
+
+```
+src/e1f/
+  cli.py       — entry point; routes config/fetch subcommands
+  config.py    — config subcommand: OpenFIGI resolution, YAML management
+  fetch.py     — fetch subcommand: ftgo/yfinance price fetching, SQLite
+  common.py    — shared primitives: defaults, ETFDefinition, retry logic
+data/
+  etf_universe.yaml      — ETF config (ISINs, names, tickers)
+  currency_metadata.yaml — pinned ftgo resolutions (ADR-0002)
+  e1f.db                 — SQLite price DB (gitignored)
+ADR/           — decision log; one ADR per decision, no gaps in numbering
+tests/         — pytest suite; 90% coverage floor enforced
+.claude/skills/— project skills (see below)
+```
+
+## Key decisions
+
+All recorded in `ADR/`. The most load-bearing:
+
+- `ADR-0001` — ftgo is the default source; yfinance requires `--fallback`
+- `ADR-0002` — ftgo resolution is pinned in `data/currency_metadata.yaml`
+- `ADR-0003` — module layer contract: `cli → config/fetch → common`
+
+## Skills
+
+- `/doc-check` — audit README/ADRs for drift, stale claims, and dead links
+
+## Conventions
+
+- One home per fact: the *why* lives in an ADR, code shapes live in code, README describes behaviour without duplicating argparse definitions.
+- Before calling a change done: `./scripts/check.sh` must be green.
+- Coverage floor is 90%; ratchet up, never down without a recorded reason.
+- New modules must satisfy the layer contract in `ADR-0003`.

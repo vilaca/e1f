@@ -9,6 +9,7 @@ recorded migration break this test.
 import re
 import sqlite3
 import tomllib
+from contextlib import closing
 from pathlib import Path
 
 import yaml
@@ -54,7 +55,7 @@ def test_prices_schema_contract(tmp_path: Path) -> None:
         currency_meta_path=str(tmp_path / "meta.yaml"),
     )
 
-    with sqlite3.connect(str(db)) as conn:
+    with closing(sqlite3.connect(str(db))) as conn:
         # (cid, name, type, notnull, dflt_value, pk)
         cols = conn.execute("PRAGMA table_info(prices)").fetchall()
 

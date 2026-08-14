@@ -6,7 +6,7 @@
 #
 # Usage:
 #   scripts/check.sh                # run every gate
-#   scripts/check.sh lint           # run only named gate(s): lint | layers | types | test
+#   scripts/check.sh lint           # run only named gate(s): lint | layers | shell | types | test
 #
 # Deliberately NOT `set -e`: every gate runs even after one fails, so a single
 # invocation reports all problems and names each failing gate.
@@ -35,6 +35,13 @@ run_gate() {
 
 gate_lint()   { uv run ruff check; }
 gate_layers() { uv run lint-imports; }
+gate_shell()  {
+    if ! command -v shellcheck &>/dev/null; then
+        echo "shellcheck not found — skipping (install with: brew install shellcheck)"
+        return 0
+    fi
+    git ls-files '*.sh' | xargs shellcheck --severity=warning
+}
 gate_types()  { uv run mypy src; }
 gate_test() {
     uv run pytest -q \
@@ -45,16 +52,17 @@ gate_test() {
 # Default to all gates; otherwise run only those named on the command line.
 gates=("$@")
 if [ ${#gates[@]} -eq 0 ]; then
-    gates=(lint layers types test)
+    gates=(lint layers shell types test)
 fi
 
 for gate in "${gates[@]}"; do
     case "$gate" in
         lint)   run_gate lint   gate_lint ;;
         layers) run_gate layers gate_layers ;;
+        shell)  run_gate shell  gate_shell ;;
         types)  run_gate types  gate_types ;;
         test)   run_gate test   gate_test ;;
-        *) echo "unknown gate: $gate (choose from: lint layers types test)" >&2; exit 2 ;;
+        *) echo "unknown gate: $gate (choose from: lint layers shell types test)" >&2; exit 2 ;;
     esac
 done
 

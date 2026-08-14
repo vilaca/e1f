@@ -23,6 +23,9 @@ jobs:
       - name: Sync dependencies (locked)
         run: uv sync --extra dev
 
+      # shellcheck is pre-installed on ubuntu-latest; the gate skips gracefully
+      # if not available locally (install with: brew install shellcheck).
+
       # Same script CI and developers run locally — the single definition of green.
       - name: Run checks
         run: ./scripts/check.sh
