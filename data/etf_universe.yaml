@@ -1,227 +1,14 @@
 etfs:
-  IE00B4L5Y983:
-    name: ISHARES CORE MSCI WORLD
-    tickers:
-    - IWDA
-    exchange: NA
-    figi: BBG000P71QK5
-    resolved_at: '2026-08-11T00:34:06.955304'
-    source: OpenFIGI
-  IE00B5BMR087:
-    name: ISHARES CORE S&P 500
-    tickers:
-    - CSSPX
-    exchange: SW
-    figi: BBG000Q362M9
-    resolved_at: '2026-08-11T00:34:07.072684'
-    source: OpenFIGI
-  IE00BKM4GZ66:
-    name: ISHARES CORE EM IMI ACC
-    tickers:
-    - EMIM
-    exchange: LN
-    figi: BBG006B70NW2
-    resolved_at: '2026-08-11T00:34:07.201475'
-    source: OpenFIGI
-  LU1437018838:
-    name: AM FTSE EPRA NRIT GL ETF ACC
-    tickers:
-    - EPRA
-    exchange: FP
-    figi: BBG00F2XZQ87
-    resolved_at: '2026-08-11T18:59:40.714808'
-    source: OpenFIGI
-  LU1681048630:
-    name: AM GLOBAL LUXURY ETF EUR ACC
-    tickers:
-    - GLUX
-    exchange: FP
-    figi: BBG00KVGM8F7
-    resolved_at: '2026-08-11T18:59:40.929063'
-    source: OpenFIGI
-  IE00BM67HK77:
-    name: X MSCI WORLD HEALTH CARE
-    tickers:
-    - XDWH
-    exchange: GR
-    figi: BBG00C9Y1409
-    resolved_at: '2026-08-11T18:59:41.169708'
-    source: OpenFIGI
-  IE00BDBRDM35:
-    name: ISHARES GLB AGG EUR-H ACC
-    tickers:
-    - 0GGH
-    exchange: LN
-    figi: BBG00J5HL001
-    resolved_at: '2026-08-11T19:01:52.629154'
-    source: OpenFIGI
-  IE00B3VSSL01:
-    name: INVESCO US TECHNOLOGY S&P
-    tickers:
-    - XLKS
-    exchange: LN
-    figi: BBG000Q2S7F4
-    resolved_at: '2026-08-11T19:06:05.559603'
-    source: OpenFIGI
-  IE00B3YCGJ38:
-    name: INVESCO S&P 500 ACC
-    tickers:
-    - SPXS
-    exchange: LN
-    figi: BBG000QXQZL9
-    resolved_at: '2026-08-11T19:12:07.667661'
-    source: OpenFIGI
-  IE00B4K48X80:
-    name: ISHARES CORE MSCI EUROPE ACC
-    tickers:
-    - IMAE
-    exchange: NA
-    figi: BBG000P71KS0
-    resolved_at: '2026-08-11T19:13:16.082508'
-    source: OpenFIGI
-  IE00BM67HW99:
-    name: X S&P 500 1C EUR
-    tickers:
-    - XDPE
-    exchange: GR
-    figi: BBG0083WJ3N6
-    resolved_at: '2026-08-11T19:14:28.198579'
-    source: OpenFIGI
-  LU0908500753:
-    name: AMUNDI CORE STOXX EUROPE 600
-    tickers:
-    - MEUDEUR
-    exchange: XV
-    figi: BBG0059HCCJ1
-    resolved_at: '2026-08-11T19:15:28.786670'
-    source: OpenFIGI
-  IE000YYE6WK5:
-    name: VANECK DEFENSE ETF
-    tickers:
-    - DFNS
-    exchange: LN
-    figi: BBG01G0CY1X0
-    resolved_at: '2026-08-11T19:16:23.091200'
-    source: OpenFIGI
-  IE00B3WJKG14:
-    name: ISHARES S&P 500 IT SECTOR
-    tickers:
-    - IUIT
-    exchange: LN
-    figi: BBG00BDQVD28
-    resolved_at: '2026-08-11T19:18:10.128424'
-    source: OpenFIGI
-  IE00BFMXXD54:
-    name: VANG S&P500 USDA
-    tickers:
-    - VUAA
-    exchange: LN
-    figi: BBG00P4FTPJ9
-    resolved_at: '2026-08-11T23:19:24.676306'
-    source: OpenFIGI
-  IE00B6R52259:
-    name: ISHARES MSCI ACWI
-    tickers:
-    - ISAC
-    exchange: LN
-    figi: BBG00265DDD0
-    resolved_at: '2026-08-11T23:19:45.584307'
-    source: OpenFIGI
-  IE00BHZPJ890:
-    name: ISHARES MSCI USA ESG ENHANCE
-    tickers:
-    - EEDS
-    exchange: LN
-    figi: BBG00NJLSW92
-    resolved_at: '2026-08-11T23:20:06.528416'
-    source: OpenFIGI
-  IE0031442068:
-    name: ISHARES CORE S&P 500
-    tickers:
-    - IUSA
-    exchange: LN
-    figi: BBG000BMVZK4
-    resolved_at: '2026-08-11T23:20:24.158835'
-    source: OpenFIGI
-  IE00B3F81R35:
-    name: ISHARES CORE EURO CORP BOND
-    tickers:
-    - EUN5
-    exchange: GR
-    figi: BBG000C0HWG9
-    resolved_at: '2026-08-11T23:20:34.605584'
-    source: OpenFIGI
-  IE00BF4RFH31:
-    name: ISHARES MSCI WLD SMALL CAP
-    tickers:
-    - WSML
-    exchange: LN
-    figi: BBG00JSHKS97
-    resolved_at: '2026-08-11T23:20:34.733063'
-    source: OpenFIGI
-  IE00B53SZB19:
-    name: ISHARES NASDAQ 100 USD ACC
-    tickers:
-    - CSNDX
-    exchange: SW
-    figi: BBG000Q36BQ5
-    resolved_at: '2026-08-11T23:21:12.023907'
-    source: OpenFIGI
-  IE00BK1PV551:
-    name: X MSCI WORLD 1D
-    tickers:
-    - XDWL
-    exchange: GR
-    figi: BBG0083CHC16
-    resolved_at: '2026-08-11T23:21:12.136746'
-    source: OpenFIGI
-  IE00B4WXJJ64:
-    name: ISHARES CORE EURO GOVT BOND
-    tickers:
-    - SEGA
-    exchange: LN
-    figi: BBG000JTD0J0
-    resolved_at: '2026-08-11T23:21:12.524138'
-    source: OpenFIGI
-  IE00BFY0GT14:
-    name: SS SPDR MSCI WORLD UC-USD AC
-    tickers:
-    - SPPW
-    exchange: GR
-    figi: BBG00NG1CJQ6
-    resolved_at: '2026-08-11T23:21:12.640351'
-    source: OpenFIGI
   IE00BK5BQT80:
     name: VANG FTSE AW USDA
     tickers:
     - VWRA
     exchange: LN
     figi: BBG00PQQHQK0
-    resolved_at: '2026-08-11T23:21:32.136999'
-    source: OpenFIGI
-  IE00B6YX5C33:
-    name: SS SPDR S&P 500 UCIT ETF-UHG
-    tickers:
-    - SPY5
-    exchange: GR
-    figi: BBG002RR9FT2
-    resolved_at: '2026-08-11T23:21:56.642318'
-    source: OpenFIGI
-  IE00B44Z5B48:
-    name: SS SPD MS AL CO WO UC ET-USD
-    tickers:
-    - SPYY
-    exchange: GR
-    figi: BBG001NMB9J1
-    resolved_at: '2026-08-11T23:36:00.321245'
-    source: OpenFIGI
-  IE000QMIHY81:
-    name: HSBC MSCI WLD EUR HEDGED ACC
-    tickers:
-    - HWDE
-    exchange: IM
-    figi: BBG01BPXWBJ4
-    resolved_at: '2026-08-11T23:36:00.462267'
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:19.196855+00:00'
     source: OpenFIGI
   IE00B3RBWM25:
     name: VANG FTSE AW USDD
@@ -229,517 +16,85 @@ etfs:
     - VWRD
     exchange: LN
     figi: BBG0032420Z1
-    resolved_at: '2026-08-11T23:36:00.612593'
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.360227+00:00'
     source: OpenFIGI
-  IE00B8FHGS14:
-    name: ISH EDG MSCI WLD MNVL USD A
+  IE0003XJA0J9:
+    name: AMUNDI PRME ALL CTRY WLD ACC
     tickers:
-    - MVOL
-    exchange: LN
-    figi: BBG003P53ZX7
-    resolved_at: '2026-08-11T23:36:00.964971'
+    - WEBN
+    exchange: GR
+    figi: BBG01N504S06
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.223662+00:00'
     source: OpenFIGI
-  IE00B1XNHC34:
-    name: ISHAR GL CL EN TR UCI ETF-US
+  IE00B44Z5B48:
+    name: SS SPD MS AL CO WO UC ET-USD
     tickers:
-    - INRG
+    - SPYY
+    exchange: GR
+    figi: BBG001NMB9J1
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.634879+00:00'
+    source: OpenFIGI
+  IE00B3YLTY66:
+    name: SP MS ALL CO WI MKT UC ET-AC
+    tickers:
+    - SPYI
+    exchange: GR
+    figi: BBG001NMCQN7
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.496760+00:00'
+    source: OpenFIGI
+  IE00B5BMR087:
+    name: ISHARES CORE S&P 500
+    tickers:
+    - CSSPX
     exchange: SW
-    figi: BBG000PRXFM8
-    resolved_at: '2026-08-11T23:36:01.112023'
+    figi: BBG000Q362M9
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.919503+00:00'
     source: OpenFIGI
-  IE00B4X9L533:
-    name: HSBC MSCI WORLD UCITS ETF
+  IE00BFMXXD54:
+    name: VANG S&P500 USDA
     tickers:
-    - HMWD
+    - VUAA
     exchange: LN
-    figi: BBG001B1T4Y5
-    resolved_at: '2026-08-11T23:36:01.256477'
+    figi: BBG00P4FTPJ9
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:19.055739+00:00'
     source: OpenFIGI
-  IE00B6YX5D40:
-    name: SS SP US DVD ARS UCT ETF-UUD
+  IE00B53SZB19:
+    name: ISHARES NASDAQ 100 USD ACC
     tickers:
-    - SPYD
-    exchange: GR
-    figi: BBG00259MC09
-    resolved_at: '2026-08-11T23:36:01.401414'
-    source: OpenFIGI
-  LU1681045370:
-    name: AM MSCI EMS SWAP ETF EUR ACC
-    tickers:
-    - AEEM
-    exchange: FP
-    figi: BBG00KK8FWK6
-    resolved_at: '2026-08-11T23:36:01.547084'
-    source: OpenFIGI
-  IE00BQQP9F84:
-    name: VANECK GOLD MINERS UCITS ETF
-    tickers:
-    - GDX
-    exchange: LN
-    figi: BBG007QT8236
-    resolved_at: '2026-08-11T23:36:01.696644'
-    source: OpenFIGI
-  IE00B3ZW0K18:
-    name: ISHARES S&P 500 EUR-H
-    tickers:
-    - IUSE
-    exchange: LN
-    figi: BBG0016YWCW9
-    resolved_at: '2026-08-11T23:36:02.045558'
-    source: OpenFIGI
-  IE00B9M6RS56:
-    name: ISHARES JPM USD EM BND EUR-H
-    tickers:
-    - EMBE
-    exchange: LN
-    figi: BBG004T6HJS6
-    resolved_at: '2026-08-11T23:36:02.244208'
-    source: OpenFIGI
-  LU0908508731:
-    name: X GLOBAL GOV BOND 5C
-    tickers:
-    - XG7S
-    exchange: GR
-    figi: BBG0055FJQP4
-    resolved_at: '2026-08-11T23:36:02.390559'
-    source: OpenFIGI
-  IE00BYYXBF44:
-    name: INVESCO FTSE EM H DIV LW VOL
-    tickers:
-    - EMHD
-    exchange: LN
-    figi: BBG00CXL1259
-    resolved_at: '2026-08-11T23:36:02.535688'
-    source: OpenFIGI
-  LU1681038243:
-    name: AM NASDAQ-100 SP ETF EUR ACC
-    tickers:
-    - ANX
-    exchange: FP
-    figi: BBG00KK8GB85
-    resolved_at: '2026-08-11T23:40:25.584205'
-    source: OpenFIGI
-  LU0274209237:
-    name: X MSCI EUROPE 1C
-    tickers:
-    - XMEU
-    exchange: IM
-    figi: BBG000K7ZN66
-    resolved_at: '2026-08-11T23:40:26.064285'
-    source: OpenFIGI
-  IE00BK5BQX27:
-    name: VANG FTSE EUR EURA
-    tickers:
-    - VWCG
-    exchange: LN
-    figi: BBG00PQQJ4L6
-    resolved_at: '2026-08-11T23:40:26.218864'
-    source: OpenFIGI
-  LU1437015735:
-    name: AM CORE MSCI EUROPE ETF ACC
-    tickers:
-    - CEU2
-    exchange: FP
-    figi: BBG00F33RM17
-    resolved_at: '2026-08-11T23:40:26.367446'
-    source: OpenFIGI
-  IE00BKWQ0Q14:
-    name: SS SPDR MSCI EUROP UCITS ETF
-    tickers:
-    - SPYE
-    exchange: GR
-    figi: BBG000D86FJ7
-    resolved_at: '2026-08-11T23:40:26.521761'
-    source: OpenFIGI
-  LU2089238039:
-    name: AMUNDI PRIME EUROPE UCITS C
-    tickers:
-    - PRAE
-    exchange: FP
-    figi: BBG00R4YZPC4
-    resolved_at: '2026-08-11T23:40:26.672667'
-    source: OpenFIGI
-  IE00B945VV12:
-    name: VANG FTSE EUR EURD
-    tickers:
-    - VEUR
-    exchange: LN
-    figi: BBG004LT5543
-    resolved_at: '2026-08-11T23:40:26.826809'
-    source: OpenFIGI
-  IE00B1YZSC51:
-    name: ISHARES CORE MSCI EUROPE
-    tickers:
-    - IMEU
+    - CSNDX
     exchange: SW
-    figi: BBG000PRXSY7
-    resolved_at: '2026-08-11T23:40:27.036017'
+    figi: BBG000Q36BQ5
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:18.780113+00:00'
     source: OpenFIGI
-  IE00B60SWW18:
-    name: INVESCO STOXX EUROPE 600
+  LU1829221024:
+    name: AM CR NASDAQ-100 SWP ETF ACC
     tickers:
-    - SDJ600
-    exchange: GR
-    figi: BBG000LMLJN7
-    resolved_at: '2026-08-11T23:40:27.188270'
-    source: OpenFIGI
-  LU0328475792:
-    name: X STOXX EUROPE 600 1C
-    tickers:
-    - XSX6
-    exchange: GR
-    figi: BBG000D83LS7
-    resolved_at: '2026-08-11T23:40:27.340239'
-    source: OpenFIGI
-  LU0446734104:
-    name: UBS ETF MSCI EUROPE
-    tickers:
-    - EUREUA
-    exchange: SW
-    figi: BBG000PM52K1
-    resolved_at: '2026-08-11T23:40:27.560487'
-    source: OpenFIGI
-  FR0010261198:
-    name: AM MSCI EUROPE UCITS ETF ACC
-    tickers:
-    - LYY5
-    exchange: GR
-    figi: BBG000DSYCG2
-    resolved_at: '2026-08-11T23:40:27.716933'
-    source: OpenFIGI
-  IE00B60SWY32:
-    name: INVESCO MSCI EUROPE
-    tickers:
-    - SMSEU
-    exchange: EO
-    figi: BBG000FZCFZ0
-    resolved_at: '2026-08-11T23:40:27.875061'
-    source: OpenFIGI
-  LU1737652310:
-    name: AM CORE MSCI EUROPE ETF DIST
-    tickers:
-    - 10AI
-    exchange: GR
-    figi: BBG00JQ2RXK1
-    resolved_at: '2026-08-11T23:40:28.084070'
-    source: OpenFIGI
-  LU1931974262:
-    name: AMUNDI PRI EUR UCITS ETF DR
-    tickers:
-    - PR1E
-    exchange: GR
-    figi: BBG00N2PZ0G5
-    resolved_at: '2026-08-11T23:40:28.235596'
-    source: OpenFIGI
-  IE0008471009:
-    name: ISHARES CORE EURO STOXX 50
-    tickers:
-    - EUN2
-    exchange: GR
-    figi: BBG000BT2G41
-    resolved_at: '2026-08-11T23:40:28.390327'
-    source: OpenFIGI
-  IE00B53L3W79:
-    name: ISHARES CORE EURO STOXX 50
-    tickers:
-    - CSSX5E
-    exchange: SW
-    figi: BBG000Q365X0
-    resolved_at: '2026-08-11T23:40:28.642289'
-    source: OpenFIGI
-  IE00BMW42413:
-    name: ISHARES EUROPE IT EUR ACC
-    tickers:
-    - ESIT
-    exchange: GR
-    figi: BBG00Y6CKGT3
-    resolved_at: '2026-08-11T23:40:28.796108'
-    source: OpenFIGI
-  IE00BG13YH41:
-    name: ISH EDGE MSCI EURP VAL EUR-D
-    tickers:
-    - IEDL
-    exchange: LN
-    figi: BBG00JZ9X4R6
-    resolved_at: '2026-08-11T23:40:59.311445'
-    source: OpenFIGI
-  IE00B52VJ196:
-    name: ISHARES MSCI EUROPE SRI
-    tickers:
-    - IESG
-    exchange: LN
-    figi: BBG001K5X1K2
-    resolved_at: '2026-08-11T23:40:59.458328'
-    source: OpenFIGI
-  LU0292104469:
-    name: X MSCI EU IT SCR 1C
-    tickers:
-    - XS8R
-    exchange: EO
-    figi: BBG000QQ8S03
-    resolved_at: '2026-08-11T23:42:27.378467'
-    source: OpenFIGI
-  IE00B3F81409:
-    name: ISHARES CORE GLB AGG BOND
-    tickers:
-    - SAGG
-    exchange: LN
-    figi: BBG000C0QP29
-    resolved_at: '2026-08-11T23:42:27.521429'
-    source: OpenFIGI
-  LU0378818131:
-    name: X GLOBAL GOV BOND 1C EUR
-    tickers:
-    - DBZB
-    exchange: GR
-    figi: BBG000JCV6X8
-    resolved_at: '2026-08-11T23:42:27.681924'
-    source: OpenFIGI
-  LU1437024729:
-    name: AM CR GLB AGRGTE BD ETF ACC
-    tickers:
-    - GAGG
+    - UST
     exchange: FP
-    figi: BBG00F342D58
-    resolved_at: '2026-08-11T23:42:27.837992'
-    source: OpenFIGI
-  FR0010717116:
-    name: AMUNDI MSCI ERP VALUE FCTR
-    tickers:
-    - CV9
-    exchange: T2
-    figi: BBG00KDS5Z33
-    resolved_at: '2026-08-11T23:42:27.988738'
-    source: OpenFIGI
-  DE000ETFL284:
-    name: DEKA MSCI EUROPE UCITS ETF
-    tickers:
-    - ETFEUAC
-    exchange: GR
-    figi: BBG000MHFXT7
-    resolved_at: '2026-08-11T23:42:28.142136'
-    source: OpenFIGI
-  IE00B4WPHX27:
-    name: L&G LONG DATED ALL COMMOD
-    tickers:
-    - COMF
-    exchange: LN
-    figi: BBG000PP9KZ4
-    resolved_at: '2026-08-11T23:42:28.296655'
-    source: OpenFIGI
-  IE00B1TXK627:
-    name: ISHARES GLOBAL WATER
-    tickers:
-    - IH2O
-    exchange: SW
-    figi: BBG000F1VFJ2
-    resolved_at: '2026-08-11T23:42:28.451692'
-    source: OpenFIGI
-  IE00B810Q511:
-    name: VANG FTSE100 GBPD
-    tickers:
-    - VUKE
-    exchange: LN
-    figi: BBG003247406
-    resolved_at: '2026-08-11T23:42:28.598827'
-    source: OpenFIGI
-  IE00B53HP851:
-    name: ISHARES CORE FTSE 100 ACC
-    tickers:
-    - CSUKX
-    exchange: SW
-    figi: BBG000Q36454
-    resolved_at: '2026-08-11T23:42:28.756988'
-    source: OpenFIGI
-  IE00BFMXYP42:
-    name: VANG FTSE100 GBPA
-    tickers:
-    - VUKG
-    exchange: LN
-    figi: BBG00P4FVXD5
-    resolved_at: '2026-08-11T23:42:28.913147'
-    source: OpenFIGI
-  IE00B27YCK28:
-    name: ISHARES MSCI EM LATAM
-    tickers:
-    - LTAM
-    exchange: NA
-    figi: BBG000PP4Q59
-    resolved_at: '2026-08-11T23:42:29.069723'
-    source: OpenFIGI
-  LU1681045024:
-    name: AMUNDI MSCI EM LATIN AME ETF
-    tickers:
-    - ALAT
-    exchange: FP
-    figi: BBG00KDJ1QP3
-    resolved_at: '2026-08-11T23:42:29.230525'
-    source: OpenFIGI
-  LU1681045297:
-    name: AMUNDI MSCI EM LATIN AME ETF
-    tickers:
-    - ALAU
-    exchange: FP
-    figi: BBG00KDJ1QF4
-    resolved_at: '2026-08-11T23:42:29.388517'
-    source: OpenFIGI
-  IE00BD6FTQ80:
-    name: INVESCO BLOOMBERG COMMODITY
-    tickers:
-    - CMOD
-    exchange: LN
-    figi: BBG00FM4YYQ3
-    resolved_at: '2026-08-11T23:42:29.543151'
-    source: OpenFIGI
-  IE00BDFL4P12:
-    name: ISH DIVERS COMMOD SWAP ETF
-    tickers:
-    - ICOM
-    exchange: LN
-    figi: BBG00H1LS1Z3
-    resolved_at: '2026-08-11T23:42:29.697466'
-    source: OpenFIGI
-  IE00BZ1NCS44:
-    name: ISHARES BLOOMBERG ENHANCED R
-    tickers:
-    - ROLL
-    exchange: LN
-    figi: BBG00LQ5Z9M1
-    resolved_at: '2026-08-11T23:42:29.854208'
-    source: OpenFIGI
-  IE00BFXR6159:
-    name: L&G ENHANCED COMM UCITS ETF
-    tickers:
-    - ENCO
-    exchange: LN
-    figi: BBG011LY88Y5
-    resolved_at: '2026-08-11T23:42:30.006056'
-    source: OpenFIGI
-  IE00B53H0131:
-    name: UBS ETF CMCI COMPOS. H. CHF
-    tickers:
-    - CCUSAS
-    exchange: SW
-    figi: BBG001961Z78
-    resolved_at: '2026-08-11T23:42:30.162148'
-    source: OpenFIGI
-  IE00B579F325:
-    name: INVESCO PHYSICAL GOLD ETC
-    tickers:
-    - SGLD
-    exchange: LN
-    figi: BBG000MGWBD5
-    resolved_at: '2026-08-11T23:42:30.345839'
-    source: OpenFIGI
-  DE0005933956:
-    name: ISHARES CORE EURO STOXX50 DE
-    tickers:
-    - SX5EEX
-    exchange: GR
-    figi: BBG000F227M6
-    resolved_at: '2026-08-11T23:43:46.616227'
-    source: OpenFIGI
-  LU0380865021:
-    name: X EURO STOXX 50 1C
-    tickers:
-    - XESC
-    exchange: IM
-    figi: BBG000NMB823
-    resolved_at: '2026-08-11T23:43:46.757817'
-    source: OpenFIGI
-  IE00B53QG562:
-    name: ISHARES CORE MSCI EMU EUR A
-    tickers:
-    - CSEMU
-    exchange: IM
-    figi: BBG000CKQVX8
-    resolved_at: '2026-08-11T23:43:46.896158'
-    source: OpenFIGI
-  LU0274211217:
-    name: X EURO STOXX 50 1D
-    tickers:
-    - XESX
-    exchange: IM
-    figi: BBG000K842F4
-    resolved_at: '2026-08-11T23:43:47.021060'
-    source: OpenFIGI
-  FR0007054358:
-    name: AMUNDI EUROSTOXX 50
-    tickers:
-    - LYSX
-    exchange: GR
-    figi: BBG000CYCT13
-    resolved_at: '2026-08-11T23:43:47.147976'
-    source: OpenFIGI
-  LU1681047236:
-    name: AM CR EUR STX 50 ETF EUR ACC
-    tickers:
-    - C50
-    exchange: FP
-    figi: BBG00KVHG8F2
-    resolved_at: '2026-08-11T23:43:47.282169'
-    source: OpenFIGI
-  DE000A0D8Q07:
-    name: ISHR EUROSTOXX UCITS ETF DE
-    tickers:
-    - SXXEEX
-    exchange: GR
-    figi: BBG000D8L3W2
-    resolved_at: '2026-08-11T23:43:47.640000'
-    source: OpenFIGI
-  LU0846194776:
-    name: X MSCI EMU 1D
-    tickers:
-    - XD5E
-    exchange: GR
-    figi: BBG003N95066
-    resolved_at: '2026-08-11T23:43:47.780063'
-    source: OpenFIGI
-  IE00B8GKDB10:
-    name: VANG FTSE HDY USDD
-    tickers:
-    - VHYD
-    exchange: LN
-    figi: BBG004LTCND6
-    resolved_at: '2026-08-11T23:43:47.925389'
-    source: OpenFIGI
-  IE00BKX55T58:
-    name: VANG FTSE DW USDD
-    tickers:
-    - VDEV
-    exchange: LN
-    figi: BBG0077NQ383
-    resolved_at: '2026-08-11T23:43:48.069161'
-    source: OpenFIGI
-  IE00BK5BQV03:
-    name: VANG FTSE DW USDA
-    tickers:
-    - VHVE
-    exchange: LN
-    figi: BBG00QB6WFB5
-    resolved_at: '2026-08-11T23:43:48.211362'
-    source: OpenFIGI
-  IE00B0M62Q58:
-    name: ISHARES MSCI WORLD
-    tickers:
-    - IWRDN
-    exchange: MM
-    figi: BBG000C7T7S3
-    resolved_at: '2026-08-11T23:43:48.344322'
-    source: OpenFIGI
-  IE00B0M63516:
-    name: ISHARES MSCI BRAZIL
-    tickers:
-    - IBZL
-    exchange: IM
-    figi: BBG000BSPZ37
-    resolved_at: '2026-08-11T23:43:48.481436'
-    source: OpenFIGI
-  IE00B4L5YC18:
-    name: ISHARES MSCI EM ACC
-    tickers:
-    - IEMA
-    exchange: NA
-    figi: BBG000P72X74
-    resolved_at: '2026-08-11T23:43:48.623365'
+    figi: BBG00N24TG10
+    marketSector: Equity
+    securityType: ETP
+    securityType2: Mutual Fund
+    resolved_at: '2026-08-14T00:06:19.333391+00:00'
     source: OpenFIGI
