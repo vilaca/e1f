@@ -1,0 +1,28 @@
+name: Vulnerability scan (advisory)
+
+# Advisory: a red run means triage, not a broken build. Not referenced in CI
+# so it never blocks a PR. Kept off scripts/check.sh for the same reason —
+# its result is time-dependent (a new CVE flips it red with no code change),
+# which would break the "green is deterministic" invariant.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies (locked)
+        run: uv sync --extra dev
+
+      - name: pip-audit
+        run: uvx pip-audit
