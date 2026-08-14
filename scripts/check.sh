@@ -6,7 +6,7 @@
 #
 # Usage:
 #   scripts/check.sh                # run every gate
-#   scripts/check.sh lint           # run only named gate(s): lint | layers | shell | actions | types | test
+#   scripts/check.sh lint           # run only named gate(s): lint | layers | shell | actions | types | dead | test
 #
 # Deliberately NOT `set -e`: every gate runs even after one fails, so a single
 # invocation reports all problems and names each failing gate.
@@ -50,6 +50,7 @@ gate_actions() {
     actionlint
 }
 gate_types()  { uv run mypy src; }
+gate_dead()   { uv run vulture src/e1f --min-confidence 80; }
 gate_test() {
     uv run pytest -q \
         --cov=e1f --cov-report=term-missing \
@@ -59,7 +60,7 @@ gate_test() {
 # Default to all gates; otherwise run only those named on the command line.
 gates=("$@")
 if [ ${#gates[@]} -eq 0 ]; then
-    gates=(lint layers shell actions types test)
+    gates=(lint layers shell actions types dead test)
 fi
 
 for gate in "${gates[@]}"; do
@@ -69,8 +70,9 @@ for gate in "${gates[@]}"; do
         shell)   run_gate shell   gate_shell ;;
         actions) run_gate actions gate_actions ;;
         types)   run_gate types   gate_types ;;
+        dead)    run_gate dead    gate_dead ;;
         test)    run_gate test    gate_test ;;
-        *) echo "unknown gate: $gate (choose from: lint layers shell actions types test)" >&2; exit 2 ;;
+        *) echo "unknown gate: $gate (choose from: lint layers shell actions types dead test)" >&2; exit 2 ;;
     esac
 done
 
