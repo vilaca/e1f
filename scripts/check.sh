@@ -5,8 +5,8 @@
 # in sync.
 #
 # Usage:
-#   scripts/check.sh            # run every gate
-#   scripts/check.sh lint       # run only named gate(s): lint | types | test
+#   scripts/check.sh                # run every gate
+#   scripts/check.sh lint           # run only named gate(s): lint | layers | types | test
 #
 # Deliberately NOT `set -e`: every gate runs even after one fails, so a single
 # invocation reports all problems and names each failing gate.
@@ -33,8 +33,9 @@ run_gate() {
     echo
 }
 
-gate_lint() { uv run ruff check; }
-gate_types() { uv run mypy src; }
+gate_lint()   { uv run ruff check; }
+gate_layers() { uv run lint-imports; }
+gate_types()  { uv run mypy src; }
 gate_test() {
     uv run pytest -q \
         --cov=e1f --cov-report=term-missing \
@@ -44,15 +45,16 @@ gate_test() {
 # Default to all gates; otherwise run only those named on the command line.
 gates=("$@")
 if [ ${#gates[@]} -eq 0 ]; then
-    gates=(lint types test)
+    gates=(lint layers types test)
 fi
 
 for gate in "${gates[@]}"; do
     case "$gate" in
-        lint)  run_gate lint gate_lint ;;
-        types) run_gate types gate_types ;;
-        test)  run_gate test gate_test ;;
-        *) echo "unknown gate: $gate (choose from: lint types test)" >&2; exit 2 ;;
+        lint)   run_gate lint   gate_lint ;;
+        layers) run_gate layers gate_layers ;;
+        types)  run_gate types  gate_types ;;
+        test)   run_gate test   gate_test ;;
+        *) echo "unknown gate: $gate (choose from: lint layers types test)" >&2; exit 2 ;;
     esac
 done
 
