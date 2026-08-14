@@ -1,7 +1,7 @@
 # e1f
 
-Build a ETF universe from ISINs and fetch historical prices into SQLite.
-Prices come from ftgo (FT Markets) with a yfinance fallback.
+Build an ETF universe from ISINs and fetch historical prices into SQLite.
+Prices come from ftgo (FT Markets) with an optional yfinance fallback (`--fallback`).
 
 ## Setup
 
@@ -20,7 +20,7 @@ This installs the `e1f` command.
 The tool exposes two subcommands around a shared config/DB:
 
 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-2. **`e1f fetch`** — populate the SQLite price DB (ftgo, with a yfinance fallback).
+2. **`e1f fetch`** — populate the SQLite price DB (ftgo, with an optional yfinance fallback via `--fallback`).
 
 ```bash
 # 1. Add ETFs by ISIN (auto-resolves name, tickers, exchange, FIGI)
@@ -53,11 +53,11 @@ so the commands work from any directory. Override with `--config`, `--db`, and
 ftgo resolves securities **by ISIN** and pins the first match in
 `data/currency_metadata.yaml`, preferring the listing quoted in the fund's own
 share-class currency, so the fetched security can't drift as FT Markets search
-ordering changes. When ftgo has no data for an ISIN, fetching falls back to
+ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
 yfinance using the tickers from the config (trying `.L` and `.DE` suffixes for
 London/Xetra listings).
 
-The SQLite DB stores a single `prices` table (`isin`, `date`, `close`), so it
+The SQLite DB stores a single `prices` table (schema in `src/e1f/fetch.py`), so it
 can be read directly with any SQLite client or `pandas.read_sql`.
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
@@ -68,7 +68,7 @@ exponential backoff otherwise.
 ## Development
 
 ```bash
-pip install -e '.[dev]'
-pytest                                          # run the suite
-pytest --cov=src/e1f --cov-report=term-missing  # with coverage
+uv sync --extra dev
+./scripts/check.sh          # full suite: lint, layers, types, tests + coverage
+uv run pytest               # tests only
 ```
