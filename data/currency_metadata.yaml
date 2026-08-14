@@ -22,6 +22,10 @@ FR0010717116:
   currency: LSE
   symbol: FAR:LSE
   xid: '524109506'
+IE0003XJA0J9:
+  currency: MUN
+  symbol: WEBN:MUN
+  xid: '894306203'
 IE0008471009:
   currency: EUR
   symbol: EUEA:AEX:EUR
@@ -86,6 +90,10 @@ IE00B3YCGJ38:
   currency: USD
   symbol: SPXS:LSE:USD
   xid: '24497790'
+IE00B3YLTY66:
+  currency: EUR
+  symbol: SPYI:GER:EUR
+  xid: '34107101'
 IE00B3ZW0K18:
   currency: EUR
   symbol: IUSE:LSE:EUR
@@ -362,6 +370,10 @@ LU1737652310:
   currency: EUR
   symbol: 10AI:FRA:EUR
   xid: '451992817'
+LU1829221024:
+  currency: EUR
+  symbol: UST:PAR:EUR
+  xid: '278183'
 LU1931974262:
   currency: EUR
   symbol: PR1E:GER:EUR
