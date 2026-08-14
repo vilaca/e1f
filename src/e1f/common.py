@@ -30,7 +30,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = str(_ROOT / "data" / "etf_universe.yaml")
 DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution
-DEFAULT_START_DATE = "2000-01-01"  # earlier than any UCITS ETF; fetch returns from inception
+DEFAULT_START_DATE = "2000-01-01"  # earlier than any ETF inception; fetch returns from inception
 
 
 def _retry_after_seconds(response: requests.Response | None) -> float | None:

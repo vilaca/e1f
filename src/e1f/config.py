@@ -16,6 +16,7 @@ import argparse
 import os
 import sqlite3
 import sys
+from contextlib import closing
 
 import numpy as np
 import pandas as pd
@@ -28,7 +29,7 @@ def _db_has_prices(db_path: str) -> bool:
     """True when the SQLite DB exists and contains the prices table."""
     if not os.path.exists(db_path):
         return False
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         return conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
         ).fetchone() is not None
@@ -168,8 +169,9 @@ Examples:
                 print(f"{isin}: removed from currency metadata")
 
             if _db_has_prices(args.db):
-                with sqlite3.connect(args.db) as conn:
+                with closing(sqlite3.connect(args.db)) as conn:
                     n = conn.execute("DELETE FROM prices WHERE isin = ?", (isin,)).rowcount
+                    conn.commit()
                 if n:
                     removed_any = True
                     print(f"{isin}: removed {n} rows from DB")
@@ -193,7 +195,7 @@ Examples:
 
         db_isins = set()
         if _db_has_prices(args.db):
-            with sqlite3.connect(args.db) as conn:
+            with closing(sqlite3.connect(args.db)) as conn:
                 db_isins = {row[0] for row in conn.execute("SELECT DISTINCT isin FROM prices")}
 
         try:
@@ -223,9 +225,10 @@ Examples:
 
         if to_remove_db:
             print(f"Removing from DB:                {', '.join(to_remove_db)}")
-            with sqlite3.connect(args.db) as conn:
+            with closing(sqlite3.connect(args.db)) as conn:
                 conn.executemany("DELETE FROM prices WHERE isin = ?",
                                  [(isin,) for isin in to_remove_db])
+                conn.commit()
 
         if to_remove_curr:
             print(f"Removing from currency metadata: {', '.join(to_remove_curr)}")
@@ -246,7 +249,7 @@ Examples:
             print(f"✗ No price data in {args.db} — run 'e1f fetch' first")
             return 1
 
-        with sqlite3.connect(args.db) as conn:
+        with closing(sqlite3.connect(args.db)) as conn:
             price_df = pd.read_sql(
                 'SELECT isin, date, close FROM prices ORDER BY isin, date',
                 conn, parse_dates=['date'],

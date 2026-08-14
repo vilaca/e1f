@@ -20,6 +20,7 @@ import sys
 import time
 import warnings
 from collections.abc import Mapping
+from contextlib import closing
 from typing import Any, ClassVar, cast
 
 import pandas as pd
@@ -146,7 +147,7 @@ class DataExtractor:
         return resolved
 
     def _init_database(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prices (
                     isin TEXT,
@@ -161,7 +162,7 @@ class DataExtractor:
         if self.force_refresh:
             return False, None
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM prices WHERE isin = ?", (isin,))
             count = cursor.fetchone()[0]
@@ -198,7 +199,7 @@ class DataExtractor:
         on_conflict = (
             "DO UPDATE SET close = excluded.close" if self.force_refresh else "DO NOTHING"
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.executemany(
                 "INSERT INTO prices (isin, date, close) VALUES (?, ?, ?) "
                 f"ON CONFLICT(isin, date) {on_conflict}",
@@ -270,7 +271,7 @@ class DataExtractor:
 
     def _stored_series(self, isin: str) -> pd.DataFrame:
         """Full stored close series for an ISIN (date-indexed, 'close' column)."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             return pd.read_sql_query(
                 "SELECT date, close FROM prices WHERE isin = ? ORDER BY date",
                 conn,
