@@ -4,7 +4,7 @@
 
 ## Context
 
-Two sources can provide historical UCITS ETF prices: **ftgo** (FT Markets API,
+Two sources can provide historical ETF prices: **ftgo** (FT Markets API,
 ISIN-based, high-quality European listings) and **yfinance** (Yahoo Finance,
 ticker-based, broad but noisier). The question is how to expose both without
 making the fetch behaviour unpredictable.
