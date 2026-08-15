@@ -21,7 +21,7 @@ The tool exposes four subcommands around a shared config/DB:
 
 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
 2. **`e1f fetch`** — populate the SQLite price DB.
-3. **`e1f transactions`** — ingest ETF trades from broker CSV and list stored trades.
+3. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 4. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 
 ```bash
@@ -45,7 +45,9 @@ e1f fetch --force         # ignore the cache and re-download
 
 # 3. Ingest broker transactions into the SQLite DB
 e1f transactions trade-republic ~/Downloads/transactions.csv
+e1f transactions tr ~/Downloads/transactions.csv
 e1f transactions trade-republic transactions.csv --db data/e1f.db
+e1f transactions xtb ~/Downloads/EUR_38472916_2006-01-01_2026-08-15.xlsx
 e1f transactions list
 e1f portfolio
 ```
@@ -70,13 +72,15 @@ The SQLite DB holds a `prices` table (schema in `src/e1f/fetch.py`) and a
 `transactions` table (schema in `src/e1f/transactions.py`); both can be read
 directly with any SQLite client or `pandas.read_sql`.
 
-Broker CSV ingest (v1: Trade Republic) stores **ETF buy/sell rows only** in
-`transactions`; cash, dividends, and non-ETF trades are skipped. Ingest does not
-modify `etf_universe.yaml`. After ingest it lists ETF ISINs from the file that
-are not yet in the config, with a ready-to-run `e1f config add …` line.
-Re-ingesting the same file is idempotent (duplicate `(broker, transaction_id)`
-rows are skipped). Use `e1f transactions list` to view stored trades. See
-`ADR/ADR-0004_broker_transaction_import.md`.
+Broker ingest stores **ETF buy/sell rows only** in `transactions` (Trade Republic
+CSV via `e1f transactions trade-republic` or `tr`; XTB Excel Cash Operations via
+`e1f transactions xtb` — see `ADR/ADR-0004_broker_transaction_import.md` and
+`ADR/ADR-0006_xtb_cash_operations_excel_import.md`). Cash, dividends, and non-ETF
+trades are skipped. Ingest does not modify `etf_universe.yaml`. After ingest it
+lists ETF ISINs from the file that are not yet in the config, with a ready-to-run
+`e1f config add …` line (XTB also reports unmapped tickers). Re-ingesting the
+same file is idempotent (duplicate `(broker, transaction_id)` rows are skipped).
+Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
 (output in `src/e1f/portfolio.py`).

@@ -32,6 +32,19 @@ DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution
 DEFAULT_START_DATE = "2000-01-01"  # earlier than any ETF inception; fetch returns from inception
 
+# OpenFIGI exchCode → XTB ticker suffix (e.g. GR → WEBN.DE). Used when indexing
+# multi-listing ISINs for broker ingest and when building the XTB ticker map.
+XTB_EXCHANGE_SUFFIX = {
+    "LN": "UK",
+    "L": "UK",
+    "GR": "DE",
+    "NA": "DE",
+    "XETRA": "DE",
+    "FR": "FR",
+    "PA": "FR",
+    "US": "US",
+}
+
 
 def _retry_after_seconds(response: requests.Response | None) -> float | None:
     """Parse a Retry-After header (delay-seconds or HTTP-date)."""
@@ -144,17 +157,38 @@ class OpenFIGIResolver:
             response = call_with_retry(f"OpenFIGI resolve {isin}", _post)
             data: list[dict[str, Any]] = response.json()
 
-            if not data or not data[0].get('data'):
+            listings_raw: list[dict[str, Any]] = data[0].get('data') or []
+            if not listings_raw:
                 print(f"✗ No data found for ISIN: {isin}")
                 return None
 
-            result: dict[str, Any] = data[0]['data'][0]
+            result: dict[str, Any] = listings_raw[0]
+            listings: list[dict[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            tickers: list[str] = []
+            for entry in listings_raw:
+                ticker = str(entry.get('ticker') or '').strip().upper()
+                exchange = str(entry.get('exchCode') or '').strip().upper()
+                if not ticker or exchange not in XTB_EXCHANGE_SUFFIX:
+                    continue
+                key = (ticker, exchange)
+                if key in seen:
+                    continue
+                seen.add(key)
+                listings.append({'ticker': ticker, 'exchange': exchange})
+                if ticker not in tickers:
+                    tickers.append(ticker)
+
+            if not tickers:
+                primary_ticker = str(result.get('ticker') or '').strip().upper()
+                tickers = [primary_ticker] if primary_ticker else []
 
             return {
                 'name': result.get('name', f"ETF {isin}"),
-                'tickers': [result.get('ticker')] if result.get('ticker') else [],
+                'tickers': tickers,
                 'exchange': result.get('exchCode', ''),
                 'figi': result.get('figi', ''),
+                'listings': listings,
                 'resolved_at': datetime.now(UTC).isoformat(),
                 'source': 'OpenFIGI'
             }

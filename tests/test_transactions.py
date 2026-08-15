@@ -9,11 +9,21 @@ import pytest
 import yaml
 
 from e1f import transactions as transactions_mod
-from e1f.transactions import BROKER_TRADE_REPUBLIC, TradeRepublicImporter, is_etf_trade_row
+from e1f.transactions import (
+    BROKER_TRADE_REPUBLIC,
+    BROKER_XTB,
+    TradeRepublicImporter,
+    XtbImporter,
+    is_etf_trade_row,
+    is_xtb_etf_trade_row,
+    load_xtb_cash_operations,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 SAMPLE_CSV = FIXTURES / "trade_republic_sample.csv"
+SAMPLE_XTB_XLSX = FIXTURES / "xtb_cash_operations_sample.xlsx"
 ISIN_ETF = "IE00B4L5Y983"
+ISIN_WEBN = "IE0003XJA0J9"
 ISIN_STOCK = "US0378331005"
 
 
@@ -163,6 +173,17 @@ def test_main_trade_republic_success(tmp_path, capsys):
     assert f"e1f config add {ISIN_ETF}" in out
 
 
+def test_main_tr_alias_success(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = transactions_mod.main(
+        ["tr", str(SAMPLE_CSV), "--db", str(db), "--config", str(config)]
+    )
+    assert code == 0
+    assert "1 inserted" in capsys.readouterr().out
+
+
 def test_main_duplicate_reports_skipped(tmp_path, capsys):
     db = tmp_path / "t.db"
     config = tmp_path / "config.yaml"
@@ -240,3 +261,137 @@ def test_main_list_after_import(tmp_path, capsys):
     assert code == 0
     assert ISIN_ETF in out
     assert "Total: 1 transactions" in out
+
+
+def test_build_ticker_to_isin_uses_listings(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    isin = "IE00BDBRDM35"
+    config_path.write_text(yaml.dump({
+        "etfs": {
+            isin: {
+                "name": "Global Bond",
+                "tickers": ["0GGH", "EUNA"],
+                "exchange": "LN",
+                "listings": [
+                    {"ticker": "0GGH", "exchange": "LN"},
+                    {"ticker": "EUNA", "exchange": "GR"},
+                ],
+            }
+        }
+    }))
+    mapping = transactions_mod.build_ticker_to_isin(str(config_path))
+    assert transactions_mod.resolve_xtb_ticker("EUNA.DE", mapping) == isin
+    assert transactions_mod.resolve_xtb_ticker("0GGH.UK", mapping) == isin
+
+
+def test_load_xtb_cash_operations_sample():
+    df = load_xtb_cash_operations(SAMPLE_XTB_XLSX)
+    assert list(df.columns) == [
+        "type",
+        "instrument",
+        "ticker",
+        "category",
+        "time",
+        "amount",
+        "id",
+        "comment",
+    ]
+    assert len(df) == 3
+
+
+def test_is_xtb_etf_trade_row_sample():
+    df = load_xtb_cash_operations(SAMPLE_XTB_XLSX)
+    flags = [is_xtb_etf_trade_row(row) for _, row in df.iterrows()]
+    assert flags == [True, False, True]
+
+
+def test_import_xtb_sample(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.dump(
+            {
+                "etfs": {
+                    ISIN_WEBN: {
+                        "name": "Prime All Country World",
+                        "tickers": ["WEBN"],
+                        "exchange": "GR",
+                    }
+                }
+            }
+        )
+    )
+    importer = XtbImporter(db_path=str(tmp_path / "t.db"), config_path=str(config_path))
+    summary = importer.import_excel(SAMPLE_XTB_XLSX)
+    assert summary == transactions_mod.ImportSummary(
+        inserted=2,
+        skipped=0,
+        filtered=1,
+        errors=0,
+        missing_isins=(),
+    )
+
+    with closing(sqlite3.connect(importer.db_path)) as conn:
+        rows = conn.execute(
+            "SELECT broker, symbol, side, shares, price, fee, tax "
+            "FROM transactions ORDER BY transaction_id"
+        ).fetchall()
+
+    assert rows == [
+        (BROKER_XTB, ISIN_WEBN, "BUY", 7.0, 87.51 / 7.0, None, None),
+        (BROKER_XTB, ISIN_WEBN, "SELL", 1.0, 50.0, None, None),
+    ]
+
+
+def test_xtb_shares_and_price_uses_amount(tmp_path):
+    row = pd.Series(
+        {
+            "comment": "OPEN BUY 0.9987/7.9987 @ 12.502",
+            "amount": "-12.49",
+        }
+    )
+    shares, price = transactions_mod.xtb_shares_and_price(row)
+    assert shares == pytest.approx(0.9987)
+    assert price == pytest.approx(12.49 / 0.9987)
+    assert shares * price == pytest.approx(12.49)
+
+
+def test_xtb_filters_unmapped_tickers_without_config(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({"etfs": {}}))
+    summary = XtbImporter(
+        db_path=str(tmp_path / "t.db"),
+        config_path=str(config_path),
+    ).import_excel(SAMPLE_XTB_XLSX)
+    assert summary.inserted == 0
+    assert summary.filtered == 3
+    assert summary.missing_isins == ()
+    assert summary.unmapped_tickers == (
+        ("WEBN.DE", "Prime All Country World"),
+    )
+
+
+def test_main_xtb_reports_unmapped_tickers(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = transactions_mod.main(
+        ["xtb", str(SAMPLE_XTB_XLSX), "--db", str(db), "--config", str(config)]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Tickers not mapped to any ISIN" in out
+    assert "WEBN.DE" in out
+    assert "e1f config add <ISIN>" in out
+
+
+def test_main_xtb_success(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {ISIN_WEBN: {"name": "WEBN", "tickers": ["WEBN"]}}}))
+    code = transactions_mod.main(
+        ["xtb", str(SAMPLE_XTB_XLSX), "--db", str(db), "--config", str(config)]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2 inserted" in out
+    assert "1 filtered" in out

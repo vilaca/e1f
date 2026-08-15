@@ -46,7 +46,24 @@ def test_resolve_success(monkeypatch):
     assert info['tickers'] == ['TST']
     assert info['exchange'] == 'NA'
     assert info['figi'] == 'BBG000TEST'
+    assert info['listings'] == [{'ticker': 'TST', 'exchange': 'NA'}]
     assert info['source'] == 'OpenFIGI'
+
+
+def test_resolve_collects_xtb_listings(monkeypatch):
+    payload = [{'data': [
+        {'name': 'Global Bond', 'ticker': '0GGH', 'exchCode': 'LN', 'figi': 'BBG1'},
+        {'name': 'Global Bond', 'ticker': 'EUNA', 'exchCode': 'GR', 'figi': 'BBG2'},
+        {'name': 'Global Bond', 'ticker': 'SKIP', 'exchCode': 'XX', 'figi': 'BBG3'},
+    ]}]
+    info = resolver_returning(monkeypatch, payload).resolve(ISIN)
+    assert info['exchange'] == 'LN'
+    assert info['figi'] == 'BBG1'
+    assert info['tickers'] == ['0GGH', 'EUNA']
+    assert info['listings'] == [
+        {'ticker': '0GGH', 'exchange': 'LN'},
+        {'ticker': 'EUNA', 'exchange': 'GR'},
+    ]
 
 
 def test_resolve_invalid_isin_short_circuits(monkeypatch):

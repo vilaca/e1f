@@ -142,3 +142,46 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
     assert "Avg paid" in out
     assert "Total paid" in out
     assert "Total: 1 holdings" in out
+
+
+def test_main_portfolio_displays_money_with_four_decimals(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {ISIN_ETF: {"name": "Test ETF"}}}))
+
+    from e1f.transactions import BROKER_XTB, init_transactions_database
+    import sqlite3
+    from contextlib import closing
+
+    init_transactions_database(str(db))
+    rows = [
+        (
+            BROKER_XTB, "1", "2026-07-24 14:45:49", ISIN_ETF, "BUY",
+            0.7839, 9.87 / 0.7839, None, None,
+        ),
+        (
+            BROKER_XTB, "2", "2026-07-24 14:45:50", ISIN_ETF, "BUY",
+            7.0, 88.13 / 7.0, None, None,
+        ),
+        (
+            BROKER_XTB, "3", "2026-07-29 14:26:03", ISIN_ETF, "BUY",
+            7.0, 87.51 / 7.0, None, None,
+        ),
+        (
+            BROKER_XTB, "4", "2026-07-29 14:26:11", ISIN_ETF, "BUY",
+            0.9987, 12.49 / 0.9987, None, None,
+        ),
+    ]
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executemany(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "15.7826" in out
+    assert "12.5455" in out
+    assert "198.0000" in out

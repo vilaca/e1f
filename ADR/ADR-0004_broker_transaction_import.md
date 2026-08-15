@@ -14,14 +14,14 @@ It covers brokerage and cash activity with stable column names and a UUID
 
 ## Decision
 
-Add an `e1f transactions` command. v1 supports **Trade Republic CSV only** and
-**listing** stored trades:
+Add an `e1f transactions` command with **Trade Republic CSV** ingest and
+**listing** stored trades (XTB Excel is `ADR-0006`):
 
 - **`transactions list`** — print ETF trades already in the DB (`--db` override).
-- **`transactions trade-republic`** — parse the official Transaktionsexport into
-  a canonical `transactions` table in the shared SQLite DB (`DEFAULT_DB`, same
-  file as `prices`; schema in `src/e1f/transactions.py`, frozen in
-  `tests/test_contracts.py`).
+- **`transactions trade-republic`** (alias **`tr`**) — parse the official
+  Transaktionsexport into a canonical `transactions` table in the shared SQLite
+  DB (`DEFAULT_DB`, same file as `prices`; schema in `src/e1f/transactions.py`,
+  frozen in `tests/test_contracts.py`).
 - Deduplicate on `(broker, transaction_id)` using `ON CONFLICT DO NOTHING`.
 - Ingest **ETF buy/sell rows only** from the export (filter logic in
   `is_etf_trade_row()` in `src/e1f/transactions.py`). Cash, dividends, and
@@ -29,10 +29,9 @@ Add an `e1f transactions` command. v1 supports **Trade Republic CSV only** and
 - Store ingested rows even when the ISIN is not yet in `etf_universe.yaml`.
   Ingest does **not** modify the ETF config.
 - **Ingest and list only** for this command: no P&L or mark-to-market (holdings
-  derivation is `ADR-0005`).
+  derivation is `ADR-0005`; XTB Excel is `ADR-0006`).
 
-Excel and generic column mapping are out of scope until a broker that exports xlsx
-is supported or a second profile is added.
+Generic column mapping remains out of scope.
 
 ## Rationale
 
@@ -55,6 +54,6 @@ is supported or a second profile is added.
 - Price fetch remains universe-driven (`e1f fetch`); imported ISINs without config
   entries have transactions but no automatic price history until added via
   `e1f config add`.
-- Follow-up work (separate ADRs/commands): P&L and market value vs `prices`,
-  additional broker profiles, Excel support where brokers provide it. Holdings
-  and average cost per share are covered by `ADR-0005`.
+- Follow-up work (separate ADRs/commands): P&L and market value vs `prices`.
+  Holdings and average cost per share are covered by `ADR-0005`. XTB Cash
+  Operations Excel is covered by `ADR-0006`.
