@@ -103,13 +103,14 @@ def _etf_name(config_path: str, symbol: str) -> str:
     return str(data.get("name", ""))[:40]
 
 
-def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str]:
+def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str, str]:
     data = ConfigManager(config_path).get(symbol) or {}
+    asset_class = str(data.get("asset_class") or "")[:12]
     fund_currency = str(data.get("fund_currency") or "")
     distribution = str(data.get("distribution") or "")
     ter = data.get("ter")
     ter_text = f"{float(ter):.2f}%" if isinstance(ter, (int, float)) else ""
-    return fund_currency, distribution, ter_text
+    return asset_class, fund_currency, distribution, ter_text
 
 
 def _distribution_label(distribution: str) -> str:
@@ -122,7 +123,7 @@ def _distribution_label(distribution: str) -> str:
 
 _BROKER_LABELS = {"trade_republic": "tr"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 123  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 136  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -203,8 +204,8 @@ def _cmd_portfolio(
     )
 
     header = (
-        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'CCY':<4} {'Dist':<4} "
-        f"{'TER':>6} {'Weight':>7}"
+        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'Asset class':<12} "
+        f"{'CCY':<4} {'Dist':<4} {'TER':>6} {'Weight':>7}"
     )
     if show_cost_basis:
         header += f" {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
@@ -212,12 +213,14 @@ def _cmd_portfolio(
     print("-" * (_TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 42))
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
-        fund_currency, distribution, ter = _fund_meta(config_path, holding.symbol)
+        asset_class, fund_currency, distribution, ter = _fund_meta(
+            config_path, holding.symbol
+        )
         weight = holding_weight_pct(holding, total_invested)
         row = (
             f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
-            f"{fund_currency:<4} {_distribution_label(distribution):<4} {ter:>6} "
-            f"{weight:>6.1f}%"
+            f"{asset_class:<12} {fund_currency:<4} "
+            f"{_distribution_label(distribution):<4} {ter:>6} {weight:>6.1f}%"
         )
         if show_cost_basis:
             row += (

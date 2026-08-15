@@ -24,7 +24,13 @@ RESOLVED = {
 
 
 def etf(isin):
-    return {"name": f"ETF {isin}", "tickers": ["T"], "exchange": "NA", "figi": "F"}
+    return {
+        "name": f"ETF {isin}",
+        "tickers": ["T"],
+        "exchange": "NA",
+        "figi": "F",
+        "asset_class": "Equity",
+    }
 
 
 @pytest.fixture
@@ -100,6 +106,8 @@ def test_list_shows_all_etfs(paths, capsys):
     assert config_cmd.main(["--config", paths["config"], "list"]) == 0
     out = capsys.readouterr().out
     assert ISIN_A in out and ISIN_B in out and "Total: 2 ETFs" in out
+    assert "Asset class" in out
+    assert "Equity" in out
 
 
 def test_add_and_update(paths, monkeypatch, capsys):

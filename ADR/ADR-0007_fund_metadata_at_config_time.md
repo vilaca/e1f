@@ -5,10 +5,11 @@
 ## Context
 
 Portfolio analysis needs fund-level facts beyond ticker resolution: total expense ratio
-(TER), distribution policy (accumulating vs distributing), and the fund's share-class
-currency. OpenFIGI resolves listings but its short names often omit share-class hints
-(e.g. `(Acc)`, `USDA`). FT Markets (ftgo) fund names are more descriptive but can list
-multiple share classes under the same ticker search.
+(TER), distribution policy (accumulating vs distributing), the fund's share-class
+currency, and the underlying asset class. OpenFIGI resolves listings but its short names
+often omit share-class hints (e.g. `(Acc)`, `USDA`) and its instrument classification
+does not describe the ETF's underlying exposure. FT Markets (ftgo) fund names are more
+descriptive but can list multiple share classes under the same ticker search.
 
 ## Decision
 
@@ -21,9 +22,14 @@ When `e1f config add` or `e1f config update` resolves an ISIN, enrich the YAML e
 - **`ter`** — ftgo `get_fund_stats` (`Ongoing charge` / `Net expense ratio`) on the
   share-class-matched xid; justETF ISIN profile when ftgo returns `--` (common for newer
   Amundi listings).
+- **`asset_class`** — the broad first component of justETF's `Investment focus`
+  (for example, `Equity` from `Equity, United States` or `Bonds` from
+  `Bonds, World, Aggregate, All maturities`).
 
-Source priority: **OpenFIGI → ftgo → justETF**. yfinance is not used for fund metadata
-(prices only, opt-in via ADR-0001).
+Source priority for fields available from multiple providers is
+**OpenFIGI → ftgo → justETF**. Asset class comes from justETF because OpenFIGI and
+ftgo classify the traded instrument rather than its underlying exposure. yfinance is
+not used for fund metadata (prices only, opt-in via ADR-0001).
 
 Enrichment is best-effort: missing fields are omitted rather than blocking config writes.
 Explicit `⚠` warnings when a fallback source is used.
