@@ -37,6 +37,7 @@ def test_init_creates_transactions_table(tmp_path):
         "transaction_id",
         "datetime",
         "symbol",
+        "side",
         "shares",
         "price",
         "fee",
@@ -65,12 +66,12 @@ def test_import_sample_csv(tmp_path):
     with closing(sqlite3.connect(importer.db_path)) as conn:
         count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
         buy = conn.execute(
-            "SELECT symbol, shares, price FROM transactions WHERE transaction_id = ?",
+            "SELECT symbol, side, shares, price FROM transactions WHERE transaction_id = ?",
             ("tr-uuid-002",),
         ).fetchone()
 
     assert count == 1
-    assert buy == ("IE00B4L5Y983", 2.243133, 89.161)
+    assert buy == ("IE00B4L5Y983", "BUY", 2.243133, 89.161)
 
 
 def test_stock_buy_is_filtered(tmp_path):
@@ -205,9 +206,10 @@ def test_list_rows_after_import(tmp_path):
     importer.import_csv(SAMPLE_CSV)
     rows = importer.list_rows()
     assert len(rows) == 1
-    broker, dt, symbol, shares, price, _fee, _tax = rows[0]
+    broker, dt, symbol, side, shares, price, _fee, _tax = rows[0]
     assert broker == BROKER_TRADE_REPUBLIC
     assert symbol == ISIN_ETF
+    assert side == "BUY"
     assert shares == pytest.approx(2.243133)
     assert price == pytest.approx(89.161)
     assert dt.startswith("2024-04-16")

@@ -5,8 +5,8 @@
 ## Context
 
 e1f already maintains an ETF universe (`config`) and historical prices (`fetch`) in
-SQLite. To support portfolio analysis later, users need a way to bring in their own
-broker activity without manually transcribing trades.
+SQLite. Users need a way to bring in their own broker activity without manually
+transcribing trades.
 
 Trade Republic provides an official CSV transaction export (Transaktionsexport).
 It covers brokerage and cash activity with stable column names and a UUID
@@ -20,14 +20,16 @@ Add an `e1f transactions` command. v1 supports **Trade Republic CSV only** and
 - **`transactions list`** — print ETF trades already in the DB (`--db` override).
 - **`transactions trade-republic`** — parse the official Transaktionsexport into
   a canonical `transactions` table in the shared SQLite DB (`DEFAULT_DB`, same
-  file as `prices`).
+  file as `prices`; schema in `src/e1f/transactions.py`, frozen in
+  `tests/test_contracts.py`).
 - Deduplicate on `(broker, transaction_id)` using `ON CONFLICT DO NOTHING`.
 - Ingest **ETF buy/sell rows only** from the export (filter logic in
   `is_etf_trade_row()` in `src/e1f/transactions.py`). Cash, dividends, and
   non-ETF trades are skipped.
 - Store ingested rows even when the ISIN is not yet in `etf_universe.yaml`.
   Ingest does **not** modify the ETF config.
-- **Ingest only** in v1: no holdings snapshot, cost basis, or P&L derivation.
+- **Ingest and list only** for this command: no P&L or mark-to-market (holdings
+  derivation is `ADR-0005`).
 
 Excel and generic column mapping are out of scope until a broker that exports xlsx
 is supported or a second profile is added.
@@ -45,12 +47,14 @@ is supported or a second profile is added.
 
 ## Consequences
 
-- Re-importing the same CSV is safe: duplicate `transaction_id` rows are skipped.
+- Re-importing the same CSV is safe: duplicate `(broker, transaction_id)` rows
+  are skipped.
 - `transactions list` reads back ingested rows; it does not modify the DB.
 - Ingest does not modify `etf_universe.yaml`, but prints ISINs from ingested ETF
   trades that are absent from the config so the user can run `e1f config add`.
 - Price fetch remains universe-driven (`e1f fetch`); imported ISINs without config
   entries have transactions but no automatic price history until added via
   `e1f config add`.
-- Follow-up work (separate ADRs/commands): holdings derivation, cost basis/P&L,
-  additional broker profiles, Excel support where brokers provide it.
+- Follow-up work (separate ADRs/commands): P&L and market value vs `prices`,
+  additional broker profiles, Excel support where brokers provide it. Holdings
+  and average cost per share are covered by `ADR-0005`.

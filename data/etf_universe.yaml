@@ -98,3 +98,27 @@ etfs:
     securityType2: Mutual Fund
     resolved_at: '2026-08-14T00:06:19.333391+00:00'
     source: OpenFIGI
+  IE000YYE6WK5:
+    name: VANECK DEFENSE ETF
+    tickers:
+    - DFNS
+    exchange: LN
+    figi: BBG01G0CY1X0
+    resolved_at: '2026-08-15T01:22:34.372697+00:00'
+    source: OpenFIGI
+  IE00B3YCGJ38:
+    name: INVESCO S&P 500 ACC
+    tickers:
+    - SPXS
+    exchange: LN
+    figi: BBG000QXQZL9
+    resolved_at: '2026-08-15T01:22:34.512257+00:00'
+    source: OpenFIGI
+  IE00B4K48X80:
+    name: ISHARES CORE MSCI EUROPE ACC
+    tickers:
+    - IMAE
+    exchange: NA
+    figi: BBG000P71KS0
+    resolved_at: '2026-08-15T01:22:34.655575+00:00'
+    source: OpenFIGI

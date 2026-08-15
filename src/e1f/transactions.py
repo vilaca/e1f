@@ -52,8 +52,8 @@ TR_REQUIRED_COLUMNS = (
 
 _INSERT_SQL = """
     INSERT INTO transactions (
-        broker, transaction_id, datetime, symbol, shares, price, fee, tax
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        broker, transaction_id, datetime, symbol, side, shares, price, fee, tax
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (broker, transaction_id) DO NOTHING
 """
 
@@ -166,6 +166,7 @@ class TradeRepublicImporter:
                     transaction_id TEXT NOT NULL,
                     datetime TEXT,
                     symbol TEXT,
+                    side TEXT,
                     shares REAL,
                     price REAL,
                     fee REAL,
@@ -190,6 +191,7 @@ class TradeRepublicImporter:
             _parse_str(row["transaction_id"]),
             _parse_str(row["datetime"]),
             _parse_str(row["symbol"]),
+            _normalize_tr_type(row["type"]),
             _parse_float(row["shares"]),
             _parse_float(row["price"]),
             _parse_float(row["fee"]),
@@ -242,7 +244,7 @@ class TradeRepublicImporter:
         with closing(sqlite3.connect(self.db_path)) as conn:
             return conn.execute(
                 """
-                SELECT broker, datetime, symbol, shares, price, fee, tax
+                SELECT broker, datetime, symbol, side, shares, price, fee, tax
                 FROM transactions
                 ORDER BY datetime, transaction_id
                 """
@@ -257,17 +259,17 @@ def _cmd_list(db_path: str) -> int:
         return 0
 
     print(
-        f"\n{'Broker':<16} {'Datetime':<28} {'Symbol':<14} "
+        f"\n{'Broker':<16} {'Datetime':<28} {'Symbol':<14} {'Side':<14} "
         f"{'Shares':>10} {'Price':>10} {'Fee':>6} {'Tax':>6}"
     )
-    print("-" * 98)
-    for broker, dt, symbol, shares, price, fee, tax in rows:
+    print("-" * 112)
+    for broker, dt, symbol, side, shares, price, fee, tax in rows:
         shares_s = "" if shares is None else f"{shares:.4f}"
         price_s = "" if price is None else f"{price:.2f}"
         fee_s = "" if fee is None else f"{fee:.2f}"
         tax_s = "" if tax is None else f"{tax:.2f}"
         print(
-            f"{broker:<16} {dt:<28} {symbol:<14} "
+            f"{broker:<16} {dt:<28} {symbol:<14} {side:<14} "
             f"{shares_s:>10} {price_s:>10} {fee_s:>6} {tax_s:>6}"
         )
     print(f"\nTotal: {len(rows)} transactions")

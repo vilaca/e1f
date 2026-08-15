@@ -17,14 +17,15 @@ This installs the `e1f` command.
 
 ## Workflow
 
-The tool exposes three subcommands around a shared config/DB:
+The tool exposes four subcommands around a shared config/DB:
 
 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
 2. **`e1f fetch`** — populate the SQLite price DB.
 3. **`e1f transactions`** — ingest ETF trades from broker CSV and list stored trades.
+4. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 
 ```bash
-# 1. Add ETFs by ISIN (auto-resolves name, tickers, exchange, FIGI)
+# 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
 e1f config add IE00BM67HK77
 e1f config add IE00BM67HK77 IE00BDBRDM35 IE00BKM4GZ66
 e1f config list
@@ -46,13 +47,15 @@ e1f fetch --force         # ignore the cache and re-download
 e1f transactions trade-republic ~/Downloads/transactions.csv
 e1f transactions trade-republic transactions.csv --db data/e1f.db
 e1f transactions list
+e1f portfolio
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
 `data/e1f.db`, fetch start date `2000-01-01` (earlier than any ETF inception, so
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
-— `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`.
+— `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
+`e1f portfolio --help`.
 
 ## Price sources
 
@@ -71,9 +74,12 @@ Broker CSV ingest (v1: Trade Republic) stores **ETF buy/sell rows only** in
 `transactions`; cash, dividends, and non-ETF trades are skipped. Ingest does not
 modify `etf_universe.yaml`. After ingest it lists ETF ISINs from the file that
 are not yet in the config, with a ready-to-run `e1f config add …` line.
-Re-ingesting the same file is idempotent (duplicate `transaction_id` rows are
-skipped). Use `e1f transactions list` to view stored trades. See
+Re-ingesting the same file is idempotent (duplicate `(broker, transaction_id)`
+rows are skipped). Use `e1f transactions list` to view stored trades. See
 `ADR/ADR-0004_broker_transaction_import.md`.
+
+Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
+(output in `src/e1f/portfolio.py`).
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring
@@ -84,6 +90,6 @@ exponential backoff otherwise.
 
 ```bash
 uv sync --extra dev
-./scripts/check.sh          # full suite: lint, layers, types, tests + coverage
+./scripts/check.sh          # full suite: lint, layers, shell, actions, types, dead, test + coverage
 uv run pytest               # tests only
 ```

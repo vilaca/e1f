@@ -1,0 +1,144 @@
+"""Portfolio holdings: average-cost positions from transactions."""
+
+import yaml
+
+from e1f import portfolio as portfolio_mod
+from e1f import transactions as transactions_mod
+from e1f.portfolio import Holding, compute_holdings
+from e1f.transactions import BROKER_TRADE_REPUBLIC
+
+ISIN_ETF = "IE00B4L5Y983"
+BROKER_OTHER = "other_broker"
+
+
+def _row(dt, symbol, side, shares, price, fee, broker=BROKER_TRADE_REPUBLIC):
+    return (broker, dt, symbol, side, shares, price, fee)
+
+
+def test_compute_holdings_single_buy():
+    rows = [_row("2024-01-01", ISIN_ETF, "BUY", 2.0, 100.0, 1.0)]
+    assert compute_holdings(rows) == [
+        Holding(
+            broker=BROKER_TRADE_REPUBLIC,
+            symbol=ISIN_ETF,
+            shares=2.0,
+            avg_cost=100.5,
+            total_paid=201.0,
+        )
+    ]
+
+
+def test_compute_holdings_savings_plan_counts_as_buy():
+    rows = [_row("2024-01-01", ISIN_ETF, "SAVINGS_PLAN", 1.0, 50.0, 0.0)]
+    assert compute_holdings(rows) == [
+        Holding(
+            broker=BROKER_TRADE_REPUBLIC,
+            symbol=ISIN_ETF,
+            shares=1.0,
+            avg_cost=50.0,
+            total_paid=50.0,
+        )
+    ]
+
+
+def test_compute_holdings_two_buys_average_cost():
+    rows = [
+        _row("2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 1.0),
+        _row("2024-02-01", ISIN_ETF, "BUY", 1.0, 120.0, 0.0),
+    ]
+    assert compute_holdings(rows) == [
+        Holding(
+            broker=BROKER_TRADE_REPUBLIC,
+            symbol=ISIN_ETF,
+            shares=2.0,
+            avg_cost=110.5,
+            total_paid=221.0,
+        )
+    ]
+
+
+def test_compute_holdings_sell_reduces_position():
+    rows = [
+        _row("2024-01-01", ISIN_ETF, "BUY", 2.0, 100.0, 0.0),
+        _row("2024-02-01", ISIN_ETF, "SELL", 1.0, 110.0, 0.0),
+    ]
+    assert compute_holdings(rows) == [
+        Holding(
+            broker=BROKER_TRADE_REPUBLIC,
+            symbol=ISIN_ETF,
+            shares=1.0,
+            avg_cost=100.0,
+            total_paid=100.0,
+        )
+    ]
+
+
+def test_compute_holdings_sell_closes_position():
+    rows = [
+        _row("2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0),
+        _row("2024-02-01", ISIN_ETF, "SELL", 1.0, 110.0, 0.0),
+    ]
+    assert compute_holdings(rows) == []
+
+
+def test_compute_holdings_keeps_brokers_separate():
+    rows = [
+        _row("2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0, broker=BROKER_TRADE_REPUBLIC),
+        _row("2024-01-01", ISIN_ETF, "BUY", 2.0, 90.0, 0.0, broker=BROKER_OTHER),
+    ]
+    assert compute_holdings(rows) == [
+        Holding(
+            broker=BROKER_OTHER,
+            symbol=ISIN_ETF,
+            shares=2.0,
+            avg_cost=90.0,
+            total_paid=180.0,
+        ),
+        Holding(
+            broker=BROKER_TRADE_REPUBLIC,
+            symbol=ISIN_ETF,
+            shares=1.0,
+            avg_cost=100.0,
+            total_paid=100.0,
+        ),
+    ]
+
+
+def test_main_portfolio_empty(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No ETF holdings" in out
+
+
+def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
+    from pathlib import Path
+
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.dump(
+            {
+                "etfs": {
+                    ISIN_ETF: {"name": "Core MSCI World USD (Acc)"},
+                }
+            }
+        )
+    )
+    fixture = Path(__file__).resolve().parent / "fixtures" / "trade_republic_sample.csv"
+    assert transactions_mod.main(
+        ["trade-republic", str(fixture), "--db", str(db), "--config", str(config)]
+    ) == 0
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert BROKER_TRADE_REPUBLIC in out
+    assert ISIN_ETF in out
+    assert "Core MSCI World USD (Acc)" in out
+    assert "Avg paid" in out
+    assert "Total paid" in out
+    assert "Total: 1 holdings" in out
