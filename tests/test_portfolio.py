@@ -1,6 +1,7 @@
 """Portfolio holdings: average-cost positions from transactions."""
 
 import yaml
+import pytest
 
 from e1f import portfolio as portfolio_mod
 from e1f import transactions as transactions_mod
@@ -104,6 +105,19 @@ def test_compute_holdings_keeps_brokers_separate():
     ]
 
 
+def test_compute_holdings_skips_zero_or_negative_shares():
+    rows = [
+        _row("2024-01-01", ISIN_ETF, "BUY", 0.0, 100.0, 0.0),
+        _row("2024-01-02", ISIN_ETF, "BUY", -1.0, 100.0, 0.0),
+    ]
+    assert compute_holdings(rows) == []
+
+
+def test_compute_holdings_sell_without_position_is_ignored():
+    rows = [_row("2024-01-01", ISIN_ETF, "SELL", 1.0, 100.0, 0.0)]
+    assert compute_holdings(rows) == []
+
+
 def test_main_portfolio_empty(tmp_path, capsys):
     db = tmp_path / "t.db"
     config = tmp_path / "config.yaml"
@@ -185,3 +199,38 @@ def test_main_portfolio_displays_money_with_four_decimals(tmp_path, capsys):
     assert "15.7826" in out
     assert "12.5455" in out
     assert "198.0000" in out
+
+
+def test_main_portfolio_unknown_isin_shows_blank_name(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+
+    from contextlib import closing
+
+    import sqlite3
+
+    from e1f.transactions import BROKER_TRADE_REPUBLIC, init_transactions_database
+
+    init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (BROKER_TRADE_REPUBLIC, "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0, 0.0),
+        )
+        conn.commit()
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert ISIN_ETF in out
+    assert "Total: 1 holdings" in out
+    assert "Unknown ETF" not in out
+
+def test_main_portfolio_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        portfolio_mod.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "e1f portfolio" in out
+    assert "--db" in out

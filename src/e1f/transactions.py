@@ -323,23 +323,10 @@ def _isins_from_dataframe(df: pd.DataFrame) -> dict[str, str]:
 
 
 def missing_config_isins(
-    df: pd.DataFrame,
-    config_path: str = DEFAULT_CONFIG,
-) -> tuple[tuple[str, str], ...]:
-    """ISINs present in the ingest but absent from the ETF universe config."""
-    configured = set(ConfigManager(config_path).config.get("etfs", {}).keys())
-    isins = _isins_from_dataframe(df)
-    return tuple(
-        (isin, isins[isin])
-        for isin in sorted(isins)
-        if isin not in configured
-    )
-
-
-def missing_config_isins_from_symbols(
     symbols: dict[str, str],
     config_path: str = DEFAULT_CONFIG,
 ) -> tuple[tuple[str, str], ...]:
+    """ISINs present in the ingest but absent from the ETF universe config."""
     configured = set(ConfigManager(config_path).config.get("etfs", {}).keys())
     return tuple(
         (isin, symbols[isin])
@@ -438,17 +425,13 @@ class TradeRepublicImporter:
                     skipped += 1
             conn.commit()
 
-        etf_trades = _etf_trade_rows(df)
         return ImportSummary(
             inserted=inserted,
             skipped=skipped,
             filtered=filtered,
             errors=errors,
-            missing_isins=missing_config_isins(etf_trades, self.config_path),
+            missing_isins=missing_config_isins(_isins_from_dataframe(df), self.config_path),
         )
-
-    def list_rows(self) -> list[tuple[Any, ...]]:
-        return list_transaction_rows(self.db_path)
 
 
 class XtbImporter:
@@ -528,12 +511,9 @@ class XtbImporter:
             skipped=skipped,
             filtered=filtered,
             errors=errors,
-            missing_isins=missing_config_isins_from_symbols(resolved_names, self.config_path),
+            missing_isins=missing_config_isins(resolved_names, self.config_path),
             unmapped_tickers=tuple((ticker, unmapped[ticker]) for ticker in sorted(unmapped)),
         )
-
-    def list_rows(self) -> list[tuple[Any, ...]]:
-        return list_transaction_rows(self.db_path)
 
 
 def _cmd_list(db_path: str) -> int:

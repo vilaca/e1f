@@ -16,6 +16,7 @@ from e1f.transactions import (
     XtbImporter,
     is_etf_trade_row,
     is_xtb_etf_trade_row,
+    list_transaction_rows,
     load_xtb_cash_operations,
 )
 
@@ -223,9 +224,10 @@ def test_broker_constant_on_rows(tmp_path):
 
 
 def test_list_rows_after_import(tmp_path):
+    db = tmp_path / "t.db"
     importer = make_importer(tmp_path)
     importer.import_csv(SAMPLE_CSV)
-    rows = importer.list_rows()
+    rows = list_transaction_rows(str(db))
     assert len(rows) == 1
     broker, dt, symbol, side, shares, price, _fee, _tax = rows[0]
     assert broker == BROKER_TRADE_REPUBLIC
@@ -237,7 +239,8 @@ def test_list_rows_after_import(tmp_path):
 
 
 def test_list_rows_empty(tmp_path):
-    rows = make_importer(tmp_path).list_rows()
+    db = tmp_path / "t.db"
+    rows = list_transaction_rows(str(db))
     assert rows == []
 
 

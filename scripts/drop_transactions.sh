@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drop the transactions table so broker CSV can be re-imported with the current schema.
+# Drop the transactions table so broker exports can be re-imported with the current schema.
 #
 # Usage:
 #   scripts/drop_transactions.sh

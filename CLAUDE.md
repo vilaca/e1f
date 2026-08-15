@@ -5,12 +5,12 @@ ETF universe config and historical price fetching into SQLite.
 ## Running checks
 
 ```bash
-./scripts/check.sh              # all gates: lint, layers, types, test + coverage
-./scripts/check.sh lint         # single gate (lint | layers | types | test)
+./scripts/check.sh              # all gates: lint, layers, shell, actions, types, dead, test + coverage
+./scripts/check.sh lint         # single gate (lint | layers | shell | actions | types | dead | test)
 uv run pytest                   # tests only, no coverage floor
 ```
 
-The script is the single definition of "green". CI runs the same script.
+The script is the single definition of "green". CI runs the same gates via `scripts/check.sh` (`actions` in a separate job; see `.github/workflows/ci.yml`).
 
 ## Layout
 
@@ -19,7 +19,7 @@ src/e1f/
   cli.py       — entry point; routes config/fetch/transactions subcommands
   config.py    — config subcommand: OpenFIGI resolution, YAML management
   fetch.py     — fetch subcommand: ftgo/yfinance price fetching, SQLite
-  transactions.py — transactions subcommand: broker CSV ingestion
+  transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
   common.py    — shared primitives: defaults, ETFDefinition, retry logic
 data/
@@ -44,7 +44,7 @@ All recorded in `ADR/`. The most load-bearing:
 
 ## Skills
 
-- `/doc-check` — audit README/ADRs for drift, stale claims, and dead links
+- `/doc-check` — audit README, CLAUDE.md, and ADRs for drift, stale claims, and dead links
 
 ## Conventions
 
