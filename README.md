@@ -78,8 +78,9 @@ truncated response can't silently wipe history
 
 `e1f config validate` distinguishes **errors** from **warnings**: it exits `1`
 only on errors (duplicate keys, null or non-positive closes, weekend rows, invalid
-dates, or a config/DB desync) and `0` when clean or when only warnings remain
-(over-limit business-day gaps, large price moves, short/sparse/cash-like history).
+dates, malformed pinned quote-currency metadata, or a config/DB desync) and `0`
+when clean or when only warnings remain (over-limit business-day gaps, large price
+moves, short/sparse/cash-like history).
 See `e1f config validate --help` for the full taxonomy and
 `ADR/ADR-0009_validate_exit_code_contract.md` for the why.
 

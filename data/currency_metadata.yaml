@@ -23,9 +23,9 @@ FR0010717116:
   symbol: FAR:LSE
   xid: '524109506'
 IE0003XJA0J9:
-  currency: MUN
-  symbol: WEBN:MUN
-  xid: '894306203'
+  currency: EUR
+  symbol: WEBN:FRA:EUR
+  xid: '894321323'
 IE0006WW1TQ4:
   currency: USD
   symbol: EXUS:LSE:USD
@@ -207,9 +207,9 @@ IE00BD6FTQ80:
   symbol: CMOD:LSE:USD
   xid: '377694284'
 IE00BDBRDM35:
-  currency: LSE
-  symbol: 0GGH:LSE
-  xid: '440621976'
+  currency: EUR
+  symbol: EUNA:FRA:EUR
+  xid: '443095222'
 IE00BDFL4P12:
   currency: GBX
   symbol: COMM:LSE:GBX

@@ -190,13 +190,15 @@ Exit codes:
   1  errors found
 
 Errors (exit 1)   — duplicate keys, null closes, non-positive closes, weekend
-                    rows, invalid dates, or config/DB desync (missing or orphan
-                    ISINs).
+                    rows, invalid dates, malformed pinned currency metadata, or
+                    config/DB desync (missing or orphan ISINs).
 Warnings (exit 0) — missing-business-day gaps over the limit, large price moves,
                     short/sparse/cash-like history. Surfaced, never fatal.
         """,
     )
     validate_parser.add_argument('--db', default=DEFAULT_DB, help='SQLite DB path')
+    validate_parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
+                                 help='Currency metadata YAML path')
     validate_parser.add_argument('--min-years', type=float, default=3.0,
                                  help='Minimum history in years (default: 3)')
     validate_parser.add_argument('--min-fill', type=float, default=0.6,
@@ -372,6 +374,33 @@ Warnings (exit 0) — missing-business-day gaps over the limit, large price move
         db_isins = set(price_df['isin'].unique())
         config_isin_set = set(config_meta.keys())
 
+        # --- Pinned quote-currency metadata ---
+        try:
+            with open(args.currency_meta) as f:
+                currency_meta = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            currency_meta = {}
+
+        currency_errors = []
+        for isin in sorted(config_isin_set):
+            pinned = currency_meta.get(isin)
+            if not isinstance(pinned, dict):
+                continue
+            symbol = str(pinned.get('symbol') or '')
+            currency = str(pinned.get('currency') or '')
+            symbol_parts = symbol.split(':')
+            if len(symbol_parts) < 3 or not currency or symbol_parts[-1] != currency:
+                currency_errors.append((isin, currency or '(missing)', symbol))
+
+        print("=== Currency Metadata ===")
+        if currency_errors:
+            print("  Errors:")
+            for isin, currency, symbol in currency_errors:
+                print(f"    {isin}: {currency} (malformed symbol: {symbol or '(missing)'})")
+        else:
+            print("  No malformed pinned quote currencies.")
+        print()
+
         # --- Price integrity ---
         quality = quality_report(price_df)
         gap_breakdown = sorted(
@@ -509,7 +538,12 @@ Warnings (exit 0) — missing-business-day gaps over the limit, large price move
                 print(f"    {r['isin']}  {r['name']:<35}  vol {r['ann_vol']:.2%}")
                 flagged.append(r['isin'])
 
-        validation_errors = integrity_errors or bool(only_config) or bool(only_db)
+        validation_errors = (
+            bool(currency_errors)
+            or integrity_errors
+            or bool(only_config)
+            or bool(only_db)
+        )
         validation_warnings = integrity_warnings or bool(flagged)
         if not flagged:
             # flagged is empty here, so the only warnings left are integrity ones.

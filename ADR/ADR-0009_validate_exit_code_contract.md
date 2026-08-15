@@ -17,9 +17,10 @@ nulls, non-positive closes, weekend rows, invalid dates), a machine-readable pas
 exit code from that split:
 
 - **Exit 1 — errors:** duplicate `(isin, date)` keys, null closes, non-positive
-  closes, weekend rows, invalid/unparseable dates, or a config/DB desync (ISINs
-  in config but missing from the DB, or orphaned in the DB). These are corruption
-  or drift that make the stored series untrustworthy.
+  closes, weekend rows, invalid/unparseable dates, malformed pinned quote-currency
+  metadata, or a config/DB desync (ISINs in config but missing from the DB, or
+  orphaned in the DB). These are corruption or drift that make the stored series
+  untrustworthy.
 - **Exit 0 — warnings (or clean):** over-limit missing-business-day gaps, large
   day-over-day price moves, and short / sparse / cash-like history. These are
   worth surfacing but are legitimately explainable (holidays, thin trading, young

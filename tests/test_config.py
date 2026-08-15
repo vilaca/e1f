@@ -220,6 +220,27 @@ def test_validate_healthy(paths, capsys):
     assert 'None — all ETFs look good' in out
 
 
+def test_validate_rejects_malformed_quote_currency(paths, monkeypatch, capsys):
+    write_config(paths['config'], [ISIN_A, ISIN_B])
+    write_db(paths['db'], {ISIN_A: good_prices(ISIN_A, seed=1),
+                           ISIN_B: good_prices(ISIN_B, seed=2)})
+    write_meta(paths['meta'], [ISIN_A, ISIN_B])
+    with open(paths['meta']) as f:
+        metadata = yaml.safe_load(f)
+    metadata[ISIN_B] = {'xid': 'x', 'symbol': 'T:MUN', 'currency': 'MUN'}
+    with open(paths['meta'], 'w') as f:
+        yaml.dump(metadata, f)
+    monkeypatch.setattr(config_cmd, 'DEFAULT_CURRENCY_META', paths['meta'])
+
+    rc = config_cmd.main(['--config', paths['config'], 'validate',
+                          '--db', paths['db']])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert f'{ISIN_B}: MUN' in out
+    assert 'Validation failed' in out
+
+
 def test_quality_report_counts_missing_business_days():
     # ISIN_A: Tue 23rd -> Mon 29th skips Wed/Thu/Fri (24-26) = 3 missing.
     # ISIN_B: consecutive business days = 0 missing.
