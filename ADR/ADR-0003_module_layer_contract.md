@@ -1,4 +1,4 @@
-# ADR-0003 — Module layer contract: cli → config/fetch → common
+# ADR-0003 — Module layer contract: cli → config/fetch/transactions → common
 
 **Scope:** codebase architecture, import-linter enforcement
 
@@ -15,9 +15,9 @@ The module graph is stratified into three layers, enforced by import-linter
 (`[tool.importlinter]` in `pyproject.toml`, `layers` gate in `scripts/check.sh`):
 
 ```
-e1f.cli                         ← entry point; may import any layer below
-e1f.config  |  e1f.fetch        ← commands; may import common, never each other
-e1f.common                      ← shared primitives; imports nothing internal
+e1f.cli                              ← entry point; may import any layer below
+e1f.config  |  e1f.fetch  |  e1f.transactions  ← commands; may import common, never each other
+e1f.common                           ← shared primitives; imports nothing internal
 ```
 
 New modules are placed at the lowest layer that satisfies their needs. A module
@@ -38,6 +38,6 @@ orchestrates multiple commands or adds a new top-level subcommand goes at the
 ## Consequences
 
 - Adding a new module that violates the contract fails the `layers` gate.
-- Cross-command helpers (code used by both `config` and `fetch`) must live in
-  `common`, not in either command module.
+- Cross-command helpers (code used by more than one command module) must live in
+  `common`, not in any command module.
 - This ADR must be updated when a new layer or module is added.

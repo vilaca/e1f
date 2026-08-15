@@ -1,22 +1,24 @@
 """e1f command-line entry point.
 
-Dispatches the top-level ``config`` / ``fetch`` commands to the respective
-module's ``main``. Each of those keeps its own argparse definitions; this
-layer only routes the first token and forwards the rest (so that, e.g.,
+Dispatches the top-level ``config`` / ``fetch`` / ``transactions`` commands to the
+respective module's ``main``. Each of those keeps its own argparse definitions;
+this layer only routes the first token and forwards the rest (so that, e.g.,
 ``e1f fetch --help`` reaches the fetch parser).
 
     e1f config add IE00BM67HK77
     e1f fetch
+    e1f transactions trade-republic transactions.csv
 """
 
 import argparse
 import sys
 
-from e1f import config, fetch
+from e1f import config, fetch, transactions
 
 COMMANDS = {
     "config": config.main,
     "fetch": fetch.main,
+    "transactions": transactions.main,
 }
 
 
@@ -27,8 +29,9 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Commands:
-  config    Build/maintain the ETF universe YAML from ISINs
-  fetch     Populate the SQLite price DB for the universe
+  config        Build/maintain the ETF universe YAML from ISINs
+  fetch         Populate the SQLite price DB for the universe
+  transactions    Ingest broker transaction exports into SQLite
 
 Run 'e1f <command> --help' for command-specific options.
         """,

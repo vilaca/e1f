@@ -26,7 +26,7 @@ Do **not** edit unless the user asks; if they do, fix and re-run `scripts/check.
 
 Targets: `README.md`, `ADR/*.md`, and `.claude/skills/*/SKILL.md`.
 
-Read `README.md` and the two existing ADRs first to calibrate the current state
+Read `README.md` and all existing ADRs first to calibrate the current state
 before checking anything.
 
 ## 1. Prose that restates a code shape (should link instead)
@@ -36,12 +36,15 @@ YAML keys, and module/class names live in **code**; docs reference the source
 location, never copy the shape into prose. Find violations:
 
 - **CLI commands and flags** — compare `README.md` command examples against the
-  actual `argparse` definitions in `src/e1f/config.py` (config subcommands) and
-  `src/e1f/fetch.py` (fetch flags). A README that re-enumerates subcommand names
-  or default values is a candidate for drift.
-- **SQLite schema** — the `prices` table columns (`isin`, `date`, `close`) live in
-  `DataExtractor._init_database` and are frozen in `tests/test_contracts.py`.
-  Any prose that lists column names should link to the source, not restate them.
+  actual `argparse` definitions in `src/e1f/config.py` (config subcommands),
+  `src/e1f/fetch.py` (fetch flags), and `src/e1f/transactions.py`
+  (`list`, `trade-republic`, `--config`, `--db`). A README that re-enumerates
+  subcommand names or default values is a candidate for drift.
+- **SQLite schema** — the `prices` table columns live in
+  `DataExtractor._init_database`; the `transactions` table columns live in
+  `TradeRepublicImporter._init_database`; both are frozen in
+  `tests/test_contracts.py`. Any prose that lists column names should link to
+  the source, not restate them.
 - **Config YAML structure** — the expected YAML shape (`etfs:` key, per-ETF fields)
   lives in `ConfigManager` and `ETFDefinition.from_config`. Doc prose listing
   these keys is suspect.
@@ -63,10 +66,13 @@ and verify each still matches the code:
 - **Default paths** — README mentions `data/etf_universe.yaml`, `data/e1f.db`,
   `data/currency_metadata.yaml`; verify these match `common.py` `DEFAULT_*`
   constants.
-- **Flag names** — `--config`, `--db`, `--start`, `--force`, `--fallback`,
-  `--currency-meta`; grep each in the argparse definitions.
-- **Subcommand list** — `add`, `list`, `update`, `remove`, `trim`, `validate`;
-  verify each is registered in `config.py`'s `subparsers`.
+- **Flag names** — grep each flag in the argparse definitions. At minimum:
+  `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
+  `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
+  `--db`, `--config` (on `trade-republic` only).
+- **Subcommand list** — `config`: `add`, `list`, `update`, `remove`, `trim`,
+  `validate` (in `config.py`); `transactions`: `list`, `trade-republic`
+  (in `transactions.py`).
 - **Backtick file paths** — confirm each exists.
 
 Flag anything named in prose that no longer resolves or no longer matches.
