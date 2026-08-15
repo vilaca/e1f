@@ -42,8 +42,10 @@ def test_real_commands_are_registered():
     import e1f.fetch as fetch_mod
     import e1f.portfolio as portfolio_mod
     import e1f.transactions as transactions_mod
+    import e1f.validate as validate_mod
 
     assert cli.COMMANDS['config'] is config_mod.main
     assert cli.COMMANDS['fetch'] is fetch_mod.main
+    assert cli.COMMANDS['validate'] is validate_mod.main
     assert cli.COMMANDS['transactions'] is transactions_mod.main
     assert cli.COMMANDS['portfolio'] is portfolio_mod.main

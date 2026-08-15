@@ -16,9 +16,10 @@ The script is the single definition of "green". CI runs the same gates via `scri
 
 ```
 src/e1f/
-  cli.py       — entry point; routes config/fetch/transactions subcommands
+  cli.py       — entry point; routes top-level commands
   config.py    — config subcommand: OpenFIGI resolution, YAML management
   fetch.py     — fetch subcommand: ftgo/yfinance price fetching, SQLite
+  validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
   common.py    — shared primitives: defaults, ETFDefinition, retry logic
@@ -37,13 +38,13 @@ All recorded in `ADR/`. The most load-bearing:
 
 - `ADR-0001` — ftgo is the default source; yfinance requires `--fallback`
 - `ADR-0002` — ftgo resolution is pinned in `data/currency_metadata.yaml`
-- `ADR-0003` — module layer contract: `cli → config/fetch/transactions/portfolio → common`
+- `ADR-0003` — module layer contract: `cli → command modules → common`
 - `ADR-0004` — broker transaction ingest (Trade Republic CSV)
 - `ADR-0005` — portfolio holdings from transactions
 - `ADR-0006` — XTB Cash Operations Excel import
 - `ADR-0007` — fund metadata (TER, distribution, currency) at config time
 - `ADR-0008` — destructive `--replace` series repair with a shrink guard
-- `ADR-0009` — `config validate` error/warning exit-code contract
+- `ADR-0009` — `validate` error/warning exit-code contract
 
 ## Skills
 

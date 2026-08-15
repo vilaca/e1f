@@ -17,12 +17,13 @@ This installs the `e1f` command.
 
 ## Workflow
 
-The tool exposes four subcommands around a shared config/DB:
+The tool exposes five commands around a shared config/DB:
 
 1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
 2. **`e1f fetch`** — populate the SQLite price DB.
-3. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
-4. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
+3. **`e1f validate`** — check config/DB sync, history depth, and data quality.
+4. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
+5. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -36,7 +37,7 @@ e1f config remove IE00BM67HK77
 e1f config trim        # keep only ISINs present in config, DB, and metadata
 
 # Check config/DB sync, history depth, and data quality
-e1f config validate
+e1f validate
 
 # 2. Fetch prices into the SQLite DB
 e1f fetch                 # all ETFs in the config
@@ -58,7 +59,7 @@ Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
-`e1f portfolio --help`.
+`e1f portfolio --help`, `e1f validate --help`.
 
 ## Price sources
 
@@ -76,12 +77,12 @@ drop any stored date (shorter range, narrower window, or interior hole), so a
 truncated response can't silently wipe history
 (`ADR/ADR-0008_price_series_replace_repair.md`).
 
-`e1f config validate` distinguishes **errors** from **warnings**: it exits `1`
+`e1f validate` distinguishes **errors** from **warnings**: it exits `1`
 only on errors (duplicate keys, null or non-positive closes, weekend rows, invalid
 dates, malformed pinned quote-currency metadata, or a config/DB desync) and `0`
 when clean or when only warnings remain (over-limit business-day gaps, large price
 moves, short/sparse/cash-like history).
-See `e1f config validate --help` for the full taxonomy and
+See `e1f validate --help` for the full taxonomy and
 `ADR/ADR-0009_validate_exit_code_contract.md` for the why.
 
 The SQLite DB holds a `prices` table (schema in `src/e1f/fetch.py`) and a
