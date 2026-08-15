@@ -13,17 +13,25 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-This installs the `e1f` command.
+This installs the `e1f` command. Enable completion for the current Bash or Zsh
+session with:
+
+```bash
+source <(e1f autocomplete)
+```
+
+The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override it.
 
 ## Workflow
 
-The tool exposes five commands around a shared config/DB:
+The tool exposes six commands around a shared config/DB:
 
-1. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-2. **`e1f fetch`** — populate the SQLite price DB.
-3. **`e1f validate`** — check config/DB sync, history depth, and data quality.
-4. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
-5. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
+1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
+2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
+3. **`e1f fetch`** — populate the SQLite price DB.
+4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
+5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
+6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)

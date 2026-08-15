@@ -568,7 +568,7 @@ def _cmd_xtb(excel_path: str, db_path: str, config_path: str) -> int:
     return 1 if summary.errors else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f transactions",
         description="Ingest and list broker ETF trades in SQLite",
@@ -625,6 +625,11 @@ Examples:
         help="ETF universe config for ticker→ISIN and missing-ISIN report",
     )
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
     if not args.command:

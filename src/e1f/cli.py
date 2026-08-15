@@ -12,10 +12,27 @@ forwards the rest (so that, e.g., ``e1f fetch --help`` reaches the fetch parser)
 
 import argparse
 import sys
+from collections.abc import Callable
 
-from e1f import config, fetch, portfolio, transactions, validate
+from e1f import autocomplete, config, fetch, portfolio, transactions, validate
 
-COMMANDS = {
+Command = Callable[[list[str]], int]
+
+PARSER_FACTORIES = {
+    "autocomplete": autocomplete._build_parser,
+    "config": config._build_parser,
+    "fetch": fetch._build_parser,
+    "validate": validate._build_parser,
+    "transactions": transactions._build_parser,
+    "portfolio": portfolio._build_parser,
+}
+
+
+def _autocomplete_main(argv: list[str]) -> int:
+    return autocomplete.main(argv, PARSER_FACTORIES)
+
+COMMANDS: dict[str, Command] = {
+    "autocomplete": _autocomplete_main,
     "config": config.main,
     "fetch": fetch.main,
     "validate": validate.main,
@@ -31,6 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Commands:
+  autocomplete  Print Bash or Zsh completion setup
   config        Build/maintain the ETF universe YAML from ISINs
   fetch         Populate the SQLite price DB for the universe
   validate      Check config, metadata, and stored price data

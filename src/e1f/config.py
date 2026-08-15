@@ -34,7 +34,7 @@ def _db_has_prices(db_path: str) -> bool:
         ).fetchone() is not None
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f config",
         description="Build the ETF universe YAML from ISINs (via OpenFIGI)",
@@ -90,6 +90,11 @@ Examples:
     trim_parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                              help='Currency metadata YAML path')
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
     if not args.command:

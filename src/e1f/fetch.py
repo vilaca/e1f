@@ -421,18 +421,7 @@ class DataExtractor:
         return combined
 
 
-def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    # ftgo logs its own progress using the DDMMYYYY strings it requires;
-    # quiet it and emit our own yyyy-mm-dd lines instead.
-    logging.getLogger("ftgo").setLevel(logging.WARNING)
-    # yfinance emits ERROR-level messages for each failed ticker attempt in its
-    # retry loop; these are expected when falling back to .L/.DE suffixes.
-    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f fetch",
         description="Populate the SQLite price DB for the ETF universe",
@@ -476,7 +465,22 @@ Examples:
     parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                         help='Pinned ftgo resolution / currency sidecar path')
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    # ftgo logs its own progress using the DDMMYYYY strings it requires;
+    # quiet it and emit our own yyyy-mm-dd lines instead.
+    logging.getLogger("ftgo").setLevel(logging.WARNING)
+    # yfinance emits ERROR-level messages for each failed ticker attempt in its
+    # retry loop; these are expected when falling back to .L/.DE suffixes.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+    args = _build_parser().parse_args(argv)
 
     if args.replace and not args.isin:
         print("✗ Error: --replace requires an ISIN")
