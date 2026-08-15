@@ -38,13 +38,13 @@ location, never copy the shape into prose. Find violations:
 - **CLI commands and flags** — compare `README.md` command examples against the
   actual `argparse` definitions in `src/e1f/config.py` (config subcommands),
   `src/e1f/fetch.py` (fetch flags), `src/e1f/transactions.py`
-  (`list`, `trade-republic`, `--config`, `--db`), and `src/e1f/portfolio.py`
+  (`list`, `trade-republic`, `tr`, `xtb`, `--config`, `--db`), and `src/e1f/portfolio.py`
   (`--db`, `--config`). Top-level commands are wired in `src/e1f/cli.py`
   (`COMMANDS`; frozen in `tests/test_contracts.py`). A README that re-enumerates
   subcommand names or default values is a candidate for drift.
 - **SQLite schema** — the `prices` table columns live in
   `DataExtractor._init_database`; the `transactions` table columns live in
-  `TradeRepublicImporter._init_database`; both are frozen in
+  `init_transactions_database()` in `src/e1f/transactions.py`; both are frozen in
   `tests/test_contracts.py`. Any prose that lists column names should link to
   the source, not restate them.
 - **Config YAML structure** — the expected YAML shape (`etfs:` key, per-ETF fields)
@@ -71,11 +71,11 @@ and verify each still matches the code:
 - **Flag names** — grep each flag in the argparse definitions. At minimum:
   `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
   `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
-  `--db`, `--config` (on `trade-republic` only); `portfolio`: `--db`, `--config`.
+  `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`.
 - **Subcommand list** — top-level (`cli.py`): `config`, `fetch`, `transactions`,
   `portfolio`. Nested: `config`: `add`, `list`, `update`, `remove`, `trim`,
-  `validate` (in `config.py`); `transactions`: `list`, `trade-republic`
-  (in `transactions.py`). `portfolio` has no nested subcommands.
+  `validate` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
+  `xtb` (in `transactions.py`). `portfolio` has no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 
 Flag anything named in prose that no longer resolves or no longer matches.

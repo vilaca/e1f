@@ -3,6 +3,8 @@
 
 Usage:
     e1f transactions trade-republic path/to/transactions.csv
+    e1f transactions tr path/to/transactions.csv
+    e1f transactions xtb path/to/cash-operations.xlsx
     e1f transactions list
 """
 
@@ -10,20 +12,32 @@ import argparse
 import re
 import sqlite3
 import sys
-from contextlib import closing
+import warnings
+from collections.abc import Generator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, ConfigManager
+from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, XTB_EXCHANGE_SUFFIX, ConfigManager
 
 BROKER_TRADE_REPUBLIC = "trade_republic"
+BROKER_XTB = "xtb"
 _ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
 TR_ETF_TRADE_TYPES = frozenset({"BUY", "SELL", "SAVINGS_PLAN"})
 TR_ETF_ASSET_CLASSES = frozenset({"FUND"})
 
+XTB_BUY_TYPES = frozenset({"stock purchase", "stocks/etf purchase", "ações/etf compra"})
+XTB_SELL_TYPES = frozenset({"stock sale", "stocks/etf sale", "ações/etf vende"})
+XTB_ETF_CATEGORY = "etf"
+_XTB_COMMENT_RE = re.compile(
+    r"(?:OPEN|CLOSE)\s+(?:BUY|SELL)\s+"
+    r"([0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)\s+@\s+"
+    r"([0-9]+(?:\.[0-9]+)?)",
+    re.IGNORECASE,
+)
 TR_REQUIRED_COLUMNS = (
     "datetime",
     "date",
@@ -60,13 +74,51 @@ _INSERT_SQL = """
 
 @dataclass(frozen=True)
 class ImportSummary:
-    """Result counts from a broker CSV ingest."""
+    """Result counts from a broker export ingest."""
 
     inserted: int
     skipped: int
     filtered: int
     errors: int
     missing_isins: tuple[tuple[str, str], ...] = ()
+    unmapped_tickers: tuple[tuple[str, str], ...] = ()
+
+
+def init_transactions_database(db_path: str) -> None:
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transactions (
+                broker TEXT NOT NULL,
+                transaction_id TEXT NOT NULL,
+                datetime TEXT,
+                symbol TEXT,
+                side TEXT,
+                shares REAL,
+                price REAL,
+                fee REAL,
+                tax REAL,
+                PRIMARY KEY (broker, transaction_id)
+            )
+            """
+        )
+        conn.commit()
+
+
+def list_transaction_rows(db_path: str) -> list[tuple[Any, ...]]:
+    """Return stored transactions ordered by datetime."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'"
+        ).fetchone() is None:
+            return []
+        return conn.execute(
+            """
+            SELECT broker, datetime, symbol, side, shares, price, fee, tax
+            FROM transactions
+            ORDER BY datetime, transaction_id
+            """
+        ).fetchall()
 
 
 def _parse_str(value: object) -> str:
@@ -81,6 +133,36 @@ def _is_isin(value: str) -> bool:
 
 def _normalize_tr_type(value: object) -> str:
     return _parse_str(value).upper().replace(" ", "_")
+
+
+def _parse_float(value: object) -> float | None:
+    text = _parse_str(value)
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _format_datetime(value: object) -> str:
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return _parse_str(value)
+
+
+def _parse_xtb_id(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    if isinstance(value, float):
+        return str(int(value))
+    text = _parse_str(value)
+    if not text:
+        return ""
+    try:
+        return str(int(float(text)))
+    except ValueError:
+        return text
 
 
 def is_etf_trade_row(row: pd.Series) -> bool:
@@ -98,6 +180,138 @@ def _etf_trade_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df[df.apply(is_etf_trade_row, axis=1)]
 
 
+def _register_xtb_ticker(mapping: dict[str, str], isin: str, ticker: str, exchange: str) -> None:
+    base = _parse_str(ticker).upper()
+    if not base:
+        return
+    mapping[base] = isin
+    suffix = XTB_EXCHANGE_SUFFIX.get(_parse_str(exchange).upper())
+    if suffix:
+        mapping[f"{base}.{suffix}"] = isin
+
+
+def build_ticker_to_isin(config_path: str = DEFAULT_CONFIG) -> dict[str, str]:
+    """Map XTB tickers (and ``TICKER.EXCHANGE`` forms) to ISINs from the ETF config."""
+    mapping: dict[str, str] = {}
+    for isin, data in ConfigManager(config_path).config.get("etfs", {}).items():
+        listings = data.get("listings")
+        if listings:
+            for entry in listings:
+                _register_xtb_ticker(
+                    mapping,
+                    isin,
+                    _parse_str(entry.get("ticker")),
+                    _parse_str(entry.get("exchange")),
+                )
+            continue
+        exchange = _parse_str(data.get("exchange")).upper()
+        for ticker in data.get("tickers", []):
+            _register_xtb_ticker(mapping, isin, ticker, exchange)
+    return mapping
+
+
+def resolve_xtb_ticker(ticker: object, mapping: dict[str, str]) -> str:
+    raw = _parse_str(ticker).upper()
+    if not raw:
+        return ""
+    if _is_isin(raw):
+        return raw
+    if raw in mapping:
+        return mapping[raw]
+    base = raw.split(".", 1)[0]
+    return mapping.get(base, "")
+
+
+def parse_xtb_trade_comment(comment: object) -> tuple[float, float] | None:
+    match = _XTB_COMMENT_RE.search(_parse_str(comment))
+    if not match:
+        return None
+    shares = float(match.group(1).split("/")[0])
+    price = float(match.group(2))
+    return shares, price
+
+
+def xtb_shares_and_price(row: pd.Series) -> tuple[float, float] | None:
+    """Share count from Comment; unit price from Amount/shares when cash is present."""
+    trade = parse_xtb_trade_comment(row["comment"])
+    if trade is None:
+        return None
+    shares, comment_price = trade
+    if shares <= 0:
+        return None
+    amount = _parse_float(row.get("amount"))
+    if amount is not None and amount != 0:
+        return shares, abs(amount) / shares
+    return shares, comment_price
+
+
+def normalize_xtb_side(value: object) -> str:
+    trade_type = _parse_str(value).lower()
+    if trade_type in XTB_BUY_TYPES:
+        return "BUY"
+    if trade_type in XTB_SELL_TYPES:
+        return "SELL"
+    return ""
+
+
+def is_xtb_etf_trade_row(row: pd.Series) -> bool:
+    if _parse_str(row["category"]).lower() != XTB_ETF_CATEGORY:
+        return False
+    return normalize_xtb_side(row["type"]) in {"BUY", "SELL"}
+
+
+@contextmanager
+def _suppress_openpyxl_default_style_warning() -> Generator[None, None, None]:
+    """XTB exports trigger a harmless openpyxl default-style warning."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Workbook contains no default style*",
+            category=UserWarning,
+        )
+        yield
+
+
+def load_xtb_cash_operations(path: Path) -> pd.DataFrame:
+    """Load the Cash Operations sheet from an XTB account-history Excel export."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Excel file not found: {path}")
+
+    with _suppress_openpyxl_default_style_warning():
+        workbook = pd.ExcelFile(path)
+        sheet = next(
+            (name for name in workbook.sheet_names if "cash oper" in str(name).lower()),
+            None,
+        )
+        if sheet is None:
+            raise ValueError("no Cash Operations sheet found in XTB export")
+
+        preview = pd.read_excel(path, sheet_name=sheet, header=None, nrows=40)
+        header_row = _find_xtb_header_row(preview)
+        if header_row is None:
+            raise ValueError("could not find Cash Operations header row in XTB export")
+
+        df = pd.read_excel(path, sheet_name=sheet, header=header_row)
+    df.columns = [_parse_str(col).lower() for col in df.columns]
+    required = {"type", "ticker", "category", "time", "amount", "id", "comment"}
+    missing = required - set(df.columns)
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise ValueError(f"missing required XTB Cash Operations columns: {missing_list}")
+
+    df = df[df["type"].notna()]
+    df = df[df["type"].astype(str).str.strip().str.lower() != "total"]
+    return df.reset_index(drop=True)
+
+
+def _find_xtb_header_row(preview: pd.DataFrame) -> int | None:
+    for idx, row in preview.iterrows():
+        cells = {_parse_str(value).lower() for value in row if _parse_str(value)}
+        if {"type", "ticker", "id", "comment"}.issubset(cells):
+            return int(str(idx))
+    return None
+
+
 def _isins_from_dataframe(df: pd.DataFrame) -> dict[str, str]:
     """Return unique ISIN -> security name from ingested ETF trade rows."""
     found: dict[str, str] = {}
@@ -112,12 +326,24 @@ def missing_config_isins(
     df: pd.DataFrame,
     config_path: str = DEFAULT_CONFIG,
 ) -> tuple[tuple[str, str], ...]:
-    """ISINs present in the CSV but absent from the ETF universe config."""
+    """ISINs present in the ingest but absent from the ETF universe config."""
     configured = set(ConfigManager(config_path).config.get("etfs", {}).keys())
     isins = _isins_from_dataframe(df)
     return tuple(
         (isin, isins[isin])
         for isin in sorted(isins)
+        if isin not in configured
+    )
+
+
+def missing_config_isins_from_symbols(
+    symbols: dict[str, str],
+    config_path: str = DEFAULT_CONFIG,
+) -> tuple[tuple[str, str], ...]:
+    configured = set(ConfigManager(config_path).config.get("etfs", {}).keys())
+    return tuple(
+        (isin, symbols[isin])
+        for isin in sorted(symbols)
         if isin not in configured
     )
 
@@ -135,14 +361,16 @@ def format_missing_isins(missing: tuple[tuple[str, str], ...]) -> str:
     return "\n".join(lines)
 
 
-def _parse_float(value: object) -> float | None:
-    text = _parse_str(value)
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
+def format_unmapped_tickers(unmapped: tuple[tuple[str, str], ...]) -> str:
+    """Human-readable list of XTB tickers with no ISIN match in the ETF config."""
+    if not unmapped:
+        return ""
+    lines = ["", "Tickers not mapped to any ISIN in etf_universe.yaml:"]
+    for ticker, name in unmapped:
+        suffix = f"  {name}" if name else ""
+        lines.append(f"  {ticker}{suffix}")
+    lines.extend(["", "  Add each ETF with e1f config add <ISIN>, then re-import."])
+    return "\n".join(lines)
 
 
 class TradeRepublicImporter:
@@ -155,27 +383,7 @@ class TradeRepublicImporter:
     ) -> None:
         self.db_path = db_path
         self.config_path = config_path
-        self._init_database()
-
-    def _init_database(self) -> None:
-        with closing(sqlite3.connect(self.db_path)) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS transactions (
-                    broker TEXT NOT NULL,
-                    transaction_id TEXT NOT NULL,
-                    datetime TEXT,
-                    symbol TEXT,
-                    side TEXT,
-                    shares REAL,
-                    price REAL,
-                    fee REAL,
-                    tax REAL,
-                    PRIMARY KEY (broker, transaction_id)
-                )
-                """
-            )
-            conn.commit()
+        init_transactions_database(db_path)
 
     @staticmethod
     def _validate_columns(df: pd.DataFrame) -> None:
@@ -240,22 +448,100 @@ class TradeRepublicImporter:
         )
 
     def list_rows(self) -> list[tuple[Any, ...]]:
-        """Return stored transactions ordered by datetime."""
+        return list_transaction_rows(self.db_path)
+
+
+class XtbImporter:
+    """Parse XTB Cash Operations Excel export and store canonical rows."""
+
+    def __init__(
+        self,
+        db_path: str = DEFAULT_DB,
+        config_path: str = DEFAULT_CONFIG,
+    ) -> None:
+        self.db_path = db_path
+        self.config_path = config_path
+        init_transactions_database(db_path)
+
+    def import_excel(self, excel_path: str | Path) -> ImportSummary:
+        path = Path(excel_path)
+        df = load_xtb_cash_operations(path)
+        ticker_to_isin = build_ticker_to_isin(self.config_path)
+
+        inserted = 0
+        skipped = 0
+        filtered = 0
+        errors = 0
+        resolved_names: dict[str, str] = {}
+        unmapped: dict[str, str] = {}
+
         with closing(sqlite3.connect(self.db_path)) as conn:
-            return conn.execute(
-                """
-                SELECT broker, datetime, symbol, side, shares, price, fee, tax
-                FROM transactions
-                ORDER BY datetime, transaction_id
-                """
-            ).fetchall()
+            for _, row in df.iterrows():
+                if not is_xtb_etf_trade_row(row):
+                    filtered += 1
+                    continue
+
+                side = normalize_xtb_side(row["type"])
+                trade = xtb_shares_and_price(row)
+                if trade is None:
+                    filtered += 1
+                    continue
+
+                isin = resolve_xtb_ticker(row["ticker"], ticker_to_isin)
+                if not isin:
+                    ticker = _parse_str(row["ticker"]).upper()
+                    if ticker and ticker not in unmapped:
+                        unmapped[ticker] = _parse_str(row.get("instrument", ""))
+                    filtered += 1
+                    continue
+
+                transaction_id = _parse_xtb_id(row["id"])
+                if not transaction_id:
+                    errors += 1
+                    continue
+
+                shares, price = trade
+                instrument = _parse_str(row.get("instrument", ""))
+                if isin not in resolved_names and instrument:
+                    resolved_names[isin] = instrument
+
+                values = (
+                    BROKER_XTB,
+                    transaction_id,
+                    _format_datetime(row["time"]),
+                    isin,
+                    side,
+                    shares,
+                    price,
+                    None,
+                    None,
+                )
+                cursor = conn.execute(_INSERT_SQL, values)
+                if cursor.rowcount == 1:
+                    inserted += 1
+                else:
+                    skipped += 1
+            conn.commit()
+
+        return ImportSummary(
+            inserted=inserted,
+            skipped=skipped,
+            filtered=filtered,
+            errors=errors,
+            missing_isins=missing_config_isins_from_symbols(resolved_names, self.config_path),
+            unmapped_tickers=tuple((ticker, unmapped[ticker]) for ticker in sorted(unmapped)),
+        )
+
+    def list_rows(self) -> list[tuple[Any, ...]]:
+        return list_transaction_rows(self.db_path)
 
 
 def _cmd_list(db_path: str) -> int:
-    rows = TradeRepublicImporter(db_path=db_path).list_rows()
+    rows = list_transaction_rows(db_path)
     if not rows:
         print("No transactions in database")
         print("Ingest some: e1f transactions trade-republic path/to/transactions.csv")
+        print("             e1f transactions xtb path/to/cash-operations.xlsx")
         return 0
 
     print(
@@ -276,17 +562,29 @@ def _cmd_list(db_path: str) -> int:
     return 0
 
 
+def _print_import_summary(broker_label: str, summary: ImportSummary) -> None:
+    print(
+        f"✓ {broker_label} ingest complete: "
+        f"{summary.inserted} inserted, "
+        f"{summary.skipped} skipped (duplicates), "
+        f"{summary.filtered} filtered (non-ETF trades or unmapped tickers), "
+        f"{summary.errors} errors"
+        f"{format_unmapped_tickers(summary.unmapped_tickers)}"
+        f"{format_missing_isins(summary.missing_isins)}"
+    )
+
+
 def _cmd_trade_republic(csv_path: str, db_path: str, config_path: str) -> int:
     importer = TradeRepublicImporter(db_path=db_path, config_path=config_path)
     summary = importer.import_csv(csv_path)
-    print(
-        f"✓ Trade Republic ingest complete: "
-        f"{summary.inserted} inserted, "
-        f"{summary.skipped} skipped (duplicates), "
-        f"{summary.filtered} filtered (non-ETF trades), "
-        f"{summary.errors} errors"
-        f"{format_missing_isins(summary.missing_isins)}"
-    )
+    _print_import_summary("Trade Republic", summary)
+    return 1 if summary.errors else 0
+
+
+def _cmd_xtb(excel_path: str, db_path: str, config_path: str) -> int:
+    importer = XtbImporter(db_path=db_path, config_path=config_path)
+    summary = importer.import_excel(excel_path)
+    _print_import_summary("XTB", summary)
     return 1 if summary.errors else 0
 
 
@@ -301,7 +599,11 @@ Examples:
   e1f transactions list
 
   # Ingest Trade Republic Transaktionsexport CSV
-  e1f transactions trade-republic ~/Downloads/transactions.csv
+    e1f transactions trade-republic ~/Downloads/transactions.csv
+    e1f transactions tr ~/Downloads/transactions.csv
+
+  # Ingest XTB Cash Operations Excel export
+  e1f transactions xtb ~/Downloads/EUR_38472916_2006-01-01_2026-08-15.xlsx
 
   # Use a custom database path
   e1f transactions trade-republic transactions.csv --db data/e1f.db
@@ -318,6 +620,7 @@ Examples:
 
     tr_parser = subparsers.add_parser(
         "trade-republic",
+        aliases=["tr"],
         help="Ingest Trade Republic Transaktionsexport CSV",
     )
     tr_parser.add_argument("csv_path", help="Path to the CSV export file")
@@ -329,6 +632,19 @@ Examples:
         help="ETF universe config for missing-ISIN report",
     )
 
+    xtb_parser = subparsers.add_parser(
+        "xtb",
+        help="Ingest XTB Cash Operations Excel export",
+    )
+    xtb_parser.add_argument("excel_path", help="Path to the XTB Excel export file")
+    xtb_parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
+    xtb_parser.add_argument(
+        "--config",
+        "-c",
+        default=DEFAULT_CONFIG,
+        help="ETF universe config for ticker→ISIN and missing-ISIN report",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.command:
@@ -338,8 +654,10 @@ Examples:
     try:
         if args.command == "list":
             return _cmd_list(args.db)
-        if args.command == "trade-republic":
+        if args.command in {"trade-republic", "tr"}:
             return _cmd_trade_republic(args.csv_path, args.db, args.config)
+        if args.command == "xtb":
+            return _cmd_xtb(args.excel_path, args.db, args.config)
         parser.error(f"unsupported command: {args.command!r}")
         return 1  # unreachable; keeps mypy happy
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1

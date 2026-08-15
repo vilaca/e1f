@@ -4,8 +4,8 @@
 
 ## Context
 
-e1f stores ETF buy/sell rows from broker CSV ingest in SQLite (`ADR-0004`).
-Users need a view of what they currently hold and the average price paid per
+e1f stores ETF buy/sell rows from broker transaction ingest in SQLite
+(`ADR-0004`, `ADR-0006`). Users need a view of what they currently hold and the average price paid per
 share, without maintaining a separate holdings file.
 
 ## Decision

@@ -122,3 +122,96 @@ etfs:
     figi: BBG000P71KS0
     resolved_at: '2026-08-15T01:22:34.655575+00:00'
     source: OpenFIGI
+  LU1437018838:
+    name: AM FTSE EPRA NRIT GL ETF ACC
+    tickers:
+    - EPRA
+    exchange: FP
+    figi: BBG00F2XZQ87
+    resolved_at: '2026-08-15T02:22:31.549705+00:00'
+    source: OpenFIGI
+  LU1681048630:
+    name: AM GLOBAL LUXURY ETF EUR ACC
+    tickers:
+    - GLUX
+    exchange: FP
+    figi: BBG00KVGM8F7
+    resolved_at: '2026-08-15T02:22:31.680635+00:00'
+    source: OpenFIGI
+  IE00B3VSSL01:
+    name: INVESCO US TECHNOLOGY S&P
+    tickers:
+    - XLKS
+    exchange: LN
+    figi: BBG000Q2S7F4
+    resolved_at: '2026-08-15T02:22:31.826912+00:00'
+    source: OpenFIGI
+  IE00BM67HK77:
+    name: X MSCI WORLD HEALTH CARE
+    tickers:
+    - XDWH
+    exchange: GR
+    figi: BBG00C9Y1409
+    resolved_at: '2026-08-15T02:24:12.473695+00:00'
+    source: OpenFIGI
+  IE00BDBRDM35:
+    name: ISHARES GLB AGG EUR-H ACC
+    tickers:
+    - 0GGH
+    - EUNA
+    - AGGH
+    - ISREF
+    exchange: LN
+    figi: BBG00J5HL001
+    listings:
+    - ticker: 0GGH
+      exchange: LN
+    - ticker: EUNA
+      exchange: GR
+    - ticker: AGGH
+      exchange: NA
+    - ticker: ISREF
+      exchange: US
+    resolved_at: '2026-08-15T02:27:04.338196+00:00'
+    source: OpenFIGI
+  IE00BKM4GZ66:
+    name: ISHARES CORE EM IMI ACC
+    tickers:
+    - EMIM
+    - EIMI
+    - IS3N
+    - ISAPF
+    exchange: LN
+    figi: BBG006B70NW2
+    listings:
+    - ticker: EMIM
+      exchange: LN
+    - ticker: EIMI
+      exchange: LN
+    - ticker: EMIM
+      exchange: NA
+    - ticker: IS3N
+      exchange: GR
+    - ticker: ISAPF
+      exchange: US
+    resolved_at: '2026-08-15T02:28:34.755607+00:00'
+    source: OpenFIGI
+  IE0006WW1TQ4:
+    name: X MSCI WORLD EX USA 1C
+    tickers:
+    - EXUS
+    - XTMWF
+    - XMWX
+    exchange: GR
+    figi: BBG01LMVXSR2
+    listings:
+    - ticker: EXUS
+      exchange: GR
+    - ticker: EXUS
+      exchange: LN
+    - ticker: XTMWF
+      exchange: US
+    - ticker: XMWX
+      exchange: LN
+    resolved_at: '2026-08-15T02:31:22.132993+00:00'
+    source: OpenFIGI

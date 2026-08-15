@@ -16,6 +16,7 @@ dependencies = [
     "requests",
     "yfinance",
     "ftgo",
+    "openpyxl>=3.1.5",
 ]
 
 [project.scripts]

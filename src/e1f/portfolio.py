@@ -105,15 +105,15 @@ def _cmd_portfolio(db_path: str, config_path: str) -> int:
 
     print(
         f"\n{'Broker':<16} {'ISIN':<14} {'Name':<40} {'Shares':>10} "
-        f"{'Avg paid':>10} {'Total paid':>12}"
+        f"{'Avg paid':>12} {'Total paid':>14}"
     )
-    print("-" * 116)
+    print("-" * 120)
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         print(
             f"{holding.broker:<16} {holding.symbol:<14} {name:<40} "
-            f"{holding.shares:>10.4f} {holding.avg_cost:>10.2f} "
-            f"{holding.total_paid:>12.2f}"
+            f"{holding.shares:>10.4f} {holding.avg_cost:>12.4f} "
+            f"{holding.total_paid:>14.4f}"
         )
     print(f"\nTotal: {len(holdings)} holdings")
     return 0
