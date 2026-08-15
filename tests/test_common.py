@@ -7,6 +7,7 @@ import yaml
 from e1f.common import (
     ConfigManager,
     OpenFIGIResolver,
+    _asset_class_from_investment_focus,
     _best_ftgo_name,
     _fund_currency_from_names,
     _parse_percent_value,
@@ -183,6 +184,14 @@ def test_distribution_from_name():
     assert distribution_from_name('Some ETF EUR Hedged') is None
 
 
+def test_asset_class_from_investment_focus():
+    assert _asset_class_from_investment_focus('Equity, United States') == 'Equity'
+    assert _asset_class_from_investment_focus(
+        'Bonds, World, Aggregate, All maturities'
+    ) == 'Bonds'
+    assert _asset_class_from_investment_focus('') is None
+
+
 def test_best_ftgo_name_prefers_share_class_matching_openfigi_hint():
     names = [
         'Amundi Prime All Country World UCITS ETF USD Dist',
@@ -294,10 +303,12 @@ def test_justetf_field_parses_basics_table():
         '<div data-testid="tl_etf-basics_value_ter">0.07% p.a.</div>'
         '<td data-testid="tl_etf-basics_value_fund-currency">USD</td>'
         '<div data-testid="tl_etf-basics_value_distribution-policy">Accumulating</div>'
+        '<div data-testid="tl_etf-basics_value_investment-focus">Equity, World</div>'
     )
     assert _justetf_field(html, 'ter') == '0.07% p.a.'
     assert _justetf_field(html, 'fund-currency') == 'USD'
     assert _justetf_field(html, 'distribution-policy') == 'Accumulating'
+    assert _justetf_field(html, 'investment-focus') == 'Equity, World'
 
 
 def test_fetch_justetf_html(monkeypatch):
@@ -338,6 +349,24 @@ def test_enrich_uses_justetf_distribution_when_names_silent(monkeypatch):
     enriched = enrich_fund_metadata(ISIN, info)
 
     assert enriched['distribution'] == 'Distributing'
+
+
+def test_enrich_uses_justetf_investment_focus_for_asset_class(monkeypatch):
+    html = (
+        '<div data-testid="tl_etf-basics_value_investment-focus">'
+        'Bonds, World, Aggregate, All maturities</div>'
+    )
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['Some Bond ETF USD (Acc)'],
+        ter=0.1,
+        justetf_html=html,
+    )
+
+    info = {'name': 'Some Bond ETF USD (Acc)', 'tickers': ['BND'], 'exchange': 'LN'}
+    enriched = enrich_fund_metadata(ISIN, info)
+
+    assert enriched['asset_class'] == 'Bonds'
 
 
 def test_ftgo_listing_names_and_fund_name(monkeypatch):

@@ -19,11 +19,12 @@ etfs:
       exchange: US
     - ticker: VWCE
       exchange: NA
-    resolved_at: '2026-08-15T13:53:23.197779+00:00'
+    resolved_at: '2026-08-15T22:44:09.376687+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.14
+    asset_class: Equity
   IE00B3RBWM25:
     name: VANG FTSE AW USDD
     tickers:
@@ -44,11 +45,12 @@ etfs:
       exchange: NA
     - ticker: VFPEF
       exchange: US
-    resolved_at: '2026-08-15T13:53:10.917133+00:00'
+    resolved_at: '2026-08-15T22:43:55.245882+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Distributing
     ter: 0.14
+    asset_class: Equity
   IE0003XJA0J9:
     name: AMUNDI PRME ALL CTRY WLD ACC
     tickers:
@@ -61,11 +63,12 @@ etfs:
       exchange: GR
     - ticker: WEBQ
       exchange: GR
-    resolved_at: '2026-08-15T13:53:07.088092+00:00'
+    resolved_at: '2026-08-15T22:43:51.284338+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.07
+    asset_class: Equity
   IE00B44Z5B48:
     name: SS SPD MS AL CO WO UC ET-USD
     tickers:
@@ -84,11 +87,12 @@ etfs:
       exchange: LN
     - ticker: ACWEF
       exchange: US
-    resolved_at: '2026-08-15T13:53:16.635713+00:00'
+    resolved_at: '2026-08-15T22:44:01.036369+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.12
+    asset_class: Equity
   IE00B3YLTY66:
     name: SP MS ALL CO WI MKT UC ET-AC
     tickers:
@@ -104,11 +108,12 @@ etfs:
       exchange: LN
     - ticker: SGACF
       exchange: US
-    resolved_at: '2026-08-15T13:53:15.055725+00:00'
+    resolved_at: '2026-08-15T22:43:59.668375+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.17
+    asset_class: Equity
   IE00B5BMR087:
     name: ISHARES CORE S&P 500
     tickers:
@@ -129,11 +134,12 @@ etfs:
       exchange: NA
     - ticker: CSTNL
       exchange: US
-    resolved_at: '2026-08-15T13:53:20.147126+00:00'
+    resolved_at: '2026-08-15T22:44:05.248455+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.07
+    asset_class: Equity
   IE00BFMXXD54:
     name: VANG S&P500 USDA
     tickers:
@@ -151,11 +157,12 @@ etfs:
       exchange: GR
     - ticker: VGFPF
       exchange: US
-    resolved_at: '2026-08-15T13:53:22.166587+00:00'
+    resolved_at: '2026-08-15T22:44:07.955802+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.07
+    asset_class: Equity
   IE00B53SZB19:
     name: ISHARES NASDAQ 100 USD ACC
     tickers:
@@ -176,11 +183,12 @@ etfs:
       exchange: NA
     - ticker: ISVAF
       exchange: US
-    resolved_at: '2026-08-15T13:53:19.081468+00:00'
+    resolved_at: '2026-08-15T22:44:03.915445+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.3
+    asset_class: Equity
   LU1829221024:
     name: AM CR NASDAQ-100 SWP ETF ACC
     tickers:
@@ -199,11 +207,12 @@ etfs:
       exchange: GR
     - ticker: MLYXF
       exchange: US
-    resolved_at: '2026-08-15T13:53:29.001246+00:00'
+    resolved_at: '2026-08-15T22:44:16.319511+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.22
+    asset_class: Equity
   IE000YYE6WK5:
     name: VANECK DEFENSE ETF
     tickers:
@@ -222,11 +231,12 @@ etfs:
       exchange: GR
     - ticker: VNCUF
       exchange: US
-    resolved_at: '2026-08-15T13:53:09.915981+00:00'
+    resolved_at: '2026-08-15T22:43:53.956353+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.55
+    asset_class: Equity
   IE00B3YCGJ38:
     name: INVESCO S&P 500 ACC
     tickers:
@@ -247,11 +257,12 @@ etfs:
       exchange: GR
     - ticker: INVMF
       exchange: US
-    resolved_at: '2026-08-15T13:53:13.523025+00:00'
+    resolved_at: '2026-08-15T22:43:58.213323+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.05
+    asset_class: Equity
   IE00B4K48X80:
     name: ISHARES CORE MSCI EUROPE ACC
     tickers:
@@ -270,11 +281,12 @@ etfs:
       exchange: GR
     - ticker: ISACF
       exchange: US
-    resolved_at: '2026-08-15T13:53:18.092539+00:00'
+    resolved_at: '2026-08-15T22:44:02.462479+00:00'
     source: OpenFIGI
     fund_currency: EUR
     distribution: Accumulating
     ter: 0.12
+    asset_class: Equity
   LU1437018838:
     name: AM FTSE EPRA NRIT GL ETF ACC
     tickers:
@@ -290,11 +302,12 @@ etfs:
       exchange: LN
     - ticker: A4H5
       exchange: GR
-    resolved_at: '2026-08-15T13:53:26.565430+00:00'
+    resolved_at: '2026-08-15T22:44:13.445003+00:00'
     source: OpenFIGI
     fund_currency: EUR
     distribution: Accumulating
     ter: 0.24
+    asset_class: Real Estate
   LU1681048630:
     name: AM GLOBAL LUXURY ETF EUR ACC
     tickers:
@@ -307,11 +320,12 @@ etfs:
       exchange: GR
     - ticker: OSEHF
       exchange: US
-    resolved_at: '2026-08-15T13:53:28.031321+00:00'
+    resolved_at: '2026-08-15T22:44:14.851778+00:00'
     source: OpenFIGI
     fund_currency: EUR
     distribution: Accumulating
     ter: 0.25
+    asset_class: Equity
   IE00B3VSSL01:
     name: INVESCO US TECHNOLOGY S&P
     tickers:
@@ -330,11 +344,12 @@ etfs:
       exchange: GR
     - ticker: ITTSF
       exchange: US
-    resolved_at: '2026-08-15T13:53:11.912382+00:00'
+    resolved_at: '2026-08-15T22:43:56.698171+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.14
+    asset_class: Equity
   IE00BM67HK77:
     name: X MSCI WORLD HEALTH CARE
     tickers:
@@ -352,11 +367,12 @@ etfs:
       exchange: US
     - ticker: XWHS
       exchange: LN
-    resolved_at: '2026-08-15T13:53:25.167207+00:00'
+    resolved_at: '2026-08-15T22:44:12.051567+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.25
+    asset_class: Equity
   IE00BDBRDM35:
     name: ISHARES GLB AGG EUR-H ACC
     tickers:
@@ -375,11 +391,12 @@ etfs:
       exchange: NA
     - ticker: ISREF
       exchange: US
-    resolved_at: '2026-08-15T13:53:21.183517+00:00'
+    resolved_at: '2026-08-15T22:44:06.675975+00:00'
     source: OpenFIGI
     fund_currency: EUR
     distribution: Accumulating
     ter: 0.1
+    asset_class: Bonds
   IE00BKM4GZ66:
     name: ISHARES CORE EM IMI ACC
     tickers:
@@ -400,11 +417,12 @@ etfs:
       exchange: GR
     - ticker: ISAPF
       exchange: US
-    resolved_at: '2026-08-15T13:53:24.186380+00:00'
+    resolved_at: '2026-08-15T22:44:10.711008+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.18
+    asset_class: Equity
   IE0006WW1TQ4:
     name: X MSCI WORLD EX USA 1C
     tickers:
@@ -422,8 +440,9 @@ etfs:
       exchange: US
     - ticker: XMWX
       exchange: LN
-    resolved_at: '2026-08-15T13:53:08.486244+00:00'
+    resolved_at: '2026-08-15T22:43:52.681266+00:00'
     source: OpenFIGI
     fund_currency: USD
     distribution: Accumulating
     ter: 0.15
+    asset_class: Equity

@@ -246,6 +246,7 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
                 "etfs": {
                     ISIN_ETF: {
                         "name": "Core MSCI World USD (Acc)",
+                        "asset_class": "Equity",
                         "fund_currency": "USD",
                         "distribution": "Accumulating",
                         "ter": 0.22,
@@ -268,6 +269,8 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
     assert "trade_republic" not in out
     assert ISIN_ETF in out
     assert "Core MSCI World USD (Acc)" in out
+    assert "Asset class" in out
+    assert "Equity" in out
     assert "USD" in out
     assert "ACC" in out
     assert "Accumulating" not in out

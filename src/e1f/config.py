@@ -105,13 +105,20 @@ Examples:
             print("Add one: e1f config add IE00BM67HK77")
             return 0
 
-        print(f"\n{'ISIN':<14} {'Name':<50} {'Ticker':<12} {'Exchange'}")
-        print("-" * 90)
+        print(
+            f"\n{'ISIN':<14} {'Name':<50} {'Asset class':<12} "
+            f"{'Ticker':<12} {'Exchange'}"
+        )
+        print("-" * 103)
         for isin, data in etfs:
             name = data.get('name', 'Unknown')[:48]
+            asset_class = str(data.get('asset_class') or '')[:12]
             ticker = data.get('tickers', [''])[0] if data.get('tickers') else ''
             exchange = data.get('exchange', '')
-            print(f"{isin:<14} {name:<50} {ticker:<12} {exchange}")
+            print(
+                f"{isin:<14} {name:<50} {asset_class:<12} "
+                f"{ticker:<12} {exchange}"
+            )
         print(f"\nTotal: {len(etfs)} ETFs")
         return 0
 

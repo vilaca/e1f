@@ -136,6 +136,12 @@ def distribution_from_name(name: str) -> str | None:
     return None
 
 
+def _asset_class_from_investment_focus(value: str) -> str | None:
+    """Extract justETF's broad asset class from its detailed investment focus."""
+    asset_class = (value or "").partition(",")[0].strip()
+    return asset_class or None
+
+
 def _parse_percent_value(value: str) -> float | None:
     text = (value or "").strip()
     if not text or text in {"--", "-"}:
@@ -276,16 +282,18 @@ def _ftgo_fund_name(isin: str, hint: str = "") -> tuple[str | None, str | None]:
 
 
 def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
-    """Augment OpenFIGI resolution with fund currency, distribution, and TER.
+    """Augment OpenFIGI resolution with fund currency, distribution, TER, and asset class.
 
     OpenFIGI names are ISIN-specific and take precedence. ftgo fills gaps for
     currency/distribution and supplies TER via fund stats. justETF is a fallback
-    when ftgo omits a field (common for newer Amundi listings).
+    when ftgo omits a field (common for newer Amundi listings) and supplies the
+    underlying investment's asset class.
     """
     openfigi_name = str(info.get("name") or "")
     fund_currency = fund_currency_from_name(openfigi_name)
     distribution = distribution_from_name(openfigi_name)
     ter: float | None = None
+    asset_class: str | None = None
 
     matches, ftgo_error = _ftgo_load(isin)
     ftgo_names = _names_from_ftgo_matches(matches) if matches is not None else []
@@ -306,7 +314,7 @@ def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
             )
 
     justetf_html: str | None = None
-    if ter is None or not fund_currency or not distribution:
+    if ter is None or not fund_currency or not distribution or not asset_class:
         justetf_html = _fetch_justetf_html(isin)
 
     if ter is None and justetf_html:
@@ -334,6 +342,11 @@ def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
             elif "distrib" in dist_lower:
                 distribution = "Distributing"
 
+    if justetf_html:
+        raw_focus = _justetf_field(justetf_html, "investment-focus")
+        if raw_focus:
+            asset_class = _asset_class_from_investment_focus(raw_focus)
+
     if ftgo_error and (fund_currency or distribution):
         print(
             f"⚠ ftgo {isin}: {ftgo_error}; "
@@ -346,6 +359,8 @@ def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
         info["distribution"] = distribution
     if ter is not None:
         info["ter"] = ter
+    if asset_class:
+        info["asset_class"] = asset_class
     return info
 
 
@@ -500,6 +515,8 @@ class ConfigManager:
             print(f"  Distribution: {info['distribution']}")
         if info.get('ter') is not None:
             print(f"  TER: {info['ter']:.2f}%")
+        if info.get('asset_class'):
+            print(f"  Asset class: {info['asset_class']}")
         return True
 
     def list(self) -> builtins.list[tuple[str, dict[str, Any]]]:
@@ -536,4 +553,6 @@ class ConfigManager:
             print(f"  Distribution: {info['distribution']}")
         if info.get('ter') is not None:
             print(f"  TER: {info['ter']:.2f}%")
+        if info.get('asset_class'):
+            print(f"  Asset class: {info['asset_class']}")
         return True
