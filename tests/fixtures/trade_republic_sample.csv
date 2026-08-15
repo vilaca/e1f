@@ -1,0 +1,4 @@
+"datetime","date","account_type","category","type","asset_class","name","symbol","shares","price","amount","fee","tax","currency","original_amount","original_currency","fx_rate","description","transaction_id","counterparty_name","counterparty_iban","payment_reference","mcc_code"
+"2024-04-09T04:38:47.509023Z","2024-04-08","DEFAULT","CASH","CUSTOMER_INBOUND","","Max Mustermann","","","","200.000000","","","EUR","","","","","tr-uuid-001","Max Mustermann","DE89370400440532013000","",""
+"2024-04-16T21:35:23.415Z","2024-04-16","DEFAULT","TRADING","BUY","FUND","Core MSCI World USD (Acc)","IE00B4L5Y983","2.2431330000","89.161000","-200.00","","","EUR","","","","","tr-uuid-002","","","",""
+"2024-06-01T10:00:00.000Z","2024-06-01","DEFAULT","TRADING","DIVIDEND","STOCK","Apple Inc","US0378331005","0.5","","1.20","","0.18","EUR","","","","","tr-uuid-003","","","",""

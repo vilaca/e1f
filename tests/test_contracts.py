@@ -16,13 +16,14 @@ import yaml
 
 from e1f.cli import COMMANDS
 from e1f.fetch import DataExtractor
+from e1f.transactions import TradeRepublicImporter
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_cli_commands_surface():
     """Freeze the public CLI surface — adding a command without updating this set fails."""
-    assert set(COMMANDS.keys()) == {"config", "fetch"}
+    assert set(COMMANDS.keys()) == {"config", "fetch", "transactions"}
 
 
 def test_readme_python_version_matches_pyproject():
@@ -64,4 +65,25 @@ def test_prices_schema_contract(tmp_path: Path) -> None:
         "isin":  {"type": "TEXT", "pk": 1},
         "date":  {"type": "TEXT", "pk": 2},
         "close": {"type": "REAL", "pk": 0},
+    }
+
+
+def test_transactions_schema_contract(tmp_path: Path) -> None:
+    """transactions table schema is a data contract — changes need ADR-0004 note."""
+    db = tmp_path / "transactions.db"
+    TradeRepublicImporter(db_path=str(db))
+
+    with closing(sqlite3.connect(str(db))) as conn:
+        cols = conn.execute("PRAGMA table_info(transactions)").fetchall()
+
+    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    assert schema == {
+        "broker": {"type": "TEXT", "pk": 1},
+        "transaction_id": {"type": "TEXT", "pk": 2},
+        "datetime": {"type": "TEXT", "pk": 0},
+        "symbol": {"type": "TEXT", "pk": 0},
+        "shares": {"type": "REAL", "pk": 0},
+        "price": {"type": "REAL", "pk": 0},
+        "fee": {"type": "REAL", "pk": 0},
+        "tax": {"type": "REAL", "pk": 0},
     }
