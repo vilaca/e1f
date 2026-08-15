@@ -23,7 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_cli_commands_surface():
     """Freeze the public CLI surface — adding a command without updating this set fails."""
-    assert set(COMMANDS.keys()) == {"config", "fetch", "transactions", "portfolio"}
+    assert set(COMMANDS.keys()) == {
+        "config",
+        "fetch",
+        "validate",
+        "transactions",
+        "portfolio",
+    }
 
 
 def test_readme_python_version_matches_pyproject():

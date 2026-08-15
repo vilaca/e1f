@@ -1,12 +1,12 @@
-# ADR-0003 — Module layer contract: cli → config/fetch/transactions/portfolio → common
+# ADR-0003 — Module layer contract: cli → command modules → common
 
 **Scope:** codebase architecture, import-linter enforcement
 
 ## Context
 
 As e1f grows, additional command modules (analysis, reporting, API, …) may be
-added alongside the existing `config`, `fetch`, `transactions`, and `portfolio`
-commands. Without a recorded and enforced layer contract, modules will accumulate
+added alongside the existing `config`, `fetch`, `validate`, `transactions`, and
+`portfolio` commands. Without a recorded and enforced layer contract, modules will accumulate
 cross-dependencies that make the codebase hard to test, extend, or reason about
 in isolation.
 
@@ -17,7 +17,7 @@ The module graph is stratified into three layers, enforced by import-linter
 
 ```
 e1f.cli                              ← entry point; may import any layer below
-e1f.config  |  e1f.fetch  |  e1f.transactions  |  e1f.portfolio  ← commands; may import common, never each other
+e1f.config  |  e1f.fetch  |  e1f.validate  |  e1f.transactions  |  e1f.portfolio  ← commands; may import common, never each other
 e1f.common                           ← shared primitives; imports nothing internal
 ```
 

@@ -77,10 +77,11 @@ and verify each still matches the code:
   `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
   `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
   `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`.
-- **Subcommand list** — top-level (`cli.py`): `config`, `fetch`, `transactions`,
-  `portfolio`. Nested: `config`: `add`, `list`, `update`, `remove`, `trim`,
-  `validate` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
-  `xtb` (in `transactions.py`). `portfolio` has no nested subcommands.
+- **Command list** — top-level (`cli.py`): `config`, `fetch`, `validate`,
+  `transactions`, `portfolio`. Nested: `config`: `add`, `list`, `update`,
+  `remove`, `trim` (in `config.py`); `transactions`: `list`,
+  `trade-republic`, `tr`, `xtb` (in `transactions.py`). `validate` and
+  `portfolio` have no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments

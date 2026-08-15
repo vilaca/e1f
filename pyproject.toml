@@ -51,11 +51,11 @@ ignore_missing_imports = true
 root_packages = ["e1f"]
 
 [[tool.importlinter.contracts]]
-name = "Module layers: cli -> config/fetch/transactions/portfolio -> common"
+name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.config | e1f.fetch | e1f.transactions | e1f.portfolio",
+    "e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio",
     "e1f.common",
 ]
 

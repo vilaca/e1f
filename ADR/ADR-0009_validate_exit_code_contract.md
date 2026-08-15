@@ -1,10 +1,10 @@
-# ADR-0009 — `config validate` exit-code contract
+# ADR-0009 — `validate` exit-code contract
 
-**Scope:** `e1f config validate` exit codes and its error/warning taxonomy
+**Scope:** `e1f validate` exit codes and its error/warning taxonomy
 
 ## Context
 
-`config validate` reports config/DB sync, history depth, and price-data quality.
+`validate` reports config/DB sync, history depth, and price-data quality.
 It previously exited `0` regardless of what it found, so it printed integrity
 problems but could not gate anything — a CI step or `&&` chain treated a corrupt
 DB the same as a clean one. As price-data integrity checks grew (duplicates,
