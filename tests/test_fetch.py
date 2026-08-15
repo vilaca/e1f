@@ -82,6 +82,161 @@ def test_force_refresh_overwrites(tmp_path):
     assert ext._stored_series(ISIN)['close'].iloc[0] == 999.0
 
 
+def test_read_series_parses_mixed_date_formats(tmp_path):
+    # A date-only row next to a 'YYYY-MM-DD HH:MM:SS' row must both parse (not
+    # collapse to NaT), so cache-freshness math and strftime stay correct.
+    ext = make_extractor(tmp_path)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+            (ISIN, '2026-08-10 00:00:00', 100.0),
+            (ISIN, '2026-08-11', 101.0),  # date-only
+        ])
+        conn.commit()
+
+    stored = ext._stored_series(ISIN)
+
+    assert list(stored['close']) == [100.0, 101.0]
+    assert not stored.index.isna().any()
+
+
+def test_read_series_drops_unparseable_dates(tmp_path):
+    ext = make_extractor(tmp_path)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+            (ISIN, '2026-08-10', 100.0),
+            (ISIN, 'not-a-date', 999.0),
+        ])
+        conn.commit()
+
+    stored = ext._stored_series(ISIN)
+
+    assert list(stored['close']) == [100.0]  # corrupt-date row dropped
+
+
+def test_replace_prices_removes_rows_absent_from_fetched_series(tmp_path):
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+
+    # Same row count: not a shrink, so no override needed.
+    ext._replace_prices(ISIN, close_df([998.0, 999.0]))
+
+    stored = ext._stored_series(ISIN)
+    assert list(stored['close']) == [998.0, 999.0]
+
+
+def test_replace_refuses_to_shrink_without_allow_shrink(tmp_path):
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+
+    with pytest.raises(RuntimeError, match='does not cover'):
+        ext._replace_prices(ISIN, close_df([999.0]))
+
+    # Guard runs before the DELETE, so the stored series is untouched.
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+
+
+def test_replace_allow_shrink_removes_rows_absent_from_fetched_series(tmp_path):
+    ext = make_extractor(tmp_path, replace=True, allow_shrink=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+
+    ext._replace_prices(ISIN, close_df([999.0]))
+
+    assert list(ext._stored_series(ISIN)['close']) == [999.0]
+
+
+def test_replace_refuses_to_narrow_date_coverage(tmp_path):
+    # Same row count, but the fetched window ends earlier than what is stored —
+    # a truncated response that the count-only check would have let through.
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0], end='2026-08-12'))
+
+    with pytest.raises(RuntimeError, match='does not cover'):
+        ext._replace_prices(ISIN, close_df([998.0, 999.0], end='2026-08-06'))
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+
+
+def test_replace_refuses_interior_hole(tmp_path):
+    # Same row count and same endpoints, but an interior stored date is missing
+    # from the fetched series — only a per-date check catches this.
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0, 102.0], end='2026-08-12'))  # 10,11,12
+
+    holed = pd.DataFrame(
+        {'Close': [900.0, 901.0, 902.0]},
+        index=pd.to_datetime(['2026-08-07', '2026-08-10', '2026-08-12']),  # 11 missing
+    )
+    with pytest.raises(RuntimeError, match=r'does not cover 1 valid stored date'):
+        ext._replace_prices(ISIN, holed)
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0, 102.0]
+
+
+def test_replace_ignores_corrupt_stored_dates_in_guard(tmp_path):
+    # A NULL/unparseable stored date is corruption, not real coverage, so it must
+    # not block the repair (nor leak a literal 'None' into the guard message).
+    ext = make_extractor(tmp_path, replace=True)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+            (ISIN, '2026-08-12', 100.0),
+            (ISIN, None, 999.0),          # NULL date
+            (ISIN, 'not-a-date', 998.0),  # unparseable date
+        ])
+        conn.commit()
+
+    # Fetched series covers the one valid stored date; corrupt rows get cleaned.
+    ext._replace_prices(ISIN, close_df([200.0], end='2026-08-12'))
+
+    assert list(ext._stored_series(ISIN)['close']) == [200.0]
+
+
+def test_fetch_replace_repairs_corrupt_date_row(tmp_path, monkeypatch):
+    # End-to-end: --replace (no --allow-shrink) repairs a corrupt-date row, as
+    # _read_series' docstring advertises.
+    ext = make_extractor(tmp_path, replace=True)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+            (ISIN, '2026-08-12', 100.0),
+            (ISIN, 'not-a-date', 999.0),
+        ])
+        conn.commit()
+    monkeypatch.setattr(ext, '_fetch_ftgo',
+                        lambda *a, **k: close_df([200.0], end='2026-08-12'))
+
+    ext.fetch(ISIN)
+
+    assert list(ext._stored_series(ISIN)['close']) == [200.0]
+
+
+def test_replace_collapses_duplicate_fetched_dates(tmp_path):
+    # Two intraday timestamps strftime to the same day; the last one wins via
+    # ON CONFLICT instead of tripping the UNIQUE(isin, date) constraint.
+    ext = make_extractor(tmp_path, replace=True)
+    intraday = pd.DataFrame(
+        {'Close': [10.0, 20.0]},
+        index=pd.to_datetime(['2026-08-12 09:00', '2026-08-12 16:00']),
+    )
+
+    ext._replace_prices(ISIN, intraday)
+
+    assert list(ext._stored_series(ISIN)['close']) == [20.0]
+
+
+def test_replace_rolls_back_on_insert_failure(tmp_path, monkeypatch):
+    # ADR-0008 atomicity: if the INSERT fails, the DELETE must roll back too, so
+    # the stored series survives a mid-transaction error. Force the INSERT to
+    # fail (malformed rows) after the DELETE; allow_shrink skips the guard.
+    ext = make_extractor(tmp_path, replace=True, allow_shrink=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    monkeypatch.setattr(ext, '_price_rows',
+                        lambda isin, df: [(isin, '2026-08-12', 1.0, 'too many cols')])
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        ext._replace_prices(ISIN, close_df([200.0]))
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+
+
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
@@ -111,6 +266,13 @@ def test_not_cached_when_stale(tmp_path):
 
 def test_force_refresh_skips_cache(tmp_path):
     ext = make_extractor(tmp_path, force_refresh=True)
+    ext._save_prices(ISIN, close_df([100.0]))
+    cached, df = ext._is_cached(ISIN)
+    assert cached is False and df is None
+
+
+def test_replace_skips_cache(tmp_path):
+    ext = make_extractor(tmp_path, replace=True)
     ext._save_prices(ISIN, close_df([100.0]))
     cached, df = ext._is_cached(ISIN)
     assert cached is False and df is None
@@ -224,6 +386,69 @@ def test_fetch_raises_when_all_sources_fail(tmp_path, monkeypatch):
         ext.fetch()
 
 
+def test_replace_preserves_existing_rows_when_fetch_fails(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0]))
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: None)
+
+    with pytest.raises(RuntimeError, match='No data fetched'):
+        ext.fetch(ISIN)
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0]
+
+
+def test_fetch_replace_removes_stale_rows(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, replace=True, allow_shrink=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([999.0]))
+
+    ext.fetch(ISIN)
+
+    assert list(ext._stored_series(ISIN)['close']) == [999.0]
+
+
+def test_fetch_replace_truncated_response_preserves_stored_rows(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0, 102.0]))
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([999.0]))
+
+    with pytest.raises(RuntimeError, match='does not cover'):
+        ext.fetch(ISIN)
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0, 102.0]
+
+
+def test_fetch_replace_without_isin_raises_before_touching_data(tmp_path, monkeypatch):
+    # The CLI guards this, but a library caller must not be able to replace the
+    # whole universe with a bare fetch(). The guard runs before any fetch/DELETE.
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    monkeypatch.setattr(
+        ext, '_fetch_ftgo',
+        lambda *a, **k: pytest.fail('fetch must abort before hitting a source'),
+    )
+
+    with pytest.raises(ValueError, match='replace requires a single ISIN'):
+        ext.fetch()
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+
+
+def test_fetch_replace_via_yfinance_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
+    ext = make_extractor(tmp_path, replace=True, fallback=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: None)
+    monkeypatch.setattr(
+        ext, '_fetch_yfinance',
+        lambda ticker, start=None: (close_df([200.0, 201.0, 202.0]), ticker),
+    )
+
+    ext.fetch(ISIN)
+
+    assert list(ext._stored_series(ISIN)['close']) == [200.0, 201.0, 202.0]
+
+
 def test_fetch_unknown_isin_raises(tmp_path):
     ext = make_extractor(tmp_path)
     with pytest.raises(ValueError, match='not in config'):
@@ -266,3 +491,21 @@ def test_main_failure_returns_1(tmp_path, monkeypatch, capsys):
     rc = fetch_mod.main(['--config', str(tmp_path / 'u.yaml')])
     assert rc == 1
     assert 'No data fetched' in capsys.readouterr().out
+
+
+def test_main_replace_requires_isin(capsys):
+    rc = fetch_mod.main(['--replace'])
+    assert rc == 1
+    assert '--replace requires an ISIN' in capsys.readouterr().out
+
+
+def test_main_allow_shrink_requires_replace(capsys):
+    rc = fetch_mod.main(['--allow-shrink', ISIN])
+    assert rc == 1
+    assert '--allow-shrink only applies with --replace' in capsys.readouterr().out
+
+
+def test_main_force_and_replace_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit):
+        fetch_mod.main([ISIN, '--force', '--replace'])
+    assert 'not allowed with argument' in capsys.readouterr().err
