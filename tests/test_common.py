@@ -4,7 +4,21 @@ import pytest
 import requests
 import yaml
 
-from e1f.common import ConfigManager, OpenFIGIResolver
+from e1f.common import (
+    ConfigManager,
+    OpenFIGIResolver,
+    _best_ftgo_name,
+    _fund_currency_from_names,
+    _parse_percent_value,
+    _justetf_field,
+    _fetch_justetf_html,
+    _ftgo_fund_name,
+    _ftgo_listing_names,
+    _short_lookup_error,
+    distribution_from_name,
+    enrich_fund_metadata,
+    fund_currency_from_name,
+)
 
 ISIN = 'AA0000000001'
 
@@ -105,6 +119,8 @@ def test_resolve_malformed_payload(monkeypatch, capsys):
 def manager(tmp_path, monkeypatch, resolve_result=RESOLVED):
     monkeypatch.setattr(OpenFIGIResolver, 'resolve',
                         lambda self, isin: resolve_result)
+    monkeypatch.setattr('e1f.common.enrich_fund_metadata',
+                        lambda isin, info: info)
     return ConfigManager(str(tmp_path / 'universe.yaml'))
 
 
@@ -147,3 +163,228 @@ def test_list_sorted(tmp_path, monkeypatch):
     cm.add('BB0000000002')
     cm.add(ISIN)
     assert [isin for isin, _ in cm.list()] == [ISIN, 'BB0000000002']
+
+
+# ---------------------------------------------------------------------------
+# Fund metadata enrichment
+# ---------------------------------------------------------------------------
+
+def test_fund_currency_from_name():
+    assert fund_currency_from_name('VANG FTSE AW USDA') == 'USD'
+    assert fund_currency_from_name('iShares Core S&P 500 UCITS ETF USD (Acc)') == 'USD'
+    assert fund_currency_from_name('X MSCI WORLD HEALTH CARE') is None
+
+
+def test_distribution_from_name():
+    assert distribution_from_name('VANG FTSE AW USDA') == 'Accumulating'
+    assert distribution_from_name('VANG FTSE AW USDD') == 'Distributing'
+    assert distribution_from_name('iShares Core S&P 500 UCITS ETF USD (Acc)') == 'Accumulating'
+    assert distribution_from_name('AMUNDI PRME ALL CTRY WLD ACC') == 'Accumulating'
+    assert distribution_from_name('Some ETF EUR Hedged') is None
+
+
+def test_best_ftgo_name_prefers_share_class_matching_openfigi_hint():
+    names = [
+        'Amundi Prime All Country World UCITS ETF USD Dist',
+        'Amundi Prime All Country World UCITS ETF USD Acc',
+    ]
+    chosen = _best_ftgo_name(names, 'AMUNDI PRME ALL CTRY WLD ACC')
+    assert chosen.endswith('Acc')
+
+
+def test_fund_currency_from_names_finds_usd_on_sibling_ftgo_listing():
+    names = [
+        'Amundi Prime All Country World UCITS ETF USD Dist',
+        'Amundi Prime All Country World UCITS ETF Acc',
+    ]
+    assert _fund_currency_from_names(names) == 'USD'
+    assert fund_currency_from_name(names[1]) is None
+
+
+def _mock_ftgo_enrichment(monkeypatch, *, names=None, error=None, ter=None, justetf_html=None):
+    if error:
+        monkeypatch.setattr('e1f.common._ftgo_load', lambda isin: (None, error))
+    else:
+        monkeypatch.setattr('e1f.common._ftgo_load', lambda isin: ('matches', None))
+        monkeypatch.setattr(
+            'e1f.common._names_from_ftgo_matches',
+            lambda matches: names or [],
+        )
+        monkeypatch.setattr('e1f.common._ftgo_ter', lambda matches, hint: ter)
+    monkeypatch.setattr('e1f.common._fetch_justetf_html', lambda isin: justetf_html)
+
+
+def test_parse_percent_value():
+    assert _parse_percent_value('0.07%') == 0.07
+    assert _parse_percent_value('--') is None
+    assert _parse_percent_value('') is None
+
+
+def test_enrich_prefers_openfigi_distribution_over_conflicting_ftgo_name(
+    monkeypatch,
+):
+    ftgo_names = [
+        'Amundi Prime All Country World UCITS ETF USD Dist',
+        'Amundi Prime All Country World UCITS ETF Acc',
+    ]
+    _mock_ftgo_enrichment(monkeypatch, names=ftgo_names)
+
+    info = {'name': 'AMUNDI PRME ALL CTRY WLD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
+    enriched = enrich_fund_metadata(ISIN, info)
+
+    assert enriched['distribution'] == 'Accumulating'
+    assert enriched['fund_currency'] == 'USD'
+
+
+def test_enrich_fund_metadata_merges_openfigi_and_ftgo(monkeypatch):
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['iShares Core S&P 500 UCITS ETF USD (Acc)'],
+        ter=0.07,
+    )
+
+    info = {'name': 'ISHARES CORE S&P 500', 'tickers': ['CSSPX'], 'exchange': 'SW'}
+    enriched = enrich_fund_metadata(ISIN, info)
+
+    assert enriched['fund_currency'] == 'USD'
+    assert enriched['distribution'] == 'Accumulating'
+    assert enriched['ter'] == 0.07
+
+
+def test_enrich_uses_ftgo_when_openfigi_silent(monkeypatch):
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['Some ETF UCITS ETF USD (Dist)'],
+    )
+
+    info = {'name': 'Some Generic ETF Name', 'tickers': ['ABC'], 'exchange': 'LN'}
+    enriched = enrich_fund_metadata(ISIN, info)
+
+    assert enriched['distribution'] == 'Distributing'
+    assert enriched['fund_currency'] == 'USD'
+
+
+def test_enrich_falls_back_to_justetf_ter(monkeypatch, capsys):
+    html = '<div data-testid="tl_etf-basics_value_ter">0.07% p.a.</div>'
+    _mock_ftgo_enrichment(monkeypatch, names=['Amundi Prime All Country World UCITS ETF Acc'],
+                          ter=None, justetf_html=html)
+
+    info = {'name': 'AMUNDI PRME ALL CTRY WLD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
+    enriched = enrich_fund_metadata(ISIN, info)
+    out = capsys.readouterr().out
+
+    assert enriched['ter'] == 0.07
+    assert 'used justETF (0.07%)' in out
+
+
+def test_enrich_warns_when_ftgo_name_conflicts_with_openfigi(monkeypatch, capsys):
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['Amundi Prime All Country World UCITS ETF USD Dist'],
+    )
+
+    info = {'name': 'AMUNDI PRME ALL CTRY WLD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
+    enrich_fund_metadata(ISIN, info)
+    out = capsys.readouterr().out
+    assert 'using OpenFIGI share class (Accumulating)' in out
+
+
+def test_justetf_field_parses_basics_table():
+    html = (
+        '<div data-testid="tl_etf-basics_value_ter">0.07% p.a.</div>'
+        '<td data-testid="tl_etf-basics_value_fund-currency">USD</td>'
+        '<div data-testid="tl_etf-basics_value_distribution-policy">Accumulating</div>'
+    )
+    assert _justetf_field(html, 'ter') == '0.07% p.a.'
+    assert _justetf_field(html, 'fund-currency') == 'USD'
+    assert _justetf_field(html, 'distribution-policy') == 'Accumulating'
+
+
+def test_fetch_justetf_html(monkeypatch):
+    class FakeResponse:
+        text = '<div data-testid="tl_etf-basics_value_ter">0.07% p.a.</div>'
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    monkeypatch.setattr('e1f.common.requests.get', lambda *a, **k: FakeResponse())
+    html = _fetch_justetf_html(ISIN)
+    assert html is not None
+    assert '0.07%' in html
+
+
+def test_enrich_uses_justetf_for_missing_currency(monkeypatch, capsys):
+    html = '<td data-testid="tl_etf-basics_value_fund-currency">USD</td>'
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['Amundi Prime All Country World UCITS ETF Acc'],
+        justetf_html=html,
+    )
+
+    info = {'name': 'AMUNDI PRME ALL CTRY WLD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
+    enriched = enrich_fund_metadata(ISIN, info)
+    out = capsys.readouterr().out
+
+    assert enriched['fund_currency'] == 'USD'
+    assert 'used justETF (USD)' in out
+
+
+def test_enrich_uses_justetf_distribution_when_names_silent(monkeypatch):
+    html = '<div data-testid="tl_etf-basics_value_distribution-policy">Distributing</div>'
+    _mock_ftgo_enrichment(monkeypatch, names=[], justetf_html=html)
+
+    info = {'name': 'Some Generic ETF Name', 'tickers': ['ABC'], 'exchange': 'LN'}
+    enriched = enrich_fund_metadata(ISIN, info)
+
+    assert enriched['distribution'] == 'Distributing'
+
+
+def test_ftgo_listing_names_and_fund_name(monkeypatch):
+    _mock_ftgo_enrichment(
+        monkeypatch,
+        names=['iShares Core S&P 500 UCITS ETF USD (Acc)'],
+    )
+    names, error = _ftgo_listing_names(ISIN)
+    assert error is None
+    assert len(names) == 1
+
+    name, err = _ftgo_fund_name(ISIN, 'ISHARES CORE S&P 500')
+    assert err is None
+    assert 'Acc' in (name or '')
+
+
+def test_ftgo_ter_parses_ongoing_charge(monkeypatch):
+    class FakeMatches:
+        def iterrows(self):
+            yield 0, {'name': 'Test ETF USD (Acc)', 'xid': '123'}
+
+        def iloc(self):
+            return self
+
+        def __getitem__(self, idx):
+            return {'xid': '123'}
+
+    monkeypatch.setattr('ftgo.get_fund_stats', lambda xid: {'Ongoing charge': '0.22%'})
+
+    import e1f.common as common_mod
+    ter = common_mod._ftgo_ter(FakeMatches(), 'Test ETF USD (Acc)')
+    assert ter == 0.22
+
+
+def test_short_lookup_error_normalizes_messages():
+    assert _short_lookup_error(RuntimeError('HTTP Error 404: not found')) == 'quote not found'
+    assert _short_lookup_error(RuntimeError('429 Too Many Requests')) == 'rate limited'
+
+
+def test_enrich_fund_metadata_warns_when_ftgo_fails_but_openfigi_parses(monkeypatch, capsys):
+    _mock_ftgo_enrichment(monkeypatch, error='no FT Markets listing')
+
+    info = {'name': 'VANG FTSE AW USDA', 'tickers': ['VWRA'], 'exchange': 'LN'}
+    enriched = enrich_fund_metadata(ISIN, info)
+    out = capsys.readouterr().out
+
+    assert enriched['fund_currency'] == 'USD'
+    assert enriched['distribution'] == 'Accumulating'
+    assert f'⚠ ftgo {ISIN}: no FT Markets listing' in out
+    assert 'used OpenFIGI name for fund currency/distribution' in out

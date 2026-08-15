@@ -5,7 +5,14 @@ import pytest
 
 from e1f import portfolio as portfolio_mod
 from e1f import transactions as transactions_mod
-from e1f.portfolio import Holding, compute_holdings
+from e1f.portfolio import (
+    Holding,
+    compute_holdings,
+    holding_weight_pct,
+    sort_holdings,
+    _broker_label,
+    _distribution_label,
+)
 from e1f.transactions import BROKER_TRADE_REPUBLIC
 
 ISIN_ETF = "IE00B4L5Y983"
@@ -118,6 +125,104 @@ def test_compute_holdings_sell_without_position_is_ignored():
     assert compute_holdings(rows) == []
 
 
+def test_holding_weight_pct():
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, ISIN_ETF, 1.0, 100.0, 300.0),
+        Holding(BROKER_OTHER, ISIN_ETF, 1.0, 100.0, 100.0),
+    ]
+    total = 400.0
+    assert holding_weight_pct(holdings[0], total) == 75.0
+    assert holding_weight_pct(holdings[1], total) == 25.0
+    assert holding_weight_pct(holdings[0], 0.0) == 0.0
+
+
+def test_distribution_label():
+    assert _distribution_label("Accumulating") == "ACC"
+    assert _distribution_label("Distributing") == "Dist"
+    assert _distribution_label("") == ""
+
+
+def test_broker_label():
+    assert _broker_label("trade_republic") == "tr"
+    assert _broker_label("xtb") == "xtb"
+
+
+def test_sort_holdings_by_weight_desc():
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0),
+        Holding(BROKER_OTHER, "BBB", 1.0, 10.0, 300.0),
+        Holding(BROKER_TRADE_REPUBLIC, "CCC", 1.0, 10.0, 100.0),
+    ]
+    sorted_holdings = sort_holdings(
+        holdings,
+        sort_by="weight",
+        reverse=True,
+        config_path="unused",
+        total_invested=500.0,
+    )
+    assert [h.symbol for h in sorted_holdings] == ["BBB", "AAA", "CCC"]
+
+
+def test_main_portfolio_sort_by_total(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {ISIN_ETF: {"name": "Test ETF"}}}))
+
+    from contextlib import closing
+    import sqlite3
+    from e1f.transactions import BROKER_TRADE_REPUBLIC, BROKER_XTB, init_transactions_database
+
+    other_isin = "IE00B4K48X80"
+    init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executemany(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (BROKER_TRADE_REPUBLIC, "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0, 0.0),
+                (BROKER_XTB, "2", "2024-01-02", other_isin, "BUY", 1.0, 300.0, 0.0, 0.0),
+            ],
+        )
+        conn.commit()
+
+    code = portfolio_mod.main(
+        ["--db", str(db), "--config", str(config), "--sort", "total", "--reverse"],
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert out.index(other_isin) < out.index(ISIN_ETF)
+
+
+def test_main_portfolio_shows_weight_column(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {ISIN_ETF: {"name": "Test ETF"}}}))
+
+    from contextlib import closing
+    import sqlite3
+    from e1f.transactions import BROKER_TRADE_REPUBLIC, BROKER_XTB, init_transactions_database
+
+    init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executemany(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (BROKER_TRADE_REPUBLIC, "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0, 0.0),
+                (BROKER_XTB, "2", "2024-01-02", ISIN_ETF, "BUY", 1.0, 300.0, 0.0, 0.0),
+            ],
+        )
+        conn.commit()
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "Weight" in out
+    assert "25.0%" in out
+    assert "75.0%" in out
+    assert "400.0000 total paid" in out
+
+
 def test_main_portfolio_empty(tmp_path, capsys):
     db = tmp_path / "t.db"
     config = tmp_path / "config.yaml"
@@ -137,7 +242,12 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
         yaml.dump(
             {
                 "etfs": {
-                    ISIN_ETF: {"name": "Core MSCI World USD (Acc)"},
+                    ISIN_ETF: {
+                        "name": "Core MSCI World USD (Acc)",
+                        "fund_currency": "USD",
+                        "distribution": "Accumulating",
+                        "ter": 0.22,
+                    },
                 }
             }
         )
@@ -150,11 +260,17 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
     code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
     out = capsys.readouterr().out
     assert code == 0
-    assert BROKER_TRADE_REPUBLIC in out
+    assert f"{_broker_label(BROKER_TRADE_REPUBLIC):<4}" in out
+    assert "trade_republic" not in out
     assert ISIN_ETF in out
     assert "Core MSCI World USD (Acc)" in out
+    assert "USD" in out
+    assert "ACC" in out
+    assert "Accumulating" not in out
+    assert "0.22%" in out
     assert "Avg paid" in out
     assert "Total paid" in out
+    assert "Weight" in out
     assert "Total: 1 holdings" in out
 
 
@@ -233,4 +349,5 @@ def test_main_portfolio_help(capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "e1f portfolio" in out
-    assert "--db" in out
+    assert "--sort" in out
+    assert "--reverse" in out

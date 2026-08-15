@@ -14,14 +14,13 @@ Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
 import argparse
 import logging
 import os
-import re
 import sqlite3
 import sys
 import time
 import warnings
 from collections.abc import Mapping
 from contextlib import closing
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 import pandas as pd
 import requests
@@ -37,6 +36,7 @@ from e1f.common import (
     ConfigManager,
     ETFDefinition,
     call_with_retry,
+    fund_currency_from_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,20 +101,6 @@ class DataExtractor:
         with open(self.currency_meta_path, 'w') as f:
             yaml.dump(self._ftgo_meta, f, default_flow_style=False, sort_keys=True)
 
-    _KNOWN_CCYS: ClassVar[set[str]] = {'USD', 'EUR', 'GBP', 'GBX', 'CHF', 'JPY', 'CAD',
-                                       'AUD', 'SEK', 'NOK', 'DKK', 'HKD', 'SGD'}
-
-    @classmethod
-    def _base_currency(cls, name: str) -> str | None:
-        """The fund's share-class currency, parsed from its name.
-
-        e.g. "iShares Core S&P 500 UCITS ETF USD (Acc)" -> "USD".
-        """
-        for tok in reversed(re.findall(r'\b[A-Z]{3}\b', name or '')):
-            if tok in cls._KNOWN_CCYS:
-                return str(tok)
-        return None
-
     @staticmethod
     def _symbol_currency(symbol: str) -> str:
         """ftgo symbols look like "CSPX:LSE:USD"; currency is the last part."""
@@ -133,7 +119,7 @@ class DataExtractor:
             return cast(dict[str, str], self._ftgo_meta[isin])
 
         matches = get_xid(isin, display_mode="all")  # raises if no matches
-        base = self._base_currency(matches.iloc[0].get('name', ''))
+        base = fund_currency_from_name(str(matches.iloc[0].get('name', '')))
         preferred = matches[matches['symbol'].map(self._symbol_currency) == base] \
             if base else matches.iloc[0:0]
         row = preferred.iloc[0] if not preferred.empty else matches.iloc[0]

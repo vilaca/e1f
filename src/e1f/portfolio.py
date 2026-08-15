@@ -11,11 +11,13 @@ import sqlite3
 import sys
 from contextlib import closing
 from dataclasses import dataclass
+from typing import Any
 
 from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, ConfigManager
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 _SHARE_EPSILON = 1e-9
+SORT_FIELDS = ("broker", "isin", "name", "weight", "total", "units", "avg", "ter")
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,13 @@ def compute_holdings(
     return holdings
 
 
+def holding_weight_pct(holding: Holding, total_invested: float) -> float:
+    """Share of total cost basis attributed to this holding, as a percentage."""
+    if total_invested <= 0:
+        return 0.0
+    return 100.0 * holding.total_paid / total_invested
+
+
 def _etf_name(config_path: str, symbol: str) -> str:
     data = ConfigManager(config_path).get(symbol)
     if not data:
@@ -94,7 +103,87 @@ def _etf_name(config_path: str, symbol: str) -> str:
     return str(data.get("name", ""))[:40]
 
 
-def _cmd_portfolio(db_path: str, config_path: str) -> int:
+def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str]:
+    data = ConfigManager(config_path).get(symbol) or {}
+    fund_currency = str(data.get("fund_currency") or "")
+    distribution = str(data.get("distribution") or "")
+    ter = data.get("ter")
+    ter_text = f"{float(ter):.2f}%" if isinstance(ter, (int, float)) else ""
+    return fund_currency, distribution, ter_text
+
+
+def _distribution_label(distribution: str) -> str:
+    if distribution == "Accumulating":
+        return "ACC"
+    if distribution == "Distributing":
+        return "Dist"
+    return distribution
+
+
+_BROKER_LABELS = {"trade_republic": "tr"}
+_BROKER_COL = 4
+_TABLE_WIDTH = _BROKER_COL + 123  # remaining columns + inter-column spaces
+
+
+def _broker_label(broker: str) -> str:
+    return _BROKER_LABELS.get(broker, broker)
+
+
+def _sort_key(
+    holding: Holding,
+    sort_by: str,
+    *,
+    config_path: str,
+    total_invested: float,
+) -> tuple[Any, ...] | str | float:
+    if sort_by == "broker":
+        return (holding.broker, holding.symbol)
+    if sort_by == "isin":
+        return holding.symbol
+    if sort_by == "name":
+        return _etf_name(config_path, holding.symbol).lower()
+    if sort_by == "weight":
+        return holding_weight_pct(holding, total_invested)
+    if sort_by == "total":
+        return holding.total_paid
+    if sort_by == "units":
+        return holding.shares
+    if sort_by == "avg":
+        return holding.avg_cost
+    if sort_by == "ter":
+        ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
+        return float(ter) if isinstance(ter, (int, float)) else -1.0
+    raise ValueError(f"unsupported sort field: {sort_by}")
+
+
+def sort_holdings(
+    holdings: list[Holding],
+    *,
+    sort_by: str = "broker",
+    reverse: bool = False,
+    config_path: str,
+    total_invested: float,
+) -> list[Holding]:
+    """Return holdings ordered by the requested column."""
+    return sorted(
+        holdings,
+        key=lambda holding: _sort_key(
+            holding,
+            sort_by,
+            config_path=config_path,
+            total_invested=total_invested,
+        ),
+        reverse=reverse,
+    )
+
+
+def _cmd_portfolio(
+    db_path: str,
+    config_path: str,
+    *,
+    sort_by: str = "broker",
+    reverse: bool = False,
+) -> int:
     rows = _load_trade_rows(db_path)
     holdings = compute_holdings(rows)
 
@@ -103,19 +192,31 @@ def _cmd_portfolio(db_path: str, config_path: str) -> int:
         print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
         return 0
 
-    print(
-        f"\n{'Broker':<16} {'ISIN':<14} {'Name':<40} {'Shares':>10} "
-        f"{'Avg paid':>12} {'Total paid':>14}"
+    total_invested = sum(holding.total_paid for holding in holdings)
+    holdings = sort_holdings(
+        holdings,
+        sort_by=sort_by,
+        reverse=reverse,
+        config_path=config_path,
+        total_invested=total_invested,
     )
-    print("-" * 120)
+
+    print(
+        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'CCY':<4} {'Dist':<4} "
+        f"{'TER':>6} {'Weight':>7} {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
+    )
+    print("-" * _TABLE_WIDTH)
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
+        fund_currency, distribution, ter = _fund_meta(config_path, holding.symbol)
+        weight = holding_weight_pct(holding, total_invested)
         print(
-            f"{holding.broker:<16} {holding.symbol:<14} {name:<40} "
-            f"{holding.shares:>10.4f} {holding.avg_cost:>12.4f} "
+            f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
+            f"{fund_currency:<4} {_distribution_label(distribution):<4} {ter:>6} "
+            f"{weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>12.4f} "
             f"{holding.total_paid:>14.4f}"
         )
-    print(f"\nTotal: {len(holdings)} holdings")
+    print(f"\nTotal: {len(holdings)} holdings, {total_invested:.4f} total paid")
     return 0
 
 
@@ -128,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
 Examples:
   e1f portfolio
   e1f portfolio --db data/e1f.db --config data/etf_universe.yaml
+  e1f portfolio --sort weight --reverse
+  e1f portfolio --sort total --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -137,11 +240,28 @@ Examples:
         default=DEFAULT_CONFIG,
         help="ETF universe config for security names",
     )
+    parser.add_argument(
+        "--sort",
+        choices=SORT_FIELDS,
+        default="broker",
+        help="Sort holdings by column (default: broker, then ISIN)",
+    )
+    parser.add_argument(
+        "--reverse",
+        "-r",
+        action="store_true",
+        help="Descending sort order",
+    )
 
     args = parser.parse_args(argv)
 
     try:
-        return _cmd_portfolio(args.db, args.config)
+        return _cmd_portfolio(
+            args.db,
+            args.config,
+            sort_by=args.sort,
+            reverse=args.reverse,
+        )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
         return 1

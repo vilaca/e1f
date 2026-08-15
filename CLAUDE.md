@@ -41,6 +41,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0004` — broker transaction ingest (Trade Republic CSV)
 - `ADR-0005` — portfolio holdings from transactions
 - `ADR-0006` — XTB Cash Operations Excel import
+- `ADR-0007` — fund metadata (TER, distribution, currency) at config time
 
 ## Skills
 
