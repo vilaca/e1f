@@ -37,8 +37,10 @@ location, never copy the shape into prose. Find violations:
 
 - **CLI commands and flags** — compare `README.md` command examples against the
   actual `argparse` definitions in `src/e1f/config.py` (config subcommands),
-  `src/e1f/fetch.py` (fetch flags), and `src/e1f/transactions.py`
-  (`list`, `trade-republic`, `--config`, `--db`). A README that re-enumerates
+  `src/e1f/fetch.py` (fetch flags), `src/e1f/transactions.py`
+  (`list`, `trade-republic`, `--config`, `--db`), and `src/e1f/portfolio.py`
+  (`--db`, `--config`). Top-level commands are wired in `src/e1f/cli.py`
+  (`COMMANDS`; frozen in `tests/test_contracts.py`). A README that re-enumerates
   subcommand names or default values is a candidate for drift.
 - **SQLite schema** — the `prices` table columns live in
   `DataExtractor._init_database`; the `transactions` table columns live in
@@ -69,10 +71,11 @@ and verify each still matches the code:
 - **Flag names** — grep each flag in the argparse definitions. At minimum:
   `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
   `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
-  `--db`, `--config` (on `trade-republic` only).
-- **Subcommand list** — `config`: `add`, `list`, `update`, `remove`, `trim`,
+  `--db`, `--config` (on `trade-republic` only); `portfolio`: `--db`, `--config`.
+- **Subcommand list** — top-level (`cli.py`): `config`, `fetch`, `transactions`,
+  `portfolio`. Nested: `config`: `add`, `list`, `update`, `remove`, `trim`,
   `validate` (in `config.py`); `transactions`: `list`, `trade-republic`
-  (in `transactions.py`).
+  (in `transactions.py`). `portfolio` has no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 
 Flag anything named in prose that no longer resolves or no longer matches.

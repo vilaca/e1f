@@ -20,6 +20,7 @@ src/e1f/
   config.py    — config subcommand: OpenFIGI resolution, YAML management
   fetch.py     — fetch subcommand: ftgo/yfinance price fetching, SQLite
   transactions.py — transactions subcommand: broker CSV ingestion
+  portfolio.py   — portfolio subcommand: holdings from transactions
   common.py    — shared primitives: defaults, ETFDefinition, retry logic
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
@@ -36,8 +37,9 @@ All recorded in `ADR/`. The most load-bearing:
 
 - `ADR-0001` — ftgo is the default source; yfinance requires `--fallback`
 - `ADR-0002` — ftgo resolution is pinned in `data/currency_metadata.yaml`
-- `ADR-0003` — module layer contract: `cli → config/fetch/transactions → common`
+- `ADR-0003` — module layer contract: `cli → config/fetch/transactions/portfolio → common`
 - `ADR-0004` — broker transaction ingest (Trade Republic CSV)
+- `ADR-0005` — portfolio holdings from transactions
 
 ## Skills
 

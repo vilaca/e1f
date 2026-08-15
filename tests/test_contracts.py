@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_cli_commands_surface():
     """Freeze the public CLI surface — adding a command without updating this set fails."""
-    assert set(COMMANDS.keys()) == {"config", "fetch", "transactions"}
+    assert set(COMMANDS.keys()) == {"config", "fetch", "transactions", "portfolio"}
 
 
 def test_readme_python_version_matches_pyproject():
@@ -82,6 +82,7 @@ def test_transactions_schema_contract(tmp_path: Path) -> None:
         "transaction_id": {"type": "TEXT", "pk": 2},
         "datetime": {"type": "TEXT", "pk": 0},
         "symbol": {"type": "TEXT", "pk": 0},
+        "side": {"type": "TEXT", "pk": 0},
         "shares": {"type": "REAL", "pk": 0},
         "price": {"type": "REAL", "pk": 0},
         "fee": {"type": "REAL", "pk": 0},
