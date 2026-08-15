@@ -12,6 +12,7 @@ import requests
 import yaml
 
 import e1f.fetch as fetch_mod
+from e1f.common import fund_currency_from_name
 from e1f.fetch import DataExtractor
 
 ISIN = 'AA0000000001'
@@ -39,9 +40,9 @@ def close_df(closes, end='2026-08-12'):
 # ---------------------------------------------------------------------------
 
 def test_base_currency():
-    assert DataExtractor._base_currency('iShares Core S&P 500 UCITS ETF USD (Acc)') == 'USD'
-    assert DataExtractor._base_currency('Vanguard FTSE All-World EUR Dist') == 'EUR'
-    assert DataExtractor._base_currency('Some Fund') is None
+    assert fund_currency_from_name('iShares Core S&P 500 UCITS ETF USD (Acc)') == 'USD'
+    assert fund_currency_from_name('Vanguard FTSE All-World EUR Dist') == 'EUR'
+    assert fund_currency_from_name('Some Fund') is None
 
 
 def test_symbol_currency():

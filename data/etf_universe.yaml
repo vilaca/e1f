@@ -3,157 +3,360 @@ etfs:
     name: VANG FTSE AW USDA
     tickers:
     - VWRA
+    - VWRP
+    - VWCE
+    - VFAWF
     exchange: LN
     figi: BBG00PQQHQK0
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:19.196855+00:00'
+    listings:
+    - ticker: VWRA
+      exchange: LN
+    - ticker: VWRP
+      exchange: LN
+    - ticker: VWCE
+      exchange: GR
+    - ticker: VFAWF
+      exchange: US
+    - ticker: VWCE
+      exchange: NA
+    resolved_at: '2026-08-15T13:53:23.197779+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.14
   IE00B3RBWM25:
     name: VANG FTSE AW USDD
     tickers:
     - VWRD
+    - VWRL
+    - VGWL
+    - VFPEF
     exchange: LN
     figi: BBG0032420Z1
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.360227+00:00'
+    listings:
+    - ticker: VWRD
+      exchange: LN
+    - ticker: VWRL
+      exchange: LN
+    - ticker: VGWL
+      exchange: GR
+    - ticker: VWRL
+      exchange: NA
+    - ticker: VFPEF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:10.917133+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Distributing
+    ter: 0.14
   IE0003XJA0J9:
     name: AMUNDI PRME ALL CTRY WLD ACC
     tickers:
     - WEBN
+    - WEBQ
     exchange: GR
     figi: BBG01N504S06
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.223662+00:00'
+    listings:
+    - ticker: WEBN
+      exchange: GR
+    - ticker: WEBQ
+      exchange: GR
+    resolved_at: '2026-08-15T13:53:07.088092+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.07
   IE00B44Z5B48:
     name: SS SPD MS AL CO WO UC ET-USD
     tickers:
     - SPYY
+    - ACWD
+    - ACWI
+    - ACWEF
     exchange: GR
     figi: BBG001NMB9J1
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.634879+00:00'
+    listings:
+    - ticker: SPYY
+      exchange: GR
+    - ticker: ACWD
+      exchange: LN
+    - ticker: ACWI
+      exchange: LN
+    - ticker: ACWEF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:16.635713+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.12
   IE00B3YLTY66:
     name: SP MS ALL CO WI MKT UC ET-AC
     tickers:
     - SPYI
+    - IMID
+    - SGACF
     exchange: GR
     figi: BBG001NMCQN7
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.496760+00:00'
+    listings:
+    - ticker: SPYI
+      exchange: GR
+    - ticker: IMID
+      exchange: LN
+    - ticker: SGACF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:15.055725+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.17
   IE00B5BMR087:
     name: ISHARES CORE S&P 500
     tickers:
-    - CSSPX
+    - SXR8
+    - CSPX
+    - CSP1
+    - CSTNL
     exchange: SW
     figi: BBG000Q362M9
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.919503+00:00'
+    listings:
+    - ticker: SXR8
+      exchange: GR
+    - ticker: CSPX
+      exchange: LN
+    - ticker: CSP1
+      exchange: LN
+    - ticker: CSPX
+      exchange: NA
+    - ticker: CSTNL
+      exchange: US
+    resolved_at: '2026-08-15T13:53:20.147126+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.07
   IE00BFMXXD54:
     name: VANG S&P500 USDA
     tickers:
     - VUAA
+    - VUAG
+    - VGFPF
     exchange: LN
     figi: BBG00P4FTPJ9
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:19.055739+00:00'
+    listings:
+    - ticker: VUAA
+      exchange: LN
+    - ticker: VUAG
+      exchange: LN
+    - ticker: VUAA
+      exchange: GR
+    - ticker: VGFPF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:22.166587+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.07
   IE00B53SZB19:
     name: ISHARES NASDAQ 100 USD ACC
     tickers:
-    - CSNDX
+    - SXRV
+    - CNDX
+    - CNX1
+    - ISVAF
     exchange: SW
     figi: BBG000Q36BQ5
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:18.780113+00:00'
+    listings:
+    - ticker: SXRV
+      exchange: GR
+    - ticker: CNDX
+      exchange: LN
+    - ticker: CNX1
+      exchange: LN
+    - ticker: CNDX
+      exchange: NA
+    - ticker: ISVAF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:19.081468+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.3
   LU1829221024:
     name: AM CR NASDAQ-100 SWP ETF ACC
     tickers:
-    - UST
+    - NASL
+    - NASD
+    - LYMS
+    - MLYXF
     exchange: FP
     figi: BBG00N24TG10
-    marketSector: Equity
-    securityType: ETP
-    securityType2: Mutual Fund
-    resolved_at: '2026-08-14T00:06:19.333391+00:00'
+    listings:
+    - ticker: NASL
+      exchange: LN
+    - ticker: NASD
+      exchange: LN
+    - ticker: LYMS
+      exchange: GR
+    - ticker: MLYXF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:29.001246+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.22
   IE000YYE6WK5:
     name: VANECK DEFENSE ETF
     tickers:
     - DFNS
+    - DFNG
+    - DFEN
+    - VNCUF
     exchange: LN
     figi: BBG01G0CY1X0
-    resolved_at: '2026-08-15T01:22:34.372697+00:00'
+    listings:
+    - ticker: DFNS
+      exchange: LN
+    - ticker: DFNG
+      exchange: LN
+    - ticker: DFEN
+      exchange: GR
+    - ticker: VNCUF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:09.915981+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.55
   IE00B3YCGJ38:
     name: INVESCO S&P 500 ACC
     tickers:
     - SPXS
+    - SPXP
+    - P500
+    - INVMF
     exchange: LN
     figi: BBG000QXQZL9
-    resolved_at: '2026-08-15T01:22:34.512257+00:00'
+    listings:
+    - ticker: SPXS
+      exchange: LN
+    - ticker: SPXP
+      exchange: LN
+    - ticker: SPXS
+      exchange: NA
+    - ticker: P500
+      exchange: GR
+    - ticker: INVMF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:13.523025+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.05
   IE00B4K48X80:
     name: ISHARES CORE MSCI EUROPE ACC
     tickers:
     - IMAE
+    - SMEA
+    - EUNK
+    - ISACF
     exchange: NA
     figi: BBG000P71KS0
-    resolved_at: '2026-08-15T01:22:34.655575+00:00'
+    listings:
+    - ticker: IMAE
+      exchange: NA
+    - ticker: SMEA
+      exchange: LN
+    - ticker: EUNK
+      exchange: GR
+    - ticker: ISACF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:18.092539+00:00'
     source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.12
   LU1437018838:
     name: AM FTSE EPRA NRIT GL ETF ACC
     tickers:
+    - EPRU
     - EPRA
+    - A4H5
     exchange: FP
     figi: BBG00F2XZQ87
-    resolved_at: '2026-08-15T02:22:31.549705+00:00'
+    listings:
+    - ticker: EPRU
+      exchange: NA
+    - ticker: EPRA
+      exchange: LN
+    - ticker: A4H5
+      exchange: GR
+    resolved_at: '2026-08-15T13:53:26.565430+00:00'
     source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.24
   LU1681048630:
     name: AM GLOBAL LUXURY ETF EUR ACC
     tickers:
     - GLUX
+    - OSEHF
     exchange: FP
     figi: BBG00KVGM8F7
-    resolved_at: '2026-08-15T02:22:31.680635+00:00'
+    listings:
+    - ticker: GLUX
+      exchange: GR
+    - ticker: OSEHF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:28.031321+00:00'
     source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.25
   IE00B3VSSL01:
     name: INVESCO US TECHNOLOGY S&P
     tickers:
     - XLKS
+    - XLKQ
+    - SML3
+    - ITTSF
     exchange: LN
     figi: BBG000Q2S7F4
-    resolved_at: '2026-08-15T02:22:31.826912+00:00'
+    listings:
+    - ticker: XLKS
+      exchange: LN
+    - ticker: XLKQ
+      exchange: LN
+    - ticker: SML3
+      exchange: GR
+    - ticker: ITTSF
+      exchange: US
+    resolved_at: '2026-08-15T13:53:11.912382+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.14
   IE00BM67HK77:
     name: X MSCI WORLD HEALTH CARE
     tickers:
     - XDWH
+    - XDWHF
+    - XWHS
     exchange: GR
     figi: BBG00C9Y1409
-    resolved_at: '2026-08-15T02:24:12.473695+00:00'
+    listings:
+    - ticker: XDWH
+      exchange: GR
+    - ticker: XDWH
+      exchange: LN
+    - ticker: XDWHF
+      exchange: US
+    - ticker: XWHS
+      exchange: LN
+    resolved_at: '2026-08-15T13:53:25.167207+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
   IE00BDBRDM35:
     name: ISHARES GLB AGG EUR-H ACC
     tickers:
@@ -172,8 +375,11 @@ etfs:
       exchange: NA
     - ticker: ISREF
       exchange: US
-    resolved_at: '2026-08-15T02:27:04.338196+00:00'
+    resolved_at: '2026-08-15T13:53:21.183517+00:00'
     source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.1
   IE00BKM4GZ66:
     name: ISHARES CORE EM IMI ACC
     tickers:
@@ -194,8 +400,11 @@ etfs:
       exchange: GR
     - ticker: ISAPF
       exchange: US
-    resolved_at: '2026-08-15T02:28:34.755607+00:00'
+    resolved_at: '2026-08-15T13:53:24.186380+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.18
   IE0006WW1TQ4:
     name: X MSCI WORLD EX USA 1C
     tickers:
@@ -213,5 +422,8 @@ etfs:
       exchange: US
     - ticker: XMWX
       exchange: LN
-    resolved_at: '2026-08-15T02:31:22.132993+00:00'
+    resolved_at: '2026-08-15T13:53:08.486244+00:00'
     source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.15

@@ -68,6 +68,7 @@ def read_db_isins(path):
 
 def mock_resolver(monkeypatch, result=RESOLVED):
     monkeypatch.setattr(OpenFIGIResolver, 'resolve', lambda self, isin: result)
+    monkeypatch.setattr('e1f.common.enrich_fund_metadata', lambda isin, info: info)
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,21 @@ def test_add_and_update(paths, monkeypatch, capsys):
 
     assert config_cmd.main(['--config', paths['config'], 'update', ISIN_A]) == 0
     assert config_cmd.main(['--config', paths['config'], 'update', ISIN_C]) == 1
+
+
+def test_update_without_isins_updates_all(paths, monkeypatch, capsys):
+    write_config(paths['config'], [ISIN_A, ISIN_B])
+    mock_resolver(monkeypatch)
+
+    assert config_cmd.main(['--config', paths['config'], 'update']) == 0
+    out = capsys.readouterr().out
+    assert "✓ Updated 2/2 ETFs" in out
+
+
+def test_update_without_isins_on_empty_config(paths, capsys):
+    write_config(paths['config'], [])
+    assert config_cmd.main(['--config', paths['config'], 'update']) == 0
+    assert 'No ETFs in configuration' in capsys.readouterr().out
 
 
 def test_add_partial_failure_returns_1(paths, monkeypatch):

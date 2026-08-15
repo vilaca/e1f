@@ -45,6 +45,13 @@ XTB_EXCHANGE_SUFFIX = {
     "US": "US",
 }
 
+KNOWN_FUND_CURRENCIES = frozenset(
+    {"USD", "EUR", "GBP", "GBX", "CHF", "JPY", "CAD", "AUD", "SEK", "NOK", "DKK", "HKD", "SGD"}
+)
+
+_FTGO_TER_FIELDS = ("Ongoing charge", "Net expense ratio")
+_JUSTETF_PROFILE_URL = "https://www.justetf.com/en/etf-profile.html?isin={isin}"
+
 
 def _retry_after_seconds(response: requests.Response | None) -> float | None:
     """Parse a Retry-After header (delay-seconds or HTTP-date)."""
@@ -101,6 +108,245 @@ def call_with_retry(
                 f"retrying in {wait:.0f}s"
             )
             time.sleep(wait)
+
+
+def fund_currency_from_name(name: str) -> str | None:
+    """Share-class currency parsed from a fund or listing name."""
+    upper = (name or "").upper()
+    match = re.search(r"\b(USD|EUR|GBP|CHF|JPY|CAD|AUD|SEK|NOK|DKK|HKD|SGD)(A|D)\b", upper)
+    if match:
+        return match.group(1)
+    for token in reversed(re.findall(r"\b[A-Z]{3}\b", upper)):
+        if token in KNOWN_FUND_CURRENCIES:
+            return str(token)
+    return None
+
+
+def distribution_from_name(name: str) -> str | None:
+    """Accumulating vs distributing, parsed from fund naming conventions."""
+    upper = (name or "").upper()
+    if re.search(r"\bUSDD\b|\bEURD\b|\bGBPD\b", upper):
+        return "Distributing"
+    if re.search(r"\bUSDA\b|\bEURA\b|\bGBPA\b", upper):
+        return "Accumulating"
+    if re.search(r"\(ACC\)|\bACC\b|\bACCUMULATING\b", upper):
+        return "Accumulating"
+    if re.search(r"\(DIST\)|\bDIST\b|\bDISTRIBUTING\b|\bDISTRIBUTION\b", upper):
+        return "Distributing"
+    return None
+
+
+def _parse_percent_value(value: str) -> float | None:
+    text = (value or "").strip()
+    if not text or text in {"--", "-"}:
+        return None
+    match = re.search(r"([\d.]+)\s*%", text)
+    return float(match.group(1)) if match else None
+
+
+def _short_lookup_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    lower = message.lower()
+    if "404" in message or "not found" in lower:
+        return "quote not found"
+    if "429" in message or "rate limit" in lower:
+        return "rate limited"
+    first_line = message.splitlines()[0]
+    return first_line[:100] if len(first_line) > 100 else first_line
+
+
+def _best_ftgo_name(names: list[str], hint: str) -> str:
+    """Pick the FT Markets name that best matches the ISIN's OpenFIGI share-class hint."""
+    hint_dist = distribution_from_name(hint)
+    hint_ccy = fund_currency_from_name(hint)
+    if hint_dist:
+        for name in names:
+            if distribution_from_name(name) == hint_dist:
+                return name
+    if hint_ccy:
+        for name in names:
+            if fund_currency_from_name(name) == hint_ccy:
+                return name
+    return names[0]
+
+
+def _ftgo_load(isin: str) -> tuple[Any, str | None]:
+    try:
+        from ftgo import get_xid
+
+        matches = get_xid(isin, display_mode="all")
+        if matches is None or matches.empty:
+            return None, "no FT Markets listing"
+        return matches, None
+    except ValueError as exc:
+        if "No data found" in str(exc):
+            return None, "no FT Markets listing"
+        return None, _short_lookup_error(exc)
+    except Exception as exc:  # noqa: BLE001 — ftgo/network failures are optional enrichment
+        return None, _short_lookup_error(exc)
+
+
+def _names_from_ftgo_matches(matches: Any) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for _, row in matches.iterrows():
+        raw = row.get("name")
+        if not raw:
+            continue
+        name = str(raw).strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _ftgo_xid_for_hint(matches: Any, hint: str) -> str:
+    names = _names_from_ftgo_matches(matches)
+    best = _best_ftgo_name(names, hint) if names else ""
+    for _, row in matches.iterrows():
+        if str(row.get("name") or "").strip() == best:
+            return str(row["xid"])
+    return str(matches.iloc[0]["xid"])
+
+
+def _ftgo_ter(matches: Any, hint: str) -> float | None:
+    from ftgo import get_fund_stats
+
+    stats = get_fund_stats(_ftgo_xid_for_hint(matches, hint))
+    for field in _FTGO_TER_FIELDS:
+        if field in stats:
+            ter = _parse_percent_value(str(stats[field]))
+            if ter is not None:
+                return ter
+    return None
+
+
+def _justetf_field(html: str, field: str) -> str | None:
+    match = re.search(
+        rf'data-testid="tl_etf-basics_value_{field}">([^<]+)',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def _fetch_justetf_html(isin: str) -> str | None:
+    def _get() -> str:
+        response = requests.get(
+            _JUSTETF_PROFILE_URL.format(isin=isin),
+            timeout=15,
+            headers={"User-Agent": "e1f/0.1"},
+        )
+        response.raise_for_status()
+        return response.text
+
+    try:
+        return str(call_with_retry(f"justETF profile {isin}", _get, retries=2))
+    except requests.RequestException as exc:
+        logger.debug("justETF profile failed for %s: %s", isin, exc)
+        return None
+
+
+def _ftgo_listing_names(isin: str) -> tuple[list[str], str | None]:
+    matches, error = _ftgo_load(isin)
+    if error:
+        return [], error
+    names = _names_from_ftgo_matches(matches)
+    if not names:
+        return [], "FT Markets listing has no name"
+    return names, None
+
+
+def _fund_currency_from_names(names: list[str]) -> str | None:
+    for name in names:
+        currency = fund_currency_from_name(name)
+        if currency:
+            return currency
+    return None
+
+
+def _ftgo_fund_name(isin: str, hint: str = "") -> tuple[str | None, str | None]:
+    names, error = _ftgo_listing_names(isin)
+    if error:
+        return None, error
+    return _best_ftgo_name(names, hint), None
+
+
+def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
+    """Augment OpenFIGI resolution with fund currency, distribution, and TER.
+
+    OpenFIGI names are ISIN-specific and take precedence. ftgo fills gaps for
+    currency/distribution and supplies TER via fund stats. justETF is a fallback
+    when ftgo omits a field (common for newer Amundi listings).
+    """
+    openfigi_name = str(info.get("name") or "")
+    fund_currency = fund_currency_from_name(openfigi_name)
+    distribution = distribution_from_name(openfigi_name)
+    ter: float | None = None
+
+    matches, ftgo_error = _ftgo_load(isin)
+    ftgo_names = _names_from_ftgo_matches(matches) if matches is not None else []
+    ftgo_name = _best_ftgo_name(ftgo_names, openfigi_name) if ftgo_names else None
+    if not fund_currency:
+        fund_currency = _fund_currency_from_names(ftgo_names)
+    if not distribution and ftgo_name:
+        distribution = distribution_from_name(ftgo_name)
+    if matches is not None:
+        ter = _ftgo_ter(matches, openfigi_name)
+
+    if ftgo_name:
+        ftgo_dist = distribution_from_name(ftgo_name)
+        if distribution and ftgo_dist and ftgo_dist != distribution:
+            print(
+                f"⚠ ftgo {isin}: listing name implies {ftgo_dist}; "
+                f"using OpenFIGI share class ({distribution})"
+            )
+
+    justetf_html: str | None = None
+    if ter is None or not fund_currency or not distribution:
+        justetf_html = _fetch_justetf_html(isin)
+
+    if ter is None and justetf_html:
+        raw_ter = _justetf_field(justetf_html, "ter")
+        if raw_ter:
+            ter = _parse_percent_value(raw_ter)
+            if ter is not None:
+                print(
+                    f"⚠ ter {isin}: ftgo has no expense ratio; "
+                    f"used justETF ({ter:.2f}%)"
+                )
+
+    if not fund_currency and justetf_html:
+        raw_ccy = _justetf_field(justetf_html, "fund-currency")
+        if raw_ccy in KNOWN_FUND_CURRENCIES:
+            fund_currency = raw_ccy
+            print(f"⚠ fund currency {isin}: used justETF ({fund_currency})")
+
+    if not distribution and justetf_html:
+        raw_dist = _justetf_field(justetf_html, "distribution-policy")
+        if raw_dist:
+            dist_lower = raw_dist.lower()
+            if "accum" in dist_lower:
+                distribution = "Accumulating"
+            elif "distrib" in dist_lower:
+                distribution = "Distributing"
+
+    if ftgo_error and (fund_currency or distribution):
+        print(
+            f"⚠ ftgo {isin}: {ftgo_error}; "
+            "used OpenFIGI name for fund currency/distribution"
+        )
+
+    if fund_currency:
+        info["fund_currency"] = fund_currency
+    if distribution:
+        info["distribution"] = distribution
+    if ter is not None:
+        info["ter"] = ter
+    return info
 
 
 @dataclass
@@ -235,6 +481,8 @@ class ConfigManager:
         if not info:
             return False
 
+        info = enrich_fund_metadata(isin, info)
+
         if 'etfs' not in self.config:
             self.config['etfs'] = {}
 
@@ -246,6 +494,12 @@ class ConfigManager:
         print(f"  Tickers: {', '.join(info['tickers'])}")
         print(f"  Exchange: {info['exchange']}")
         print(f"  FIGI: {info['figi']}")
+        if info.get('fund_currency'):
+            print(f"  Fund currency: {info['fund_currency']}")
+        if info.get('distribution'):
+            print(f"  Distribution: {info['distribution']}")
+        if info.get('ter') is not None:
+            print(f"  TER: {info['ter']:.2f}%")
         return True
 
     def list(self) -> builtins.list[tuple[str, dict[str, Any]]]:
@@ -269,9 +523,17 @@ class ConfigManager:
         if not info:
             return False
 
+        info = enrich_fund_metadata(isin, info)
+
         self.config['etfs'][isin] = info
         self._save_config()
 
         print(f"✓ Updated {isin}")
         print(f"  Name: {info['name']}")
+        if info.get('fund_currency'):
+            print(f"  Fund currency: {info['fund_currency']}")
+        if info.get('distribution'):
+            print(f"  Distribution: {info['distribution']}")
+        if info.get('ter') is not None:
+            print(f"  TER: {info['ter']:.2f}%")
         return True
