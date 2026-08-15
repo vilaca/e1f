@@ -109,7 +109,8 @@ class DataExtractor:
     @staticmethod
     def _symbol_currency(symbol: str) -> str:
         """ftgo symbols look like "CSPX:LSE:USD"; currency is the last part."""
-        return symbol.split(':')[-1] if ':' in symbol else ''
+        parts = symbol.split(':')
+        return parts[-1] if len(parts) >= 3 else ''
 
     def _resolve_ftgo(self, isin: str) -> dict[str, str]:
         """Resolve an ISIN to a pinned ftgo security {xid, symbol, currency}.
@@ -124,10 +125,14 @@ class DataExtractor:
             return cast(dict[str, str], self._ftgo_meta[isin])
 
         matches = get_xid(isin, display_mode="all")  # raises if no matches
+        currencies = matches['symbol'].map(self._symbol_currency)
+        resolved = matches[currencies != '']
+        if resolved.empty:
+            raise ValueError(f"No currency-qualified ftgo match for {isin}")
         base = fund_currency_from_name(str(matches.iloc[0].get('name', '')))
-        preferred = matches[matches['symbol'].map(self._symbol_currency) == base] \
+        preferred = resolved[resolved['symbol'].map(self._symbol_currency) == base] \
             if base else matches.iloc[0:0]
-        row = preferred.iloc[0] if not preferred.empty else matches.iloc[0]
+        row = preferred.iloc[0] if not preferred.empty else resolved.iloc[0]
 
         symbol = str(row['symbol'])
         resolved = {'xid': str(row['xid']), 'symbol': symbol,

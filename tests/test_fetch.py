@@ -47,7 +47,34 @@ def test_base_currency():
 
 def test_symbol_currency():
     assert DataExtractor._symbol_currency('CSPX:LSE:USD') == 'USD'
+    assert DataExtractor._symbol_currency('WEBN:MUN') == ''
     assert DataExtractor._symbol_currency('CSPX') == ''
+
+
+def test_resolve_ftgo_skips_symbols_without_currency(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    matches = pd.DataFrame([
+        {'xid': 'bad', 'symbol': 'WEBN:MUN', 'name': 'Test ETF USD'},
+        {'xid': 'good', 'symbol': 'WEBN:LSE:USD', 'name': 'Test ETF USD'},
+    ])
+    monkeypatch.setattr(fetch_mod, 'get_xid', lambda isin, display_mode: matches)
+
+    assert ext._resolve_ftgo(ISIN) == {
+        'xid': 'good',
+        'symbol': 'WEBN:LSE:USD',
+        'currency': 'USD',
+    }
+
+
+def test_resolve_ftgo_rejects_symbols_without_currency(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    matches = pd.DataFrame([
+        {'xid': 'bad', 'symbol': 'WEBN:MUN', 'name': 'Test ETF USD'},
+    ])
+    monkeypatch.setattr(fetch_mod, 'get_xid', lambda isin, display_mode: matches)
+
+    with pytest.raises(ValueError, match='No currency-qualified ftgo match'):
+        ext._resolve_ftgo(ISIN)
 
 
 # ---------------------------------------------------------------------------
