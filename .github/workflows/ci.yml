@@ -28,8 +28,9 @@ jobs:
       # actionlint is installed below in the dedicated job.
 
       # Same script CI and developers run locally — the single definition of green.
-      - name: Run checks (excluding actions gate — handled in actionlint job)
-        run: ./scripts/check.sh lint layers shell types test
+      # actions runs in the actionlint job below (needs a separate install).
+      - name: Run checks
+        run: ./scripts/check.sh lint layers shell types dead test
 
   actionlint:
     runs-on: ubuntu-latest

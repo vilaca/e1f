@@ -15,7 +15,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 # Coverage floor. Ratchet up as coverage grows; never down without a recorded
-# reason. Current coverage is ~94%.
+# reason. Current coverage is ~93%.
 COVERAGE_FLOOR=90
 
 failed=()

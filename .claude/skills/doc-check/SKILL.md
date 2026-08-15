@@ -1,7 +1,7 @@
 ---
 name: doc-check
 description: >
-  Audit e1f's README and ADRs for drift, redundancy, and convention breaks
+  Audit e1f's README, CLAUDE.md, and ADRs for drift, redundancy, and convention breaks
   against the actual implementation. Enforces "one home per fact": finds prose
   that restates a code shape instead of linking it, claims whose referenced code
   has changed or gone, stale Python version / flag / command references,
@@ -15,19 +15,22 @@ allowed-tools: Bash, Read, Grep, Glob, Edit
 # e1f doc-check
 
 e1f keeps **one home per fact**: the *why* lives in an ADR, a *code shape* lives
-in code (docs link to it, never copy it), and README prose describes behaviour
-without duplicating argparse definitions or module internals. This skill finds
-drift, redundancy, and convention breaks.
+in code (docs link to it, never copy it), and README / CLAUDE.md prose describes
+behaviour without duplicating argparse definitions or module internals. This skill
+finds drift, redundancy, and convention breaks.
 
 Report findings grouped by section, each as `file:line — what's wrong — the fix`.
 Do **not** edit unless the user asks; if they do, fix and re-run `scripts/check.sh`.
 
 ## 0. Scope
 
-Targets: `README.md`, `ADR/*.md`, and `.claude/skills/*/SKILL.md`.
+Targets: `README.md`, `CLAUDE.md`, `ADR/*.md`, and `.claude/skills/*/SKILL.md`.
 
-Read `README.md` and all existing ADRs first to calibrate the current state
-before checking anything.
+**Not in scope:** `scripts/*` comments (e.g. coverage footnotes in `check.sh`) —
+those are maintainer notes, not user-facing docs. Flag them only if the user asks.
+
+Read **`README.md`**, **`CLAUDE.md`**, and **all `ADR/*.md`** first to calibrate
+the current state before checking anything.
 
 ## 1. Prose that restates a code shape (should link instead)
 
@@ -52,6 +55,8 @@ location, never copy the shape into prose. Find violations:
   these keys is suspect.
 - **Module / class names** — verify any module, class, or function name mentioned
   in docs still exists at the stated path.
+- **`CLAUDE.md` layout blurbs** — one-line module descriptions must describe
+  current behaviour, not the first shipped version (link to ADRs for history).
 
 For each violation, confirm the code shape via `grep`/`Read`, then flag the prose
 with the source file to link to instead.
@@ -77,6 +82,16 @@ and verify each still matches the code:
   `validate` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
   `xtb` (in `transactions.py`). `portfolio` has no nested subcommands.
 - **Backtick file paths** — confirm each exists.
+- **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
+  `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
+  (currently `lint`, `layers`, `shell`, `actions`, `types`, `dead`, `test`) and
+  the gate names in the usage comment. Then verify:
+  1. Every gate appears in `CLAUDE.md` Running checks examples/comments.
+  2. `CLAUDE.md` does not list gates that `check.sh` no longer defines.
+  3. The CI claim matches `.github/workflows/ci.yml`: every default gate runs
+     in CI (splitting `actions` into a separate job is OK; omitting a gate is not).
+- **`CLAUDE.md` module blurbs** — Layout one-liners must match current modules
+  (e.g. `transactions.py` = Trade Republic CSV **and** XTB Excel after ADR-0006).
 
 Flag anything named in prose that no longer resolves or no longer matches.
 
@@ -110,8 +125,8 @@ Extract every relative markdown link and confirm the target exists:
 ## 6. Agent instructions (skills)
 
 Each `.claude/skills/*/SKILL.md` references files, scripts, and conventions.
-Verify every named file path, command, and flag still resolves and matches the
-actual codebase. A stale pointer in a skill breaks the next audit.
+Verify every named file path, command, flag, and **scope target** still resolves
+and matches the actual codebase. A stale pointer in a skill breaks the next audit.
 
 ## 7. Report
 

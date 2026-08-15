@@ -9,8 +9,8 @@
 # judge is too eager. Both kinds are required to prevent judge drift in either
 # direction.
 #
-# To run: invoke /doc-check with the diff content from each .diff file and
-# verify the verdict matches. Record any divergence as a calibration issue.
+# To run: invoke /doc-check, read each case's `finding:`, and verify the
+# verdict matches. Optional `diff:` files are illustrative only.
 
 cases:
   - name: fallback_not_opt_in
@@ -20,7 +20,6 @@ cases:
       README implies yfinance fallback is automatic when ftgo has no data,
       but it requires the explicit --fallback flag. A user following the README
       would not know to pass --fallback and would see no fallback behaviour.
-    diff: violated_fallback_not_opt_in.diff
 
   - name: schema_columns_in_prose
     verdict: VIOLATED
@@ -30,7 +29,23 @@ cases:
       prose. These are frozen in src/e1f/fetch.py and tested in
       tests/test_contracts.py. Prose that copies column names will silently
       diverge if the schema changes.
-    diff: violated_schema_columns_in_prose.diff
+
+  - name: claude_md_stale_check_gates
+    verdict: VIOLATED
+    section: "2 (stale claims)"
+    finding: >
+      CLAUDE.md Running checks block lists only lint, layers, types, test but
+      scripts/check.sh default gates also include shell, actions, and dead.
+      Agent instructions drift from the actual check script and CI will miss
+      gates the doc omits.
+
+  - name: claude_md_stale_transactions_blurb
+    verdict: VIOLATED
+    section: "2 (stale claims)"
+    finding: >
+      CLAUDE.md Layout describes transactions.py as "broker CSV ingestion" only,
+      but the module also ingests XTB Excel (ADR-0006). The agent-facing module
+      blurb is stale.
 
   - name: price_sources_summary_ok
     verdict: HOLDS
@@ -41,4 +56,11 @@ cases:
       orientation without opening the ADR. The section must NOT be flagged as
       a second source of truth. Flag only if it contradicts the ADR, not merely
       for summarising it.
-    diff: holds_price_sources_summary.diff
+
+  - name: check_sh_coverage_comment_out_of_scope
+    verdict: HOLDS
+    section: "0 (scope)"
+    note: >
+      scripts/check.sh has a maintainer comment "Current coverage is ~94%" that
+      may lag pytest output by a point or two. doc-check must NOT flag script
+      header comments — scope is README.md, CLAUDE.md, ADR/*.md, and skills only.

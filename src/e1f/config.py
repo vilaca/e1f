@@ -13,12 +13,12 @@ to the YAML config consumed by the fetch command.
 """
 
 import argparse
+import math
 import os
 import sqlite3
 import sys
 from contextlib import closing
 
-import numpy as np
 import pandas as pd
 import yaml
 
@@ -282,7 +282,7 @@ Examples:
         stats['years'] = stats['n_days'] / TRADING_YEAR
 
         wide = price_df.pivot(index='date', columns='isin', values='close')
-        ann_vol = wide.pct_change().std() * np.sqrt(TRADING_YEAR)
+        ann_vol = wide.pct_change().std() * math.sqrt(TRADING_YEAR)
         stats = stats.merge(ann_vol.rename('ann_vol').reset_index(), on='isin', how='left')
         stats['name'] = stats['isin'].map(
             lambda x: config_meta.get(x, {}).get('name', 'Unknown')[:35]

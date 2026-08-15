@@ -26,6 +26,10 @@ IE0003XJA0J9:
   currency: MUN
   symbol: WEBN:MUN
   xid: '894306203'
+IE0006WW1TQ4:
+  currency: USD
+  symbol: EXUS:LSE:USD
+  xid: '871828461'
 IE0008471009:
   currency: EUR
   symbol: EUEA:AEX:EUR

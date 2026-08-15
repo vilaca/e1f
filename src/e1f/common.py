@@ -110,7 +110,6 @@ class ETFDefinition:
     name: str
     tickers: list[str]
     exchange: str = ""
-    figi: str = ""
 
     @classmethod
     def from_config(cls, isin: str, data: dict[str, Any]) -> Self:
@@ -119,7 +118,6 @@ class ETFDefinition:
             name=data.get('name', isin),
             tickers=data.get('tickers', []),
             exchange=data.get('exchange', ''),
-            figi=data.get('figi', '')
         )
 
 
