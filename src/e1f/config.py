@@ -19,11 +19,31 @@ import os
 import sqlite3
 import sys
 from contextlib import closing
+from typing import TypedDict
 
 import pandas as pd
 import yaml
 
 from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager
+
+MAX_GAP_DAYS = 5
+MAX_ABS_RETURN = 0.5
+
+
+class QualityReport(TypedDict):
+    rows: int
+    duplicates: int
+    nulls: int
+    non_positive: int
+    weekend_rows: int
+    max_gap_days: int
+    max_abs_return: float
+    duplicate_isins: list[str]
+    null_isins: list[str]
+    non_positive_isins: list[str]
+    weekend_isins: list[str]
+    gap_days_by_isin: dict[str, int]
+    abs_return_by_isin: dict[str, float]
 
 
 def _db_has_prices(db_path: str) -> bool:
@@ -34,6 +54,49 @@ def _db_has_prices(db_path: str) -> bool:
         return conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
         ).fetchone() is not None
+
+
+def quality_report(prices: pd.DataFrame) -> QualityReport:
+    """Return data-quality metrics for a long (isin, date, close) price frame."""
+    checked = prices.copy()
+    checked['date'] = pd.to_datetime(checked['date'])
+    checked = checked.sort_values(['isin', 'date'])
+
+    def max_gap(dates: pd.Series) -> int:
+        gaps = dates.diff().dt.days.dropna()
+        return int(gaps.max()) if len(gaps) else 0
+
+    def max_abs_return(close: pd.Series) -> float:
+        returns = close.pct_change(fill_method=None).abs().dropna()
+        return float(returns.max()) if len(returns) else 0.0
+
+    gaps = checked.groupby('isin')['date'].apply(max_gap)
+    returns = checked.groupby('isin')['close'].apply(max_abs_return)
+    duplicates = checked.duplicated(subset=['isin', 'date'], keep=False)
+    nulls = checked['close'].isna()
+    non_positive = checked['close'] <= 0
+    weekends = checked['date'].dt.weekday >= 5
+    return {
+        'rows': len(checked),
+        'duplicates': int(checked.duplicated(subset=['isin', 'date']).sum()),
+        'nulls': int(nulls.sum()),
+        'non_positive': int(non_positive.sum()),
+        'weekend_rows': int(weekends.sum()),
+        'max_gap_days': int(gaps.max()) if len(gaps) else 0,
+        'max_abs_return': float(returns.max()) if len(returns) else 0.0,
+        'duplicate_isins': sorted(checked.loc[duplicates, 'isin'].unique()),
+        'null_isins': sorted(checked.loc[nulls, 'isin'].unique()),
+        'non_positive_isins': sorted(checked.loc[non_positive, 'isin'].unique()),
+        'weekend_isins': sorted(checked.loc[weekends, 'isin'].unique()),
+        'gap_days_by_isin': {str(isin): int(days) for isin, days in gaps.items()},
+        'abs_return_by_isin': {
+            str(isin): float(change) for isin, change in returns.items()
+        },
+    }
+
+
+def _affected(isins: list[str]) -> str:
+    return f" [{', '.join(isins)}]" if isins else ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -270,9 +333,51 @@ Examples:
         db_isins = set(price_df['isin'].unique())
         config_isin_set = set(config_meta.keys())
 
+        # --- Price integrity ---
+        quality = quality_report(price_df)
+        gap_breakdown = sorted(
+            (
+                (isin, days)
+                for isin, days in quality['gap_days_by_isin'].items()
+                if days > MAX_GAP_DAYS
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )
+        return_isins = sorted(
+            isin for isin, change in quality['abs_return_by_isin'].items()
+            if change >= MAX_ABS_RETURN
+        )
+        quality_issues = (
+            quality['duplicates'] > 0
+            or quality['nulls'] > 0
+            or quality['non_positive'] > 0
+            or quality['weekend_rows'] > 0
+            or quality['max_gap_days'] > MAX_GAP_DAYS
+            or quality['max_abs_return'] >= MAX_ABS_RETURN
+        )
+        print("=== Data Integrity ===")
+        print(f"  Rows:                 {quality['rows']}")
+        print(f"  Duplicate keys:       {quality['duplicates']}"
+              f"{_affected(quality['duplicate_isins'])}")
+        print(f"  Null closes:          {quality['nulls']}"
+              f"{_affected(quality['null_isins'])}")
+        print(f"  Non-positive closes:  {quality['non_positive']}"
+              f"{_affected(quality['non_positive_isins'])}")
+        print(f"  Weekend rows:         {quality['weekend_rows']}"
+              f"{_affected(quality['weekend_isins'])}")
+        print(f"  Largest gap:          {quality['max_gap_days']} days "
+              f"(limit: {MAX_GAP_DAYS})")
+        day_width = max((len(str(days)) for _, days in gap_breakdown), default=1)
+        for isin, days in gap_breakdown:
+            name = config_meta.get(isin, {}).get('name', 'Unknown')
+            print(f"    {days:>{day_width}} days  {isin}  {name}")
+        print(f"  Largest price change: {quality['max_abs_return']:.1%} "
+              f"(limit: {MAX_ABS_RETURN:.0%}){_affected(return_isins)}")
+
         # --- Config vs DB sync ---
         only_config = sorted(config_isin_set - db_isins)
         only_db = sorted(db_isins - config_isin_set)
+        print()
         print("=== Config vs DB ===")
         if not only_config and not only_db:
             print(f"  {len(config_isin_set)} ETFs — config and DB in sync  ✓")
@@ -324,7 +429,7 @@ Examples:
                        (~stats['isin'].isin(short['isin']))].sort_values('ann_vol')
 
         print()
-        print("=== Issues ===")
+        print("=== Other Issues ===")
         if not short.empty:
             print(f"Short history (< {args.min_years:.0f}yr):")
             for _, r in short.iterrows():
@@ -345,8 +450,11 @@ Examples:
                 print(f"  {r['isin']}  {r['name']:<35}  vol {r['ann_vol']:.2%}")
                 flagged.append(r['isin'])
 
-        if not flagged:
+        if not flagged and not quality_issues:
             print("  None — all ETFs look good.")
+        elif quality_issues:
+            print()
+            print("Price integrity issues found — see Data Integrity above.")
 
         return 0
 

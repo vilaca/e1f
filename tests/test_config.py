@@ -211,8 +211,41 @@ def test_validate_healthy(paths, capsys):
                           '--db', paths['db']])
     assert rc == 0
     out = capsys.readouterr().out
+    assert '=== Data Integrity ===' in out
+    assert 'Duplicate keys:       0' in out
+    assert 'Null closes:          0' in out
+    assert 'Non-positive closes:  0' in out
+    assert 'Weekend rows:         0' in out
     assert 'config and DB in sync' in out
     assert 'None — all ETFs look good' in out
+
+
+def test_validate_reports_price_integrity_issues(paths, capsys):
+    write_config(paths['config'], [ISIN_A])
+    write_db(paths['db'], {ISIN_A: [100, -5, 200]})
+    with closing(sqlite3.connect(paths['db'])) as conn:
+        conn.execute(
+            'INSERT INTO prices VALUES (?, ?, ?)',
+            (ISIN_A, '2026-08-29 00:00:00', None),
+        )
+        conn.commit()
+
+    rc = config_cmd.main(['--config', paths['config'], 'validate',
+                          '--db', paths['db']])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert 'Null closes:          1' in out
+    assert 'Non-positive closes:  1' in out
+    weekend_line = next(line for line in out.splitlines() if 'Weekend rows:' in line)
+    assert f'1 [{ISIN_A}]' in weekend_line
+    assert f'    17 days  {ISIN_A}  ETF {ISIN_A}' in out
+    price_change_line = next(
+        line for line in out.splitlines() if 'Largest price change:' in line
+    )
+    assert f'[{ISIN_A}]' in price_change_line
+    assert 'Price integrity issues found' in out
+    assert 'None — all ETFs look good' not in out
 
 
 def test_validate_flags_orphans_and_short_history(paths, capsys):
