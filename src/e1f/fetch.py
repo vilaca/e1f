@@ -5,6 +5,7 @@ Usage:
     e1f fetch                 # fetch all ETFs in the config
     e1f fetch IE00BM67HK77    # fetch a single ISIN
     e1f fetch --force         # ignore the cache and re-download
+    e1f fetch IE00BM67HK77 --replace  # atomically replace one stored series
     e1f fetch --fallback      # fall back to yfinance when ftgo has no data
 
 Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
@@ -52,6 +53,8 @@ class DataExtractor:
         start_date: str = DEFAULT_START_DATE,
         end_date: str | None = None,
         force_refresh: bool = False,
+        replace: bool = False,
+        allow_shrink: bool = False,
         fallback: bool = False,
         currency_meta_path: str = DEFAULT_CURRENCY_META
     ):
@@ -60,6 +63,8 @@ class DataExtractor:
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date) if end_date else pd.Timestamp.now()
         self.force_refresh = force_refresh
+        self.replace = replace
+        self.allow_shrink = allow_shrink
         self.fallback = fallback
 
         # Load config
@@ -144,8 +149,26 @@ class DataExtractor:
             """)
             conn.commit()
 
+    @staticmethod
+    def _read_series(conn: sqlite3.Connection, isin: str) -> pd.DataFrame:
+        """Date-indexed stored close series for an ISIN.
+
+        Parses dates per-value (format='mixed') so a date-only row next to a
+        'YYYY-MM-DD HH:MM:SS' one resolves correctly, and drops rows whose date
+        can't be parsed so a corrupt row can't skew cache-freshness math or crash
+        strftime downstream. Repairing such rows is what `fetch --replace` is for.
+        """
+        df = pd.read_sql_query(
+            "SELECT date, close FROM prices WHERE isin = ? ORDER BY date",
+            conn,
+            params=(isin,),
+            index_col='date',
+        )
+        df.index = pd.to_datetime(df.index, format='mixed', errors='coerce')
+        return df[df.index.notna()]
+
     def _is_cached(self, isin: str) -> tuple[bool, pd.DataFrame | None]:
-        if self.force_refresh:
+        if self.force_refresh or self.replace:
             return False, None
 
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -156,13 +179,7 @@ class DataExtractor:
             if count == 0:
                 return False, None
 
-            df = pd.read_sql_query(
-                "SELECT date, close FROM prices WHERE isin = ? ORDER BY date",
-                conn,
-                params=(isin,),
-                index_col='date',
-                parse_dates=['date']
-            )
+            df = self._read_series(conn, isin)
 
             if not df.empty:
                 latest = df.index.max()
@@ -174,11 +191,16 @@ class DataExtractor:
 
             return True, df
 
-    def _save_prices(self, isin: str, df: pd.DataFrame) -> None:
+    @staticmethod
+    def _price_rows(isin: str, df: pd.DataFrame) -> list[tuple[str, str, float]]:
+        """(isin, 'YYYY-MM-DD', close) rows; flattens yfinance's MultiIndex too."""
         prices = df[['Close']].copy()
-        prices.columns = ['close']            # flattens yfinance's MultiIndex too
+        prices.columns = ['close']
         prices.index = pd.to_datetime(prices.index).strftime('%Y-%m-%d')
-        rows = [(isin, date, float(close)) for date, close in prices['close'].items()]
+        return [(isin, str(date), float(close)) for date, close in prices['close'].items()]
+
+    def _save_prices(self, isin: str, df: pd.DataFrame) -> None:
+        rows = self._price_rows(isin, df)
 
         # By default keep already-stored closes and only add new dates; --force
         # overwrites existing rows with the freshly fetched values.
@@ -189,6 +211,55 @@ class DataExtractor:
             conn.executemany(
                 "INSERT INTO prices (isin, date, close) VALUES (?, ?, ?) "
                 f"ON CONFLICT(isin, date) {on_conflict}",
+                rows,
+            )
+            conn.commit()
+
+    def _replace_prices(self, isin: str, df: pd.DataFrame) -> None:
+        """Atomically replace one ISIN's stored series after a successful fetch.
+
+        Refuses to drop any stored date (a hallmark of a truncated upstream
+        response) unless --allow-shrink is set, so a partial fetch can't silently
+        wipe good history. The fetched series may add or overwrite dates, but by
+        default must be a superset of what is stored — which also catches shorter
+        ranges, narrower windows, and interior holes.
+        """
+        rows = self._price_rows(isin, df)
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            if not self.allow_shrink:
+                # Only *parseable* stored dates must be preserved. Unparseable or
+                # NULL rows are corruption that --replace exists to clean out, so
+                # they don't count against the fetched series' coverage (and can't
+                # leak a literal 'None' into the message). Dates may carry a time
+                # component; parse per-value and compare date parts only.
+                stored_raw = [
+                    row[0] for row in conn.execute(
+                        "SELECT date FROM prices WHERE isin = ?", (isin,)
+                    )
+                ]
+                stored_dates = {
+                    d.strftime('%Y-%m-%d')
+                    for d in pd.to_datetime(stored_raw, format='mixed', errors='coerce')
+                    if not pd.isna(d)
+                }
+                new_dates = {str(date) for _, date, _ in rows}
+                dropped = sorted(stored_dates - new_dates)
+                if dropped:
+                    raise RuntimeError(
+                        f"Refusing to replace {isin}: fetched series does not "
+                        f"cover {len(dropped)} valid stored date(s) (e.g. "
+                        f"{dropped[0]}) — either a truncated response or stored "
+                        f"rows that no longer exist upstream. Re-run with "
+                        f"--allow-shrink to replace anyway."
+                    )
+            conn.execute("DELETE FROM prices WHERE isin = ?", (isin,))
+            # Collapse any duplicate dates in the fetched batch (e.g. two intraday
+            # timestamps that strftime to the same day) instead of tripping the
+            # UNIQUE(isin, date) constraint, matching _save_prices.
+            conn.executemany(
+                "INSERT INTO prices (isin, date, close) VALUES (?, ?, ?) "
+                "ON CONFLICT(isin, date) DO UPDATE SET close = excluded.close",
                 rows,
             )
             conn.commit()
@@ -258,16 +329,16 @@ class DataExtractor:
     def _stored_series(self, isin: str) -> pd.DataFrame:
         """Full stored close series for an ISIN (date-indexed, 'close' column)."""
         with closing(sqlite3.connect(self.db_path)) as conn:
-            return pd.read_sql_query(
-                "SELECT date, close FROM prices WHERE isin = ? ORDER BY date",
-                conn,
-                params=(isin,),
-                index_col='date',
-                parse_dates=['date']
-            )
+            return self._read_series(conn, isin)
 
     def fetch(self, isin: str | None = None) -> pd.DataFrame:
         """Fetch data for specific ISIN or all ETFs and persist to the DB."""
+        # replace is destructive (delete-then-insert per ISIN); never let it run
+        # across the whole universe. Enforced here, not just in the CLI, so
+        # library callers can't wipe every series with a bare fetch().
+        if self.replace and not isin:
+            raise ValueError("replace requires a single ISIN")
+
         etfs: Mapping[str, ETFDefinition | None]
         if isin:
             etfs = {isin: self.etf_universe.get(isin)}
@@ -299,7 +370,10 @@ class DataExtractor:
             # ftgo resolves by ISIN (a single, pinned security), so try it once.
             df = self._fetch_ftgo(etf_isin, since)
             if df is not None and not df.empty:
-                self._save_prices(etf_isin, df)
+                if self.replace:
+                    self._replace_prices(etf_isin, df)
+                else:
+                    self._save_prices(etf_isin, df)
                 fetched = ("ftgo", self._ftgo_meta.get(etf_isin, {}).get('symbol'))
             elif self.fallback:
                 # yfinance is ticker-based; try each configured ticker.
@@ -309,7 +383,10 @@ class DataExtractor:
                     result = self._fetch_yfinance(ticker, since)
                     if result is not None:
                         df, actual_ticker = result
-                        self._save_prices(etf_isin, df)
+                        if self.replace:
+                            self._replace_prices(etf_isin, df)
+                        else:
+                            self._save_prices(etf_isin, df)
                         fetched = ("yfinance", actual_ticker)
                         break
 
@@ -365,6 +442,11 @@ Examples:
 
   # Force a re-download, ignoring the cache
   e1f fetch --force
+
+  # Repair one ETF by atomically replacing its complete stored series.
+  # Deletes the stored rows first; refuses to shrink the series (a sign of a
+  # truncated response) unless --allow-shrink is also given.
+  e1f fetch IE00BM67HK77 --replace
         """
     )
 
@@ -372,7 +454,18 @@ Examples:
     parser.add_argument('--config', '-c', default=DEFAULT_CONFIG, help='Config file path')
     parser.add_argument('--db', '-d', default=DEFAULT_DB, help='Database file path')
     parser.add_argument('--start', '-s', default=DEFAULT_START_DATE, help='Start date')
-    parser.add_argument('--force', '-f', action='store_true', help='Force refresh')
+    refresh_group = parser.add_mutually_exclusive_group()
+    refresh_group.add_argument('--force', '-f', action='store_true', help='Force refresh')
+    refresh_group.add_argument(
+        '--replace',
+        action='store_true',
+        help="Replace one ISIN's complete stored series after a successful fetch",
+    )
+    parser.add_argument(
+        '--allow-shrink',
+        action='store_true',
+        help='With --replace, permit dropping stored dates from the series',
+    )
     parser.add_argument('--fallback', action='store_true',
                         help='Fall back to yfinance when ftgo has no data')
     parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
@@ -380,12 +473,22 @@ Examples:
 
     args = parser.parse_args(argv)
 
+    if args.replace and not args.isin:
+        print("✗ Error: --replace requires an ISIN")
+        return 1
+
+    if args.allow_shrink and not args.replace:
+        print("✗ Error: --allow-shrink only applies with --replace")
+        return 1
+
     try:
         extractor = DataExtractor(
             config_path=args.config,
             db_path=args.db,
             start_date=args.start,
             force_refresh=args.force,
+            replace=args.replace,
+            allow_shrink=args.allow_shrink,
             fallback=args.fallback,
             currency_meta_path=args.currency_meta
         )

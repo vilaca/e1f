@@ -42,6 +42,7 @@ e1f config validate
 e1f fetch                 # all ETFs in the config
 e1f fetch IE00BM67HK77    # a single ISIN
 e1f fetch --force         # ignore the cache and re-download
+e1f fetch IE00BM67HK77 --replace  # atomically replace one ISIN's stored series (repair)
 
 # 3. Ingest broker transactions into the SQLite DB
 e1f transactions trade-republic ~/Downloads/transactions.csv
@@ -67,6 +68,20 @@ share-class currency, so the fetched security can't drift as FT Markets search
 ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
 yfinance using the tickers from the config (trying `.L` and `.DE` suffixes for
 London/Xetra listings).
+
+Fetch is incremental by default (`--force` re-downloads and overwrites matching
+dates). `e1f fetch <ISIN> --replace` repairs one series by deleting its stored rows and
+re-inserting the fetched range; unless `--allow-shrink` is given it refuses to
+drop any stored date (shorter range, narrower window, or interior hole), so a
+truncated response can't silently wipe history
+(`ADR/ADR-0008_price_series_replace_repair.md`).
+
+`e1f config validate` distinguishes **errors** from **warnings**: it exits `1`
+only on errors (duplicate keys, null or non-positive closes, weekend rows, invalid
+dates, or a config/DB desync) and `0` when clean or when only warnings remain
+(over-limit business-day gaps, large price moves, short/sparse/cash-like history).
+See `e1f config validate --help` for the full taxonomy and
+`ADR/ADR-0009_validate_exit_code_contract.md` for the why.
 
 The SQLite DB holds a `prices` table (schema in `src/e1f/fetch.py`) and a
 `transactions` table (schema in `src/e1f/transactions.py`); both can be read

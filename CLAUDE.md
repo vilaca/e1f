@@ -42,6 +42,8 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0005` — portfolio holdings from transactions
 - `ADR-0006` — XTB Cash Operations Excel import
 - `ADR-0007` — fund metadata (TER, distribution, currency) at config time
+- `ADR-0008` — destructive `--replace` series repair with a shrink guard
+- `ADR-0009` — `config validate` error/warning exit-code contract
 
 ## Skills
 

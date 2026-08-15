@@ -21,12 +21,13 @@ import sys
 from contextlib import closing
 from typing import TypedDict
 
+import numpy as np
 import pandas as pd
 import yaml
 
 from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager
 
-MAX_GAP_DAYS = 5
+MAX_MISSING_BUSINESS_DAYS = 5
 MAX_ABS_RETURN = 0.5
 
 
@@ -36,13 +37,15 @@ class QualityReport(TypedDict):
     nulls: int
     non_positive: int
     weekend_rows: int
-    max_gap_days: int
+    invalid_dates: int
+    max_missing_business_days: int
     max_abs_return: float
     duplicate_isins: list[str]
     null_isins: list[str]
     non_positive_isins: list[str]
     weekend_isins: list[str]
-    gap_days_by_isin: dict[str, int]
+    invalid_date_isins: list[str]
+    missing_business_days_by_isin: dict[str, int]
     abs_return_by_isin: dict[str, float]
 
 
@@ -59,36 +62,55 @@ def _db_has_prices(db_path: str) -> bool:
 def quality_report(prices: pd.DataFrame) -> QualityReport:
     """Return data-quality metrics for a long (isin, date, close) price frame."""
     checked = prices.copy()
-    checked['date'] = pd.to_datetime(checked['date'])
+    # format='mixed' parses per-value, so a date-only row alongside 'YYYY-MM-DD
+    # HH:MM:SS' rows resolves to the same day (a real duplicate) rather than
+    # coercing whole columns to NaT; errors='coerce' turns genuinely unparseable
+    # or NULL dates into NaT instead of crashing validate. NaT rows are dropped
+    # per-ISIN before the business-day math below.
+    checked['date'] = pd.to_datetime(checked['date'], format='mixed', errors='coerce')
     checked = checked.sort_values(['isin', 'date'])
 
-    def max_gap(dates: pd.Series) -> int:
-        gaps = dates.diff().dt.days.dropna()
-        return int(gaps.max()) if len(gaps) else 0
+    def max_missing_business_days(dates: pd.Series) -> int:
+        days = dates.dropna().to_numpy().astype('datetime64[D]')
+        if len(days) < 2:
+            return 0
+        # Business days strictly between consecutive observations. Counting from
+        # the day *after* the earlier date excludes both endpoints regardless of
+        # whether either falls on a weekend (the data can carry weekend rows).
+        missing = np.busday_count(days[:-1] + np.timedelta64(1, 'D'), days[1:])
+        return max(int(missing.max()), 0)
 
     def max_abs_return(close: pd.Series) -> float:
         returns = close.pct_change(fill_method=None).abs().dropna()
         return float(returns.max()) if len(returns) else 0.0
 
-    gaps = checked.groupby('isin')['date'].apply(max_gap)
+    gaps = checked.groupby('isin')['date'].apply(max_missing_business_days)
     returns = checked.groupby('isin')['close'].apply(max_abs_return)
-    duplicates = checked.duplicated(subset=['isin', 'date'], keep=False)
+    invalid = checked['date'].isna()
+    # Duplicates are keyed on (isin, date); compute them on rows with a real date
+    # so NaT-vs-NaT doesn't masquerade as a key collision (those are invalid_dates).
+    valid = checked[~invalid]
+    duplicates = valid.duplicated(subset=['isin', 'date'], keep=False)
     nulls = checked['close'].isna()
     non_positive = checked['close'] <= 0
     weekends = checked['date'].dt.weekday >= 5
     return {
         'rows': len(checked),
-        'duplicates': int(checked.duplicated(subset=['isin', 'date']).sum()),
+        'duplicates': int(valid.duplicated(subset=['isin', 'date']).sum()),
         'nulls': int(nulls.sum()),
         'non_positive': int(non_positive.sum()),
         'weekend_rows': int(weekends.sum()),
-        'max_gap_days': int(gaps.max()) if len(gaps) else 0,
+        'invalid_dates': int(invalid.sum()),
+        'max_missing_business_days': int(gaps.max()) if len(gaps) else 0,
         'max_abs_return': float(returns.max()) if len(returns) else 0.0,
-        'duplicate_isins': sorted(checked.loc[duplicates, 'isin'].unique()),
+        'duplicate_isins': sorted(valid.loc[duplicates, 'isin'].unique()),
         'null_isins': sorted(checked.loc[nulls, 'isin'].unique()),
         'non_positive_isins': sorted(checked.loc[non_positive, 'isin'].unique()),
         'weekend_isins': sorted(checked.loc[weekends, 'isin'].unique()),
-        'gap_days_by_isin': {str(isin): int(days) for isin, days in gaps.items()},
+        'invalid_date_isins': sorted(checked.loc[invalid, 'isin'].unique()),
+        'missing_business_days_by_isin': {
+            str(isin): int(days) for isin, days in gaps.items()
+        },
         'abs_return_by_isin': {
             str(isin): float(change) for isin, change in returns.items()
         },
@@ -161,6 +183,18 @@ Examples:
     validate_parser = subparsers.add_parser(
         'validate',
         help='Check config/DB sync, history depth, and data quality',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exit codes:
+  0  clean, or warnings only
+  1  errors found
+
+Errors (exit 1)   — duplicate keys, null closes, non-positive closes, weekend
+                    rows, invalid dates, or config/DB desync (missing or orphan
+                    ISINs).
+Warnings (exit 0) — missing-business-day gaps over the limit, large price moves,
+                    short/sparse/cash-like history. Surfaced, never fatal.
+        """,
     )
     validate_parser.add_argument('--db', default=DEFAULT_DB, help='SQLite DB path')
     validate_parser.add_argument('--min-years', type=float, default=3.0,
@@ -327,8 +361,13 @@ Examples:
         with closing(sqlite3.connect(args.db)) as conn:
             price_df = pd.read_sql(
                 'SELECT isin, date, close FROM prices ORDER BY isin, date',
-                conn, parse_dates=['date'],
+                conn,
             )
+        # Parse per-value (mixed date-only / datetime strings) and coerce garbage
+        # to NaT, matching quality_report so both agree on what a duplicate is.
+        price_df['date'] = pd.to_datetime(
+            price_df['date'], format='mixed', errors='coerce'
+        )
 
         db_isins = set(price_df['isin'].unique())
         config_isin_set = set(config_meta.keys())
@@ -338,8 +377,8 @@ Examples:
         gap_breakdown = sorted(
             (
                 (isin, days)
-                for isin, days in quality['gap_days_by_isin'].items()
-                if days > MAX_GAP_DAYS
+                for isin, days in quality['missing_business_days_by_isin'].items()
+                if days > MAX_MISSING_BUSINESS_DAYS
             ),
             key=lambda item: (-item[1], item[0]),
         )
@@ -347,31 +386,39 @@ Examples:
             isin for isin, change in quality['abs_return_by_isin'].items()
             if change >= MAX_ABS_RETURN
         )
-        quality_issues = (
+        integrity_errors = (
             quality['duplicates'] > 0
             or quality['nulls'] > 0
             or quality['non_positive'] > 0
             or quality['weekend_rows'] > 0
-            or quality['max_gap_days'] > MAX_GAP_DAYS
+            or quality['invalid_dates'] > 0
+        )
+        integrity_warnings = (
+            quality['max_missing_business_days'] > MAX_MISSING_BUSINESS_DAYS
             or quality['max_abs_return'] >= MAX_ABS_RETURN
         )
         print("=== Data Integrity ===")
-        print(f"  Rows:                 {quality['rows']}")
-        print(f"  Duplicate keys:       {quality['duplicates']}"
+        print(f"  Rows: {quality['rows']}")
+        print("  Errors:")
+        print(f"    Duplicate keys:       {quality['duplicates']}"
               f"{_affected(quality['duplicate_isins'])}")
-        print(f"  Null closes:          {quality['nulls']}"
+        print(f"    Null closes:          {quality['nulls']}"
               f"{_affected(quality['null_isins'])}")
-        print(f"  Non-positive closes:  {quality['non_positive']}"
+        print(f"    Non-positive closes:  {quality['non_positive']}"
               f"{_affected(quality['non_positive_isins'])}")
-        print(f"  Weekend rows:         {quality['weekend_rows']}"
+        print(f"    Weekend rows:         {quality['weekend_rows']}"
               f"{_affected(quality['weekend_isins'])}")
-        print(f"  Largest gap:          {quality['max_gap_days']} days "
-              f"(limit: {MAX_GAP_DAYS})")
+        print(f"    Invalid dates:        {quality['invalid_dates']}"
+              f"{_affected(quality['invalid_date_isins'])}")
+        print("  Warnings:")
+        print("    Largest missing-business-day gap: "
+              f"{quality['max_missing_business_days']} days "
+              f"(limit: {MAX_MISSING_BUSINESS_DAYS})")
         day_width = max((len(str(days)) for _, days in gap_breakdown), default=1)
         for isin, days in gap_breakdown:
             name = config_meta.get(isin, {}).get('name', 'Unknown')
-            print(f"    {days:>{day_width}} days  {isin}  {name}")
-        print(f"  Largest price change: {quality['max_abs_return']:.1%} "
+            print(f"      {days:>{day_width}} days  {isin}  {name}")
+        print(f"    Largest price change: {quality['max_abs_return']:.1%} "
               f"(limit: {MAX_ABS_RETURN:.0%}){_affected(return_isins)}")
 
         # --- Config vs DB sync ---
@@ -380,15 +427,23 @@ Examples:
         print()
         print("=== Config vs DB ===")
         if not only_config and not only_db:
-            print(f"  {len(config_isin_set)} ETFs — config and DB in sync  ✓")
+            n = len(config_isin_set)
+            print(f"  No errors — {n} ETF{'s' if n != 1 else ''}, config and DB in sync  ✓")
         else:
+            print("  Errors:")
             if only_config:
-                print(f"  In config, missing from DB (run fetch): {', '.join(only_config)}")
+                print(f"    In config, missing from DB (run fetch): {', '.join(only_config)}")
             if only_db:
-                print(f"  In DB, not in config (orphans):         {', '.join(only_db)}")
+                print(f"    In DB, not in config (orphans):         {', '.join(only_db)}")
 
         # --- Per-ETF stats ---
-        stats = price_df.groupby('isin').agg(
+        # Drop NaT dates and collapse duplicate (isin, date) keys so the pivot
+        # below can't raise; both are surfaced as errors under Data Integrity.
+        stats_df = (
+            price_df.dropna(subset=['date'])
+            .drop_duplicates(subset=['isin', 'date'], keep='last')
+        )
+        stats = stats_df.groupby('isin').agg(
             first_date=('date', 'min'),
             last_date=('date', 'max'),
             n_days=('date', 'count'),
@@ -398,7 +453,7 @@ Examples:
         stats['fill_rate'] = stats['n_days'] / stats['expected']
         stats['years'] = stats['n_days'] / TRADING_YEAR
 
-        wide = price_df.pivot(index='date', columns='isin', values='close')
+        wide = stats_df.pivot(index='date', columns='isin', values='close')
         ann_vol = wide.pct_change().std() * math.sqrt(TRADING_YEAR)
         stats = stats.merge(ann_vol.rename('ann_vol').reset_index(), on='isin', how='left')
         stats['name'] = stats['isin'].map(
@@ -415,10 +470,14 @@ Examples:
             ('1-3yr',   (stats['years'] >= 1) & (stats['years'] < 3)),
             ('< 1yr',   stats['years'] < 1),
         ]
+        printed_tier = False
         for label, mask in tiers:
             n = int(mask.sum())
             if n:
                 print(f"  {label:<10}  {n:>3} ETF{'s' if n != 1 else ''}")
+                printed_tier = True
+        if not printed_tier:
+            print("  None — no dated price history to summarize.")
 
         # --- Issues ---
         flagged = []
@@ -429,34 +488,48 @@ Examples:
                        (~stats['isin'].isin(short['isin']))].sort_values('ann_vol')
 
         print()
-        print("=== Other Issues ===")
+        print("=== Warnings ===")
         if not short.empty:
-            print(f"Short history (< {args.min_years:.0f}yr):")
+            print(f"  Short history (< {args.min_years:.0f}yr):")
             for _, r in short.iterrows():
-                print(f"  {r['isin']}  {r['name']:<35}  "
+                print(f"    {r['isin']}  {r['name']:<35}  "
                       f"{int(r['n_days']):>4} days  from {r['first_date'].date()}")
                 flagged.append(r['isin'])
 
         if not sparse.empty:
-            print(f"Sparse data (fill < {args.min_fill:.0%}):")
+            print(f"  Sparse data (fill < {args.min_fill:.0%}):")
             for _, r in sparse.iterrows():
-                print(f"  {r['isin']}  {r['name']:<35}  "
+                print(f"    {r['isin']}  {r['name']:<35}  "
                       f"{int(r['n_days'])}/{int(r['expected'])} days  ({r['fill_rate']:.0%})")
                 flagged.append(r['isin'])
 
         if not cash.empty:
-            print(f"Cash-like (ann vol < {args.max_vol:.0%}):")
+            print(f"  Cash-like (ann vol < {args.max_vol:.0%}):")
             for _, r in cash.iterrows():
-                print(f"  {r['isin']}  {r['name']:<35}  vol {r['ann_vol']:.2%}")
+                print(f"    {r['isin']}  {r['name']:<35}  vol {r['ann_vol']:.2%}")
                 flagged.append(r['isin'])
 
-        if not flagged and not quality_issues:
-            print("  None — all ETFs look good.")
-        elif quality_issues:
-            print()
-            print("Price integrity issues found — see Data Integrity above.")
+        validation_errors = integrity_errors or bool(only_config) or bool(only_db)
+        validation_warnings = integrity_warnings or bool(flagged)
+        if not flagged:
+            # flagged is empty here, so the only warnings left are integrity ones.
+            if not validation_errors and not integrity_warnings:
+                print("  None — all ETFs look good.")
+            elif integrity_warnings:
+                # This section only covers history/fill/vol; integrity warnings
+                # (gaps, price jumps) are reported under Data Integrity above.
+                print("  None here — see Data Integrity warnings above.")
+            else:
+                print("  None.")
 
-        return 0
+        if validation_errors:
+            print()
+            print("Validation failed — correct the errors above.")
+        elif validation_warnings:
+            print()
+            print("Validation passed with warnings.")
+
+        return 1 if validation_errors else 0
 
     return 0
 
