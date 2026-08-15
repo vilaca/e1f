@@ -17,7 +17,7 @@ The module graph is stratified into three layers, enforced by import-linter
 
 ```
 e1f.cli                              ← entry point; may import any layer below
-e1f.config  |  e1f.fetch  |  e1f.validate  |  e1f.transactions  |  e1f.portfolio  ← commands; may import common, never each other
+e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio  ← commands; may import common, never each other
 e1f.common                           ← shared primitives; imports nothing internal
 ```
 

@@ -38,12 +38,14 @@ def test_dispatch_propagates_return_code(monkeypatch):
 
 
 def test_real_commands_are_registered():
+    import e1f.autocomplete as autocomplete_mod
     import e1f.config as config_mod
     import e1f.fetch as fetch_mod
     import e1f.portfolio as portfolio_mod
     import e1f.transactions as transactions_mod
     import e1f.validate as validate_mod
 
+    assert cli.PARSER_FACTORIES['autocomplete'] is autocomplete_mod._build_parser
     assert cli.COMMANDS['config'] is config_mod.main
     assert cli.COMMANDS['fetch'] is fetch_mod.main
     assert cli.COMMANDS['validate'] is validate_mod.main

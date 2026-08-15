@@ -235,7 +235,7 @@ def _cmd_portfolio(
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f portfolio",
         description="Show ETF holdings and average cost per share from transactions",
@@ -273,7 +273,11 @@ Examples:
         help="Show units, average paid, and total paid columns",
     )
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
 
     try:
         return _cmd_portfolio(
