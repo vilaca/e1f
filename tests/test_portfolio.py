@@ -220,7 +220,9 @@ def test_main_portfolio_shows_weight_column(tmp_path, capsys):
     assert "Weight" in out
     assert "25.0%" in out
     assert "75.0%" in out
-    assert "400.0000 total paid" in out
+    assert "Units" not in out
+    assert "Avg paid" not in out
+    assert "Total paid" not in out
 
 
 def test_main_portfolio_empty(tmp_path, capsys):
@@ -257,7 +259,9 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
         ["trade-republic", str(fixture), "--db", str(db), "--config", str(config)]
     ) == 0
 
-    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    code = portfolio_mod.main(
+        ["--db", str(db), "--config", str(config), "--show-cost-basis"]
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert f"{_broker_label(BROKER_TRADE_REPUBLIC):<4}" in out
@@ -309,7 +313,9 @@ def test_main_portfolio_displays_money_with_four_decimals(tmp_path, capsys):
         )
         conn.commit()
 
-    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    code = portfolio_mod.main(
+        ["--db", str(db), "--config", str(config), "--show-cost-basis"]
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert "15.7826" in out
@@ -351,3 +357,4 @@ def test_main_portfolio_help(capsys):
     assert "e1f portfolio" in out
     assert "--sort" in out
     assert "--reverse" in out
+    assert "--show-cost-basis" in out

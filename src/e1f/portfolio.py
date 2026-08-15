@@ -183,6 +183,7 @@ def _cmd_portfolio(
     *,
     sort_by: str = "broker",
     reverse: bool = False,
+    show_cost_basis: bool = False,
 ) -> int:
     rows = _load_trade_rows(db_path)
     holdings = compute_holdings(rows)
@@ -201,22 +202,33 @@ def _cmd_portfolio(
         total_invested=total_invested,
     )
 
-    print(
+    header = (
         f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'CCY':<4} {'Dist':<4} "
-        f"{'TER':>6} {'Weight':>7} {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
+        f"{'TER':>6} {'Weight':>7}"
     )
-    print("-" * _TABLE_WIDTH)
+    if show_cost_basis:
+        header += f" {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
+    print(header)
+    print("-" * (_TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 42))
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         fund_currency, distribution, ter = _fund_meta(config_path, holding.symbol)
         weight = holding_weight_pct(holding, total_invested)
-        print(
+        row = (
             f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
             f"{fund_currency:<4} {_distribution_label(distribution):<4} {ter:>6} "
-            f"{weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>12.4f} "
-            f"{holding.total_paid:>14.4f}"
+            f"{weight:>6.1f}%"
         )
-    print(f"\nTotal: {len(holdings)} holdings, {total_invested:.4f} total paid")
+        if show_cost_basis:
+            row += (
+                f" {holding.shares:>10.4f} {holding.avg_cost:>12.4f}"
+                f" {holding.total_paid:>14.4f}"
+            )
+        print(row)
+    total = f"\nTotal: {len(holdings)} holdings"
+    if show_cost_basis:
+        total += f", {total_invested:.4f} total paid"
+    print(total)
     return 0
 
 
@@ -252,6 +264,11 @@ Examples:
         action="store_true",
         help="Descending sort order",
     )
+    parser.add_argument(
+        "--show-cost-basis",
+        action="store_true",
+        help="Show units, average paid, and total paid columns",
+    )
 
     args = parser.parse_args(argv)
 
@@ -261,6 +278,7 @@ Examples:
             args.config,
             sort_by=args.sort,
             reverse=args.reverse,
+            show_cost_basis=args.show_cost_basis,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
