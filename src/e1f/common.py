@@ -556,3 +556,35 @@ class ConfigManager:
         if info.get('asset_class'):
             print(f"  Asset class: {info['asset_class']}")
         return True
+
+
+_SHARE_EPSILON = 1e-9
+_BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
+
+
+def portfolio_isins(db_path: str) -> frozenset[str]:
+    """ISINs with a net-positive position derived from stored transactions."""
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'"
+        ).fetchone() is None:
+            return frozenset()
+        rows = conn.execute(
+            "SELECT symbol, side, shares FROM transactions ORDER BY datetime, transaction_id"
+        ).fetchall()
+
+    held: dict[str, float] = {}
+    for symbol, side, shares in rows:
+        qty = (shares or 0.0)
+        if qty <= 0:
+            continue
+        if side in _BUY_SIDES:
+            held[symbol] = held.get(symbol, 0.0) + qty
+        elif side == "SELL":
+            prev = held.get(symbol, 0.0)
+            held[symbol] = max(0.0, prev - qty)
+
+    return frozenset(sym for sym, qty in held.items() if qty > _SHARE_EPSILON)
