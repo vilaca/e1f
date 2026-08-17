@@ -38,6 +38,7 @@ from e1f.common import (
     ETFDefinition,
     call_with_retry,
     fund_currency_from_name,
+    portfolio_isins,
 )
 
 logger = logging.getLogger(__name__)
@@ -464,6 +465,11 @@ Examples:
                         help='Fall back to yfinance when ftgo has no data')
     parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                         help='Pinned ftgo resolution / currency sidecar path')
+    parser.add_argument(
+        '--portfolio',
+        action='store_true',
+        help='Fetch only ETFs with an open position in the portfolio',
+    )
 
     return parser
 
@@ -490,6 +496,10 @@ def main(argv: list[str] | None = None) -> int:
         print("✗ Error: --allow-shrink only applies with --replace")
         return 1
 
+    if args.portfolio and args.isin:
+        print("✗ Error: --portfolio cannot be combined with an explicit ISIN")
+        return 1
+
     try:
         extractor = DataExtractor(
             config_path=args.config,
@@ -501,6 +511,14 @@ def main(argv: list[str] | None = None) -> int:
             fallback=args.fallback,
             currency_meta_path=args.currency_meta
         )
+        if args.portfolio:
+            isins = portfolio_isins(args.db)
+            if not isins:
+                print("✗ Error: no open portfolio positions found")
+                return 1
+            extractor.etf_universe = {
+                k: v for k, v in extractor.etf_universe.items() if k in isins
+            }
         prices = extractor.fetch(args.isin)
         logger.info(
             f"Fetched {len(prices.columns)} ETFs, {len(prices)} observations "
