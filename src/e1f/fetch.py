@@ -30,10 +30,12 @@ import yfinance as yf
 from ftgo import get_historical_prices, get_xid
 
 from e1f.common import (
+    BASE_CURRENCY,
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     DEFAULT_START_DATE,
+    UNSUPPORTED_FX_CURRENCIES,
     ConfigManager,
     ETFDefinition,
     call_with_retry,
@@ -151,6 +153,17 @@ class DataExtractor:
                     date TEXT,
                     close REAL,
                     PRIMARY KEY (isin, date)
+                )
+            """)
+            # Daily FX series for base-currency normalization (ADR-0010). Rates
+            # are ftgo-native: quote units per 1 base (EURUSD ≈ 1.16).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fx_rates (
+                    base TEXT,
+                    quote TEXT,
+                    date TEXT,
+                    rate REAL,
+                    PRIMARY KEY (base, quote, date)
                 )
             """)
             conn.commit()
@@ -337,6 +350,193 @@ class DataExtractor:
         with closing(sqlite3.connect(self.db_path)) as conn:
             return self._read_series(conn, isin)
 
+    # ------------------------------------------------------------------
+    # FX rates (ADR-0010): a daily quote-per-base series per currency pair,
+    # mirroring the price fetch/cache/upsert machinery on the fx_rates table.
+    # ------------------------------------------------------------------
+
+    def _resolve_fx(self, base: str, quote: str) -> dict[str, str]:
+        """Resolve and pin the ftgo xid for an FX spot pair (e.g. EUR/USD).
+
+        Pinned under an ``fx_pairs`` map in the same sidecar as ISIN resolutions
+        (ADR-0002) so the currency instrument can't drift as FT Markets search
+        ordering changes. Raises ValueError if ftgo has no spot pair for it.
+        """
+        pair = f"{base}{quote}"
+        fx_pairs = self._ftgo_meta.get("fx_pairs", {})
+        if pair in fx_pairs:
+            return cast(dict[str, str], fx_pairs[pair])
+
+        matches = get_xid(pair, display_mode="all")  # raises if no matches
+        spot = matches[
+            (matches["symbol"] == pair) & (matches["asset_class"] == "Currencies")
+        ]
+        if spot.empty:
+            raise ValueError(f"No ftgo FX spot rate for {pair}")
+        resolved = {"xid": str(spot.iloc[0]["xid"]), "symbol": pair}
+        fx_pairs[pair] = resolved
+        self._ftgo_meta["fx_pairs"] = fx_pairs
+        self._save_currency_meta()
+        logger.info(f"pinned ftgo FX resolution {pair} -> xid {resolved['xid']}")
+        return resolved
+
+    def _fetch_fx_ftgo(
+        self, base: str, quote: str, start: pd.Timestamp | None = None
+    ) -> pd.DataFrame | None:
+        start = start if start is not None else self.start_date
+        try:
+            xid = call_with_retry(
+                f"ftgo resolve {base}{quote}", lambda: self._resolve_fx(base, quote)
+            )["xid"]
+            df = call_with_retry(
+                f"ftgo fx {base}{quote}",
+                lambda: get_historical_prices(
+                    xid, start.strftime("%d%m%Y"), self.end_date.strftime("%d%m%Y")
+                ),
+            )
+            if df is not None and not df.empty:
+                df = df.rename(columns={"date": "Date", "close": "Close"})
+                df["Date"] = pd.to_datetime(df["Date"])
+                df = df.set_index("Date")
+                return cast(pd.DataFrame, df[["Close"]])
+        except ValueError as e:
+            if "No data found" not in str(e):
+                raise
+            logger.info(f"ftgo has no FX data for {base}{quote}, falling back")
+        except requests.RequestException as e:
+            logger.warning(f"ftgo FX request failed for {base}{quote} after retries: {e}")
+        return None
+
+    def _fetch_fx_yfinance(
+        self, base: str, quote: str, start: pd.Timestamp | None = None
+    ) -> pd.DataFrame | None:
+        start = start if start is not None else self.start_date
+        ticker = f"{base}{quote}=X"
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                df = call_with_retry(
+                    f"yfinance {ticker}",
+                    lambda: yf.download(
+                        ticker, start=start, end=self.end_date, progress=False
+                    ),
+                    retries=2,
+                    is_retryable=self._yf_rate_limited,
+                )
+            if df is not None and not df.empty:
+                return cast(pd.DataFrame, df[["Close"]])
+        except Exception as e:  # noqa: BLE001 — yfinance raises arbitrary exception types
+            logger.warning(f"yfinance FX failed for {ticker} after retries: {e}")
+        return None
+
+    @staticmethod
+    def _fx_rows(
+        base: str, quote: str, df: pd.DataFrame
+    ) -> list[tuple[str, str, str, float]]:
+        """(base, quote, 'YYYY-MM-DD', rate) rows; flattens yfinance's MultiIndex too."""
+        rates = df[["Close"]].copy()
+        rates.columns = ["rate"]
+        rates.index = pd.to_datetime(rates.index).strftime("%Y-%m-%d")
+        return [
+            (base, quote, str(date), float(rate)) for date, rate in rates["rate"].items()
+        ]
+
+    def _save_fx(self, base: str, quote: str, df: pd.DataFrame) -> None:
+        rows = self._fx_rows(base, quote, df)
+        # Same incremental contract as prices: keep stored rates and add new
+        # dates by default; --force overwrites matching dates.
+        on_conflict = (
+            "DO UPDATE SET rate = excluded.rate" if self.force_refresh else "DO NOTHING"
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                "INSERT INTO fx_rates (base, quote, date, rate) VALUES (?, ?, ?, ?) "
+                f"ON CONFLICT(base, quote, date) {on_conflict}",
+                rows,
+            )
+            conn.commit()
+
+    def _fx_stored(self, base: str, quote: str) -> pd.DataFrame:
+        """Date-indexed stored rate series for a pair ('rate' column)."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            df = pd.read_sql_query(
+                "SELECT date, rate FROM fx_rates WHERE base = ? AND quote = ? ORDER BY date",
+                conn,
+                params=(base, quote),
+                index_col="date",
+            )
+        df.index = pd.to_datetime(df.index, format="mixed", errors="coerce")
+        return df[df.index.notna()]
+
+    def _is_fx_cached(
+        self, base: str, quote: str
+    ) -> tuple[bool, pd.DataFrame | None]:
+        if self.force_refresh:
+            return False, None
+        df = self._fx_stored(base, quote)
+        if df.empty:
+            return False, None
+        if (self.end_date - df.index.max()).days > 0:
+            return False, df  # stale; existing rates still returned for incremental
+        return True, df
+
+    @staticmethod
+    def _fx_summary(base: str, quote: str, source: str, df: pd.DataFrame) -> str:
+        span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
+        return f"{base}/{quote} — {len(df)} days - {source} - {span}"
+
+    def _needed_fx_quotes(self) -> set[str]:
+        """Distinct non-base quote currencies of the currently-held ISINs.
+
+        Sourced from the pinned ftgo resolution's ``currency`` (the currency the
+        stored close is actually in), never ``fund_currency`` — the two diverge
+        (ADR-0010).
+        """
+        quotes: set[str] = set()
+        for isin in portfolio_isins(self.db_path):
+            pinned = self._ftgo_meta.get(isin)
+            currency = pinned.get("currency") if isinstance(pinned, dict) else None
+            if currency and currency != BASE_CURRENCY:
+                quotes.add(currency)
+        return quotes
+
+    def _refresh_fx(self) -> None:
+        """Refresh the daily FX series for every currency the held portfolio needs."""
+        for quote in sorted(self._needed_fx_quotes()):
+            if quote in UNSUPPORTED_FX_CURRENCIES:
+                raise ValueError(
+                    f"held ETF priced in {quote} (pence) has no EUR FX rule yet — "
+                    f"needs GBP normalization; not supported (ADR-0010)"
+                )
+            self._refresh_fx_pair(BASE_CURRENCY, quote)
+
+    def _refresh_fx_pair(self, base: str, quote: str) -> None:
+        cached, existing = self._is_fx_cached(base, quote)
+        if cached and existing is not None and not existing.empty:
+            logger.info(self._fx_summary(base, quote, "cache", existing))
+            return
+
+        have_existing = existing is not None and not existing.empty
+        since = None
+        if have_existing and not self.force_refresh:
+            assert existing is not None
+            since = existing.index.max() + pd.Timedelta(days=1)
+
+        df = self._fetch_fx_ftgo(base, quote, since)
+        source = "ftgo"
+        if (df is None or df.empty) and self.fallback:
+            df = self._fetch_fx_yfinance(base, quote, since)
+            source = "yfinance"
+
+        if df is not None and not df.empty:
+            self._save_fx(base, quote, df)
+            logger.info(self._fx_summary(base, quote, source, self._fx_stored(base, quote)))
+        elif have_existing:
+            assert existing is not None
+            logger.info(self._fx_summary(base, quote, "cache", existing))
+        else:
+            logger.warning(f"✗ {base}/{quote} — all FX sources failed")
+
     def fetch(self, isin: str | None = None) -> pd.DataFrame:
         """Fetch data for specific ISIN or all ETFs and persist to the DB."""
         # replace is destructive (delete-then-insert per ISIN); never let it run
@@ -411,6 +611,12 @@ class DataExtractor:
 
         if not data_dict:
             raise RuntimeError("No data fetched")
+
+        # Keep the daily FX series for the held portfolio current alongside a
+        # bulk price fetch (ADR-0010). Targeted single-ISIN fetches and --replace
+        # repairs both carry an ISIN, so FX is skipped for them.
+        if isin is None:
+            self._refresh_fx()
 
         combined = pd.DataFrame(data_dict)
         combined = combined.sort_index().ffill().dropna()

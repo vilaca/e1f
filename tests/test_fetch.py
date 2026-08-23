@@ -489,6 +489,209 @@ def test_universe_skips_entries_without_tickers(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# FX rates (ADR-0010)
+# ---------------------------------------------------------------------------
+
+def seed_held(ext, isin, shares=1.0, broker='xtb'):
+    """Give an ISIN a net-positive position so portfolio_isins reports it held."""
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS transactions ("
+            "broker TEXT, transaction_id TEXT, datetime TEXT, symbol TEXT, "
+            "side TEXT, shares REAL, PRIMARY KEY (broker, transaction_id))"
+        )
+        conn.execute(
+            "INSERT INTO transactions "
+            "(broker, transaction_id, datetime, symbol, side, shares) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (broker, f"{isin}-1", '2026-01-01', isin, 'BUY', shares),
+        )
+        conn.commit()
+
+
+def test_init_creates_fx_rates_table(tmp_path):
+    ext = make_extractor(tmp_path)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        cols = conn.execute('PRAGMA table_info(fx_rates)').fetchall()
+    assert [c[1] for c in cols] == ['base', 'quote', 'date', 'rate']
+
+
+def test_resolve_fx_pins_currencies_row(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    matches = pd.DataFrame([
+        {'xid': '617254', 'symbol': 'EURUSD', 'asset_class': 'Currencies'},
+        {'xid': '9', 'symbol': 'LU0937166394:USD', 'asset_class': 'Funds'},
+    ])
+    monkeypatch.setattr(fetch_mod, 'get_xid', lambda q, display_mode: matches)
+
+    assert ext._resolve_fx('EUR', 'USD') == {'xid': '617254', 'symbol': 'EURUSD'}
+    assert ext._ftgo_meta['fx_pairs']['EURUSD']['xid'] == '617254'
+
+    # Second call is served from the pin without touching ftgo.
+    monkeypatch.setattr(fetch_mod, 'get_xid',
+                        lambda *a, **k: pytest.fail('resolution should be pinned'))
+    assert ext._resolve_fx('EUR', 'USD')['xid'] == '617254'
+
+
+def test_resolve_fx_rejects_non_currency_matches(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    matches = pd.DataFrame([
+        {'xid': '9', 'symbol': 'LEUR:LSE:USD', 'asset_class': 'ETFs'},
+    ])
+    monkeypatch.setattr(fetch_mod, 'get_xid', lambda q, display_mode: matches)
+    with pytest.raises(ValueError, match='No ftgo FX spot rate'):
+        ext._resolve_fx('EUR', 'USD')
+
+
+def test_fetch_fx_ftgo_success(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    monkeypatch.setattr(ext, '_resolve_fx', lambda base, quote: {'xid': 'x1'})
+    monkeypatch.setattr(
+        fetch_mod, 'get_historical_prices',
+        lambda xid, start, end: pd.DataFrame(
+            {'date': ['2026-08-13', '2026-08-14'], 'close': [1.15, 1.16]}),
+    )
+    df = ext._fetch_fx_ftgo('EUR', 'USD')
+    assert list(df['Close']) == [1.15, 1.16]
+    assert df.index.name == 'Date'
+
+
+def test_fetch_fx_yfinance_success(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    monkeypatch.setattr(fetch_mod.yf, 'download', lambda t, **k: close_df([1.16, 1.17]))
+    df = ext._fetch_fx_yfinance('EUR', 'USD')
+    assert list(df['Close']) == [1.16, 1.17]
+
+
+def test_fetch_fx_yfinance_empty_returns_none(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    monkeypatch.setattr(fetch_mod.yf, 'download', lambda t, **k: pd.DataFrame())
+    assert ext._fetch_fx_yfinance('EUR', 'USD') is None
+
+
+def test_refresh_fx_pair_all_sources_fail_leaves_empty(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, fallback=True)
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: None)
+    monkeypatch.setattr(ext, '_fetch_fx_yfinance', lambda *a, **k: None)
+    ext._refresh_fx_pair('EUR', 'USD')  # warns; no rows written, no raise
+    assert ext._fx_stored('EUR', 'USD').empty
+
+
+def test_save_fx_and_read_back(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._save_fx('EUR', 'USD', close_df([1.15, 1.16]))
+    assert list(ext._fx_stored('EUR', 'USD')['rate']) == [1.15, 1.16]
+
+
+def test_save_fx_upsert_keeps_existing_by_default(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._save_fx('EUR', 'USD', close_df([1.15]))
+    ext._save_fx('EUR', 'USD', close_df([9.99]))  # same date, new rate
+    assert ext._fx_stored('EUR', 'USD')['rate'].iloc[0] == 1.15
+
+
+def test_save_fx_force_overwrites(tmp_path):
+    ext = make_extractor(tmp_path, force_refresh=True)
+    ext._save_fx('EUR', 'USD', close_df([1.15]))
+    ext._save_fx('EUR', 'USD', close_df([9.99]))
+    assert ext._fx_stored('EUR', 'USD')['rate'].iloc[0] == 9.99
+
+
+def test_is_fx_cached_empty(tmp_path):
+    ext = make_extractor(tmp_path)
+    cached, df = ext._is_fx_cached('EUR', 'USD')
+    assert cached is False and df is None
+
+
+def test_is_fx_cached_when_current(tmp_path):
+    ext = make_extractor(tmp_path)
+    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.execute('INSERT INTO fx_rates VALUES (?, ?, ?, ?)', ('EUR', 'USD', today, 1.16))
+        conn.commit()
+    cached, df = ext._is_fx_cached('EUR', 'USD')
+    assert cached is True and len(df) == 1
+
+
+def test_is_fx_cached_when_stale(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._save_fx('EUR', 'USD', close_df([1.16], end='2020-01-01'))
+    cached, df = ext._is_fx_cached('EUR', 'USD')
+    assert cached is False and len(df) == 1  # existing rates still returned
+
+
+def test_needed_fx_quotes_from_pinned_currency_not_fund_currency(tmp_path):
+    ext = make_extractor(tmp_path)
+    # Pinned price currency is what matters; a divergent fund_currency is ignored.
+    ext._ftgo_meta['HELDUSD00001'] = {'currency': 'USD'}
+    ext._ftgo_meta['HELDEUR00001'] = {'currency': 'EUR'}
+    seed_held(ext, 'HELDUSD00001')
+    seed_held(ext, 'HELDEUR00001')
+    assert ext._needed_fx_quotes() == {'USD'}  # base EUR excluded
+
+
+def test_refresh_fx_fails_loud_on_pence(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._ftgo_meta['HELDGBX00001'] = {'currency': 'GBX'}
+    seed_held(ext, 'HELDGBX00001')
+    with pytest.raises(ValueError, match=r'GBX .*not supported'):
+        ext._refresh_fx()
+
+
+def test_refresh_fx_pair_falls_back_to_yfinance(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, fallback=True)
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: None)
+    monkeypatch.setattr(ext, '_fetch_fx_yfinance', lambda *a, **k: close_df([1.16, 1.17]))
+    ext._refresh_fx_pair('EUR', 'USD')
+    assert list(ext._fx_stored('EUR', 'USD')['rate']) == [1.16, 1.17]
+
+
+def test_refresh_fx_pair_no_fallback_skips_yfinance(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)  # fallback=False
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: None)
+    monkeypatch.setattr(ext, '_fetch_fx_yfinance',
+                        lambda *a, **k: pytest.fail('yfinance is gated behind --fallback'))
+    ext._refresh_fx_pair('EUR', 'USD')  # no data; warns, does not raise
+    assert ext._fx_stored('EUR', 'USD').empty
+
+
+def test_refresh_fx_pair_uses_cache_without_network(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.execute('INSERT INTO fx_rates VALUES (?, ?, ?, ?)', ('EUR', 'USD', today, 1.16))
+        conn.commit()
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo',
+                        lambda *a, **k: pytest.fail('should not hit network'))
+    ext._refresh_fx_pair('EUR', 'USD')
+
+
+def test_fetch_auto_refreshes_fx_for_held_currency(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    ext._ftgo_meta[ISIN] = {'currency': 'USD'}
+    seed_held(ext, ISIN)
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([100.0, 101.0]))
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: close_df([1.16, 1.17]))
+
+    ext.fetch()
+
+    assert list(ext._fx_stored('EUR', 'USD')['rate']) == [1.16, 1.17]
+
+
+def test_fetch_single_isin_skips_fx(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    ext._ftgo_meta[ISIN] = {'currency': 'USD'}
+    seed_held(ext, ISIN)
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([100.0]))
+    monkeypatch.setattr(ext, '_refresh_fx',
+                        lambda: pytest.fail('single-ISIN fetch must skip FX'))
+
+    ext.fetch(ISIN)
+
+    assert ext._fx_stored('EUR', 'USD').empty
+
+
+# ---------------------------------------------------------------------------
 # main()
 # ---------------------------------------------------------------------------
 

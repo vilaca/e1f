@@ -28,7 +28,7 @@ The tool exposes six commands around a shared config/DB:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-3. **`e1f fetch`** — populate the SQLite price DB.
+3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
@@ -85,6 +85,14 @@ drop any stored date (shorter range, narrower window, or interior hole), so a
 truncated response can't silently wipe history
 (`ADR/ADR-0008_price_series_replace_repair.md`).
 
+Prices are stored in each fund's native quote currency. A bulk `e1f fetch` also
+refreshes a daily FX series (`fx_rates` table) for the currencies the **held**
+portfolio needs — derived from each held ISIN's pinned quote currency, sourced
+from ftgo (yfinance `EURUSD=X` under `--fallback`), and forward-filled at read
+time — so a mixed-currency portfolio can be valued in EUR. A held currency with
+no EUR FX rule (e.g. GBX pence) fails loud rather than mis-converting. See
+`ADR/ADR-0010_currency_fx_foundation.md`.
+
 `e1f validate` distinguishes **errors** from **warnings**: it exits `1`
 only on errors (duplicate keys, null or non-positive closes, weekend rows, invalid
 dates, malformed pinned quote-currency metadata, or a config/DB desync) and `0`
@@ -93,9 +101,10 @@ moves, short/sparse/cash-like history).
 See `e1f validate --help` for the full taxonomy and
 `ADR/ADR-0009_validate_exit_code_contract.md` for the why.
 
-The SQLite DB holds a `prices` table (schema in `src/e1f/fetch.py`) and a
-`transactions` table (schema in `src/e1f/transactions.py`); both can be read
-directly with any SQLite client or `pandas.read_sql`.
+The SQLite DB holds a `prices` table and an `fx_rates` table (schemas in
+`src/e1f/fetch.py`) and a `transactions` table (schema in
+`src/e1f/transactions.py`); all can be read directly with any SQLite client or
+`pandas.read_sql`.
 
 Broker ingest stores **ETF buy/sell rows only** in `transactions` (Trade Republic
 CSV via `e1f transactions trade-republic` or `tr`; XTB Excel Cash Operations via

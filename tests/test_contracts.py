@@ -75,6 +75,30 @@ def test_prices_schema_contract(tmp_path: Path) -> None:
     }
 
 
+def test_fx_rates_schema_contract(tmp_path: Path) -> None:
+    """fx_rates table schema is a data contract — changes need an ADR-0010 note."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.dump({"etfs": {}}))
+    db = tmp_path / "fx.db"
+
+    DataExtractor(
+        config_path=str(cfg),
+        db_path=str(db),
+        currency_meta_path=str(tmp_path / "meta.yaml"),
+    )
+
+    with closing(sqlite3.connect(str(db))) as conn:
+        cols = conn.execute("PRAGMA table_info(fx_rates)").fetchall()
+
+    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    assert schema == {
+        "base":  {"type": "TEXT", "pk": 1},
+        "quote": {"type": "TEXT", "pk": 2},
+        "date":  {"type": "TEXT", "pk": 3},
+        "rate":  {"type": "REAL", "pk": 0},
+    }
+
+
 def test_transactions_schema_contract(tmp_path: Path) -> None:
     """transactions table schema is a data contract — changes need ADR-0004 note."""
     db = tmp_path / "transactions.db"
