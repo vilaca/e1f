@@ -1,5 +1,8 @@
 """ConfigManager (YAML universe) and OpenFIGIResolver (mocked HTTP)."""
 
+import sqlite3
+from contextlib import closing
+
 import pytest
 import requests
 import yaml
@@ -16,9 +19,11 @@ from e1f.common import (
     _ftgo_fund_name,
     _ftgo_listing_names,
     _short_lookup_error,
+    convert_to_eur,
     distribution_from_name,
     enrich_fund_metadata,
     fund_currency_from_name,
+    fx_rate_asof,
 )
 
 ISIN = 'AA0000000001'
@@ -417,3 +422,63 @@ def test_enrich_fund_metadata_warns_when_ftgo_fails_but_openfigi_parses(monkeypa
     assert enriched['distribution'] == 'Accumulating'
     assert f'⚠ ftgo {ISIN}: no FT Markets listing' in out
     assert 'used OpenFIGI name for fund currency/distribution' in out
+
+
+# ---------------------------------------------------------------------------
+# FX rate lookup / conversion (ADR-0010)
+# ---------------------------------------------------------------------------
+
+def _fx_db(tmp_path, rows):
+    """Build a DB with an fx_rates table populated with (base, quote, date, rate)."""
+    db = tmp_path / 'fx.db'
+    with closing(sqlite3.connect(str(db))) as conn:
+        conn.execute(
+            'CREATE TABLE fx_rates (base TEXT, quote TEXT, date TEXT, rate REAL, '
+            'PRIMARY KEY (base, quote, date))'
+        )
+        conn.executemany('INSERT INTO fx_rates VALUES (?, ?, ?, ?)', rows)
+        conn.commit()
+    return str(db)
+
+
+def test_fx_rate_asof_identity_needs_no_db():
+    # base == quote is 1.0 without touching the DB (path is never opened).
+    assert fx_rate_asof('/no/such.db', 'EUR', '2026-08-20', base='EUR') == 1.0
+
+
+def test_fx_rate_asof_exact_and_nearest_prior(tmp_path):
+    db = _fx_db(tmp_path, [
+        ('EUR', 'USD', '2026-08-14', 1.16),
+        ('EUR', 'USD', '2026-08-17', 1.17),
+    ])
+    assert fx_rate_asof(db, 'USD', '2026-08-14') == 1.16          # exact
+    assert fx_rate_asof(db, 'USD', '2026-08-16') == 1.16          # weekend: prior
+    assert fx_rate_asof(db, 'USD', '2026-08-20') == 1.17          # after last: last
+
+
+def test_fx_rate_asof_before_series_raises(tmp_path):
+    db = _fx_db(tmp_path, [('EUR', 'USD', '2026-08-14', 1.16)])
+    with pytest.raises(ValueError, match='on or before 2026-08-10'):
+        fx_rate_asof(db, 'USD', '2026-08-10')  # leading-edge gap: no prior rate
+
+
+def test_fx_rate_asof_unfetched_pair_raises(tmp_path):
+    db = _fx_db(tmp_path, [('EUR', 'USD', '2026-08-14', 1.16)])
+    with pytest.raises(ValueError, match='no EUR/GBP FX rate'):
+        fx_rate_asof(db, 'GBP', '2026-08-14')
+
+
+def test_convert_to_eur_passthrough_for_base(tmp_path):
+    # EUR amounts convert to themselves without needing a rate.
+    assert convert_to_eur(100.0, 'EUR', '2026-08-20', '/no/such.db') == 100.0
+
+
+def test_convert_to_eur_divides_by_quote_per_base(tmp_path):
+    db = _fx_db(tmp_path, [('EUR', 'USD', '2026-08-14', 1.25)])
+    # 125 USD / (1.25 USD per EUR) = 100 EUR
+    assert convert_to_eur(125.0, 'USD', '2026-08-14', db) == 100.0
+
+
+def test_convert_to_eur_refuses_pence(tmp_path):
+    with pytest.raises(ValueError, match=r'GBX .*no EUR FX rule'):
+        convert_to_eur(100.0, 'GBX', '2026-08-14', '/no/such.db')

@@ -18,15 +18,15 @@ The script is the single definition of "green". CI runs the same gates via `scri
 src/e1f/
   cli.py       — entry point; routes top-level commands
   config.py    — config subcommand: OpenFIGI resolution, YAML management
-  fetch.py     — fetch subcommand: ftgo/yfinance price fetching, SQLite
+  fetch.py     — fetch subcommand: ftgo/yfinance price + FX fetching, SQLite
   validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
-  common.py    — shared primitives: defaults, ETFDefinition, retry logic
+  common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
-  currency_metadata.yaml — pinned ftgo resolutions (ADR-0002)
-  e1f.db                 — SQLite price DB (gitignored)
+  currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs (ADR-0002, ADR-0010)
+  e1f.db                 — SQLite DB: prices, fx_rates, transactions (gitignored)
 ADR/           — decision log; one ADR per decision, no gaps in numbering
 tests/         — pytest suite; 90% coverage floor enforced
 .claude/skills/— project skills (see below)
@@ -45,6 +45,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0007` — fund metadata (TER, distribution, currency) at config time
 - `ADR-0008` — destructive `--replace` series repair with a shrink guard
 - `ADR-0009` — `validate` error/warning exit-code contract
+- `ADR-0010` — currency + FX foundation: `fx_rates` table, FX auto-fetched into `fetch`, EUR conversion helper
 
 ## Skills
 

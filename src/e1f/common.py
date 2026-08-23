@@ -32,6 +32,12 @@ DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution
 DEFAULT_START_DATE = "2000-01-01"  # earlier than any ETF inception; fetch returns from inception
 
+# Portfolio is valued in a single base currency (ADR-0010). GBX/GBp (pence) is
+# not an ISO currency ftgo quotes an FX spot pair for — it needs a ÷100 GBP
+# normalization first, so conversion refuses it rather than mis-scaling.
+BASE_CURRENCY = "EUR"
+UNSUPPORTED_FX_CURRENCIES = frozenset({"GBX", "GBp"})
+
 # OpenFIGI exchCode → XTB ticker suffix (e.g. GR → WEBN.DE). Used when indexing
 # multi-listing ISINs for broker ingest and when building the XTB ticker map.
 XTB_EXCHANGE_SUFFIX = {
@@ -588,3 +594,51 @@ def portfolio_isins(db_path: str) -> frozenset[str]:
             held[symbol] = max(0.0, prev - qty)
 
     return frozenset(sym for sym, qty in held.items() if qty > _SHARE_EPSILON)
+
+
+def fx_rate_asof(db_path: str, quote: str, date: str, base: str = BASE_CURRENCY) -> float:
+    """Nearest-prior FX rate (``quote`` units per 1 ``base``) on or before ``date``.
+
+    Forward-fill / nearest-prior per ADR-0010: the most recent stored rate dated
+    on or before ``date``. Never interpolates and never uses a later rate, so an
+    as-of valuation can't depend on future information. Returns ``1.0`` for the
+    identity ``quote == base``. Raises ValueError when no rate exists on or before
+    ``date`` — an unfetched pair, or a date preceding the series — so a caller can
+    never silently value with a missing rate.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    if quote == base:
+        return 1.0
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT rate FROM fx_rates "
+            "WHERE base = ? AND quote = ? AND date <= ? "
+            "ORDER BY date DESC LIMIT 1",
+            (base, quote, date),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            f"no {base}/{quote} FX rate on or before {date} "
+            f"(pair unfetched, or date precedes the series)"
+        )
+    return float(row[0])
+
+
+def convert_to_eur(amount: float, quote: str, date: str, db_path: str) -> float:
+    """Convert ``amount`` (in ``quote`` currency) to EUR using the as-of daily rate.
+
+    Applies ``amount / rate`` where ``rate`` is quote-per-EUR (ADR-0010). Refuses
+    currencies with no EUR FX rule (e.g. GBX pence) rather than mis-converting.
+    """
+    if quote == BASE_CURRENCY:
+        return amount
+    if quote in UNSUPPORTED_FX_CURRENCIES:
+        raise ValueError(
+            f"currency {quote} (pence) has no EUR FX rule — needs GBP "
+            f"normalization; not supported (ADR-0010)"
+        )
+    return amount / fx_rate_asof(db_path, quote, date)

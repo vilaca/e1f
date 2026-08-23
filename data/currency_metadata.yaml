@@ -386,3 +386,7 @@ LU2089238039:
   currency: EUR
   symbol: PRAE:FRA:EUR
   xid: '572875443'
+fx_pairs:
+  EURUSD:
+    symbol: EURUSD
+    xid: '617254'
