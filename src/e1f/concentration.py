@@ -27,7 +27,6 @@ import argparse
 import re
 import sys
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 
 from e1f.common import (
@@ -38,8 +37,12 @@ from e1f.common import (
     DIMENSION_SECURITY,
     ConfigManager,
     LookthroughSnapshot,
+    MetricContract,
+    Status,
+    _explain_metric,
+    _snapshot_provenance,
     latest_lookthrough_snapshot,
-    normalize_security_name,
+    overlap_candidates,
     portfolio_isins,
 )
 
@@ -73,30 +76,12 @@ def dimension_issue(entries: list[tuple[str, float]]) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Metric status + data contracts (ADR-0012 decision 7). The contract is the
-# single source for a metric's method id, its --explain limited-by / not-limited-by
-# split, and its limitation prose — kept in code so they cannot drift from the calc.
+# Per-metric data contracts (ADR-0012 decision 7). ``Status`` / ``MetricContract``
+# and the ``--explain`` rendering helpers live in ``common`` (ADR-0013 decision
+# 8); the contract *instances* below stay here — they are concentration's own
+# metrics. Each is the single source for its method id, its --explain
+# limited-by / not-limited-by split, and its limitation prose.
 # ---------------------------------------------------------------------------
-
-
-class Status(StrEnum):
-    """Four-state per-metric status — the single status vocabulary (decision 7)."""
-
-    CALCULATED = "CALCULATED"   # enough evidence for a point value
-    BOUNDED = "BOUNDED"         # no exact value, but defensible math bounds exist
-    UNAVAILABLE = "UNAVAILABLE"  # not enough reliable info for even a useful bound
-    UNRESOLVED = "UNRESOLVED"   # identity is the blocker, not coverage (v1b)
-
-
-@dataclass(frozen=True)
-class MetricContract:
-    """A metric's data requirements — drives method id + limited-by / not-limited-by."""
-
-    method_version: str
-    requires: tuple[str, ...]         # what, if improved, would tighten/unblock it
-    does_not_require: tuple[str, ...]  # what would not help (or is refused)
-    supports: tuple[str, ...]         # what the metric enables
-    limitations: tuple[str, ...]      # standing caveats that travel with the figure
 
 
 SECURITY_CONTRACT = MetricContract(
@@ -303,36 +288,6 @@ def build_fund_concentration(
     )
 
 
-def overlap_candidates(funds: list[FundConcentration]) -> list[tuple[str, int]]:
-    """Raw security names in ≥2 funds' top holdings — the *unresolved* signal.
-
-    Grouped by normalized name (a hint), reported with a representative raw name
-    and the fund count. Never summed into an exposure figure (decision 2): its
-    only job is to point at where v1b's reviewed canonical resolution would pay off.
-    """
-    by_norm: dict[str, tuple[str, set[str]]] = {}
-    for fund in funds:
-        if fund.snapshot is None:
-            continue
-        seen_here: set[str] = set()
-        for row in fund.snapshot.by_dimension(DIMENSION_SECURITY):
-            norm = row.normalized_name or normalize_security_name(row.raw_name)
-            if norm in seen_here:
-                continue
-            seen_here.add(norm)
-            display, funds_seen = by_norm.get(norm, (row.raw_name, set()))
-            funds_seen.add(fund.isin)
-            by_norm[norm] = (display, funds_seen)
-
-    candidates = [
-        (display, len(funds_seen))
-        for display, funds_seen in by_norm.values()
-        if len(funds_seen) >= 2
-    ]
-    candidates.sort(key=lambda c: (-c[1], c[0].lower()))
-    return candidates
-
-
 # ---------------------------------------------------------------------------
 # Fund resolution (arg → ISIN).
 # ---------------------------------------------------------------------------
@@ -490,38 +445,6 @@ def render_fund(fund: FundConcentration) -> list[str]:
     return lines
 
 
-def _limited_by(contract: MetricContract) -> list[str]:
-    limited = "; ".join(contract.requires) if contract.requires else "nothing (complete)"
-    not_limited = "; ".join(contract.does_not_require) if contract.does_not_require else "—"
-    lines = [f"    Limited by:     {limited}", f"    Not limited by: {not_limited}"]
-    if contract.supports:
-        lines.append(f"    Supports:       {'; '.join(contract.supports)}")
-    if contract.limitations:
-        lines.append(f"    Limitations:    {'; '.join(contract.limitations)}")
-    return lines
-
-
-def _explain_metric(
-    title: str, status: Status, result: str, inputs: str, method: str,
-    contract: MetricContract,
-) -> list[str]:
-    return [
-        f"  {title}",
-        f"    Status:         {status.value}   (method = {contract.method_version})",
-        f"    Result:         {result}",
-        f"    Inputs:         {inputs}",
-        f"    Method:         {method}",
-        *_limited_by(contract),
-    ]
-
-
-def _snapshot_provenance(snapshot: LookthroughSnapshot) -> str:
-    return (
-        f"snapshot #{snapshot.id}, source {snapshot.source}/{snapshot.tier}, "
-        f"as_of {snapshot.as_of}, retrieved {snapshot.retrieved_at}"
-    )
-
-
 def render_fund_explain(fund: FundConcentration) -> list[str]:
     """Reconstruct each metric's provenance chain from the snapshot + contract.
 
@@ -675,7 +598,8 @@ def _cmd_concentration(
             print(line)
 
     if cross_fund:
-        for line in render_overlap(overlap_candidates(funds)):
+        candidates = overlap_candidates((fund.isin, fund.snapshot) for fund in funds)
+        for line in render_overlap(candidates):
             print(line)
 
     for line in _NOTES:

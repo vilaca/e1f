@@ -253,7 +253,8 @@ metric — Result, Inputs (the exact ranked weights, source, `as_of`,
 references the snapshot id, so the exact weights are reproducible without
 duplicating them into a log. This vocabulary (Result / Inputs / Method /
 Limitations / limited-by) is defined **independently of any HHI or top-10
-specifics**, which is the precondition for graduating it to ADR-0013 cleanly.
+specifics**, which is the precondition for graduating it cleanly (ADR-0013 does
+exactly this — it moves the vocabulary into `common` so `overlap` can reuse it).
 Human-readable in v1; `--explain --json` deferred. Kept as a flag, not a separate
 `e1f audit` command, to avoid CLI surface sprawl.
 
@@ -312,8 +313,11 @@ ship in v1a**, where that contract is unmet.
 
 **Scope note:** this provenance/status/`--explain` model is general — it applies
 equally to `performance` and `portfolio`. It is recorded here scoped to
-`concentration`; if it is generalized across commands it graduates to its own
-ADR-0013.
+`concentration`; if it is generalized across commands (rewiring `performance` /
+`portfolio` to report *through* this model) it graduates to its own ADR — the
+next available number (0014+). Note this is distinct from ADR-0013 (`overlap`),
+which merely relocates the vocabulary into `common` for reuse without retrofitting
+any other command.
 
 ## Rationale
 
@@ -386,4 +390,5 @@ ADR-0013.
   from the reconstructed `--explain` (decision 7); deferred unless a concrete need
   appears, since it reintroduces the drift risk that decision consciously avoids.
 - **Generalizing provenance across commands** — if the decision-7 model is applied
-  to `performance` / `portfolio`, it graduates to its own ADR-0013.
+  to `performance` / `portfolio`, it graduates to its own ADR (the next available
+  number, 0014+ — **not** ADR-0013, which is `overlap`).

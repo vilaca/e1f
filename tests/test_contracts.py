@@ -32,6 +32,7 @@ def test_cli_commands_surface():
         "portfolio",
         "performance",
         "concentration",
+        "overlap",
     }
 
 

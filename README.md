@@ -34,6 +34,7 @@ The tool exposes eight commands around a shared config/DB:
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
 8. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
+9. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -72,6 +73,12 @@ e1f performance --sort value --reverse
 e1f concentration                    # every held fund + overlap candidates
 e1f concentration VWCE               # one fund by ISIN, ticker, or name
 e1f concentration VWCE --explain     # per-metric provenance chain
+
+# 6. Establish cross-fund single-name overlap (needs reviewed canonical identities)
+e1f overlap candidates               # resolution worklist (co-occurrence seed + full roster)
+e1f overlap resolve "Apple Inc." apple-ord   # assert a reviewed identity
+e1f overlap                          # the ≥ floor report over resolved names in ≥2 funds
+e1f overlap --explain                # per-security Vf×w reconstruction
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -80,7 +87,7 @@ the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
 `e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
-`e1f validate --help`.
+`e1f overlap --help`, `e1f validate --help`.
 
 ## Price sources
 
