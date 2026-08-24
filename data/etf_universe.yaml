@@ -446,3 +446,64 @@ etfs:
     distribution: Accumulating
     ter: 0.15
     asset_class: Equity
+  DE000A0D8Q07:
+    name: ISHR EUROSTOXX UCITS ETF DE
+    tickers:
+    - SXXEEX
+    - GX4A
+    exchange: GR
+    figi: BBG000D8L3W2
+    listings:
+    - ticker: SXXEEX
+      exchange: GR
+    - ticker: GX4A
+      exchange: NA
+    resolved_at: '2026-08-24T10:21:48.767463+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Distributing
+    ter: 0.2
+    asset_class: Equity
+  IE00BK5BQX27:
+    name: VANG FTSE EUR EURA
+    tickers:
+    - VWCG
+    - VEUA
+    - VNGLF
+    exchange: LN
+    figi: BBG00PQQJ4L6
+    listings:
+    - ticker: VWCG
+      exchange: LN
+    - ticker: VEUA
+      exchange: LN
+    - ticker: VWCG
+      exchange: GR
+    - ticker: VNGLF
+      exchange: US
+    - ticker: VWCG
+      exchange: NA
+    resolved_at: '2026-08-24T10:25:23.405336+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.1
+    asset_class: Equity
+  LU0292103222:
+    name: X STOXX600 HEALTH CARE SWAP
+    tickers:
+    - DXSE
+    - XSDR
+    exchange: EO
+    figi: BBG000QQ6P83
+    listings:
+    - ticker: DXSE
+      exchange: GR
+    - ticker: XSDR
+      exchange: LN
+    resolved_at: '2026-08-24T10:27:02.310246+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.17
+    asset_class: Equity
