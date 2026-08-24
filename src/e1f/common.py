@@ -290,38 +290,41 @@ def _ftgo_fund_name(isin: str, hint: str = "") -> tuple[str | None, str | None]:
 def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
     """Augment OpenFIGI resolution with fund currency, distribution, TER, and asset class.
 
-    OpenFIGI names are ISIN-specific and take precedence. ftgo fills gaps for
-    currency/distribution and supplies TER via fund stats. justETF is a fallback
-    when ftgo omits a field (common for newer Amundi listings) and supplies the
-    underlying investment's asset class.
+    justETF structured fields are the primary source for currency and distribution.
+    ftgo supplies TER and is the primary source for that. Name parsing (OpenFIGI,
+    then ftgo listing names) is a last resort and always triggers a warning.
     """
     openfigi_name = str(info.get("name") or "")
-    fund_currency = fund_currency_from_name(openfigi_name)
-    distribution = distribution_from_name(openfigi_name)
+    fund_currency: str | None = None
+    distribution: str | None = None
     ter: float | None = None
     asset_class: str | None = None
 
+    # justETF first: structured fields for currency, distribution, asset class
+    justetf_html = _fetch_justetf_html(isin)
+    if justetf_html:
+        raw_ccy = _justetf_field(justetf_html, "fund-currency")
+        if raw_ccy in KNOWN_FUND_CURRENCIES:
+            fund_currency = raw_ccy
+
+        raw_dist = _justetf_field(justetf_html, "distribution-policy")
+        if raw_dist:
+            dist_lower = raw_dist.lower()
+            if "accum" in dist_lower:
+                distribution = "Accumulating"
+            elif "distrib" in dist_lower:
+                distribution = "Distributing"
+
+        raw_focus = _justetf_field(justetf_html, "investment-focus")
+        if raw_focus:
+            asset_class = _asset_class_from_investment_focus(raw_focus)
+
+    # ftgo: primary source for TER; names kept for last-resort fallback only
     matches, ftgo_error = _ftgo_load(isin)
     ftgo_names = _names_from_ftgo_matches(matches) if matches is not None else []
     ftgo_name = _best_ftgo_name(ftgo_names, openfigi_name) if ftgo_names else None
-    if not fund_currency:
-        fund_currency = _fund_currency_from_names(ftgo_names)
-    if not distribution and ftgo_name:
-        distribution = distribution_from_name(ftgo_name)
     if matches is not None:
         ter = _ftgo_ter(matches, openfigi_name)
-
-    if ftgo_name:
-        ftgo_dist = distribution_from_name(ftgo_name)
-        if distribution and ftgo_dist and ftgo_dist != distribution:
-            print(
-                f"⚠ ftgo {isin}: listing name implies {ftgo_dist}; "
-                f"using OpenFIGI share class ({distribution})"
-            )
-
-    justetf_html: str | None = None
-    if ter is None or not fund_currency or not distribution or not asset_class:
-        justetf_html = _fetch_justetf_html(isin)
 
     if ter is None and justetf_html:
         raw_ter = _justetf_field(justetf_html, "ter")
@@ -333,31 +336,23 @@ def enrich_fund_metadata(isin: str, info: dict[str, Any]) -> dict[str, Any]:
                     f"used justETF ({ter:.2f}%)"
                 )
 
-    if not fund_currency and justetf_html:
-        raw_ccy = _justetf_field(justetf_html, "fund-currency")
-        if raw_ccy in KNOWN_FUND_CURRENCIES:
-            fund_currency = raw_ccy
-            print(f"⚠ fund currency {isin}: used justETF ({fund_currency})")
+    # Last resort: parse currency/distribution from listing names with a warning
+    if not fund_currency:
+        parsed = fund_currency_from_name(openfigi_name) or _fund_currency_from_names(ftgo_names)
+        if parsed:
+            fund_currency = parsed
+            print(f"⚠ fund currency {isin}: justETF missing; inferred from name ({fund_currency})")
 
-    if not distribution and justetf_html:
-        raw_dist = _justetf_field(justetf_html, "distribution-policy")
-        if raw_dist:
-            dist_lower = raw_dist.lower()
-            if "accum" in dist_lower:
-                distribution = "Accumulating"
-            elif "distrib" in dist_lower:
-                distribution = "Distributing"
-
-    if justetf_html:
-        raw_focus = _justetf_field(justetf_html, "investment-focus")
-        if raw_focus:
-            asset_class = _asset_class_from_investment_focus(raw_focus)
+    if not distribution:
+        parsed_dist = distribution_from_name(openfigi_name) or (
+            distribution_from_name(ftgo_name) if ftgo_name else None
+        )
+        if parsed_dist:
+            distribution = parsed_dist
+            print(f"⚠ distribution {isin}: justETF missing; inferred from name ({distribution})")
 
     if ftgo_error and (fund_currency or distribution):
-        print(
-            f"⚠ ftgo {isin}: {ftgo_error}; "
-            "used OpenFIGI name for fund currency/distribution"
-        )
+        print(f"⚠ ftgo {isin}: {ftgo_error}")
 
     if fund_currency:
         info["fund_currency"] = fund_currency

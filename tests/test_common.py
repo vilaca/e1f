@@ -294,16 +294,18 @@ def test_enrich_falls_back_to_justetf_ter(monkeypatch, capsys):
     assert 'used justETF (0.07%)' in out
 
 
-def test_enrich_warns_when_ftgo_name_conflicts_with_openfigi(monkeypatch, capsys):
+def test_enrich_warns_when_name_inference_used_as_fallback(monkeypatch, capsys):
+    # justETF returns no structured fields → name parsing kicks in as last resort
     _mock_ftgo_enrichment(
         monkeypatch,
-        names=['Amundi Prime All Country World UCITS ETF USD Dist'],
+        names=['Amundi Prime All Country World UCITS ETF USD Acc'],
     )
 
-    info = {'name': 'AMUNDI PRME ALL CTRY WLD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
+    info = {'name': 'AMUNDI PRME ALL CTRY WLD USD ACC', 'tickers': ['WEBN'], 'exchange': 'GR'}
     enrich_fund_metadata(ISIN, info)
     out = capsys.readouterr().out
-    assert 'using OpenFIGI share class (Accumulating)' in out
+    assert 'justETF missing' in out
+    assert 'inferred from name' in out
 
 
 def test_justetf_field_parses_basics_table():
@@ -333,7 +335,8 @@ def test_fetch_justetf_html(monkeypatch):
     assert '0.07%' in html
 
 
-def test_enrich_uses_justetf_for_missing_currency(monkeypatch, capsys):
+def test_enrich_uses_justetf_for_currency_silently(monkeypatch, capsys):
+    # justETF is primary: currency from structured field, no warning emitted
     html = '<td data-testid="tl_etf-basics_value_fund-currency">USD</td>'
     _mock_ftgo_enrichment(
         monkeypatch,
@@ -346,7 +349,7 @@ def test_enrich_uses_justetf_for_missing_currency(monkeypatch, capsys):
     out = capsys.readouterr().out
 
     assert enriched['fund_currency'] == 'USD'
-    assert 'used justETF (USD)' in out
+    assert 'fund currency' not in out
 
 
 def test_enrich_uses_justetf_distribution_when_names_silent(monkeypatch):
@@ -424,7 +427,8 @@ def test_enrich_fund_metadata_warns_when_ftgo_fails_but_openfigi_parses(monkeypa
     assert enriched['fund_currency'] == 'USD'
     assert enriched['distribution'] == 'Accumulating'
     assert f'⚠ ftgo {ISIN}: no FT Markets listing' in out
-    assert 'used OpenFIGI name for fund currency/distribution' in out
+    assert 'justETF missing' in out
+    assert 'inferred from name' in out
 
 
 # ---------------------------------------------------------------------------
