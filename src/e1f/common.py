@@ -10,8 +10,10 @@ import builtins
 import logging
 import os
 import re
+import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -749,3 +751,250 @@ def convert_to_eur(amount: float, quote: str, date: str, db_path: str) -> float:
             f"normalization; not supported (ADR-0010)"
         )
     return amount / fx_rate_asof(db_path, quote, date)
+
+
+# ---------------------------------------------------------------------------
+# Look-through snapshots (ADR-0012): immutable, append-only observations of a
+# fund's composition, split header (``holdings_snapshot``) / children
+# (``holding``). Shared here so ``fetch`` can populate them and ``concentration``
+# can read them without the two command modules importing each other (ADR-0003).
+# ---------------------------------------------------------------------------
+
+# The three look-through dimensions stored per snapshot. ``security`` rows are
+# rank-ordered named holdings (top-10 from yfinance); ``sector`` / ``asset_class``
+# rows are complete weightings and carry no rank.
+DIMENSION_SECURITY = "security"
+DIMENSION_SECTOR = "sector"
+DIMENSION_ASSET_CLASS = "asset_class"
+
+# Source tier priority: higher wins when several snapshots exist for one fund
+# (ADR-0012 decision 5). ``provider`` is yfinance; the rest are v1b territory.
+_TIER_RANK = {"inferred": 0, "provider": 1, "curated": 2, "issuer": 3}
+
+_SECURITY_SUFFIXES = frozenset(
+    {"inc", "corp", "co", "plc", "ltd", "ag", "sa", "nv", "se", "the", "class"}
+)
+
+
+@dataclass(frozen=True)
+class HoldingRow:
+    """One child row of a look-through snapshot (one dimension, one key)."""
+
+    dimension: str
+    raw_name: str
+    normalized_name: str | None
+    weight: float
+    rank: int | None
+
+
+@dataclass(frozen=True)
+class LookthroughSnapshot:
+    """One immutable observation of one fund's composition from one source."""
+
+    id: int
+    fund_id: str
+    as_of: str
+    source: str
+    tier: str
+    retrieved_at: str
+    reported_holding_count: int | None
+    holdings: list[HoldingRow]
+
+    def by_dimension(self, dimension: str) -> list[HoldingRow]:
+        return [h for h in self.holdings if h.dimension == dimension]
+
+    @property
+    def tier_rank(self) -> int:
+        return _TIER_RANK.get(self.tier, _TIER_RANK["provider"])
+
+
+def normalize_security_name(name: str) -> str:
+    """Fold a holding name to a coarse match key — a *hint*, never identity.
+
+    Lower-cases, drops punctuation and common corporate suffixes, and collapses
+    whitespace so ``"Apple Inc."`` and ``"APPLE INC"`` co-occur in the unresolved
+    overlap-candidate signal (ADR-0012 decision 2). It deliberately does not
+    resolve share classes, dual listings, or ADRs — that is the reviewed
+    ``security_alias`` work of v1b, not a string algorithm.
+    """
+    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
+    kept = [t for t in tokens if t not in _SECURITY_SUFFIXES]
+    return " ".join(kept or tokens)
+
+
+def init_lookthrough_schema(conn: sqlite3.Connection) -> None:
+    """Create the ADR-0012 look-through tables if absent (idempotent).
+
+    ``holdings_snapshot`` is the immutable header (one observation of one fund
+    from one source/tier); ``holding`` holds its children across all three
+    dimensions; ``security_alias`` is the deliberately-empty v1a resolution table
+    that v1b fills incrementally from the overlap-candidate report.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS holdings_snapshot (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fund_id TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            source TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL,
+            reported_holding_count INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS holding (
+            snapshot_id INTEGER NOT NULL,
+            dimension TEXT NOT NULL,
+            raw_name TEXT NOT NULL,
+            normalized_name TEXT,
+            weight REAL NOT NULL,
+            rank INTEGER,
+            FOREIGN KEY (snapshot_id) REFERENCES holdings_snapshot(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS security_alias (
+            raw_name TEXT PRIMARY KEY,
+            canonical_name TEXT,
+            canonical_key TEXT,
+            reviewed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def _snapshot_signature(
+    reported_holding_count: int | None, holdings: list[HoldingRow]
+) -> tuple[Any, ...]:
+    """Content fingerprint for identical-observation dedupe (as_of excluded).
+
+    Two observations with the same composition are the *same* snapshot even if
+    re-fetched on a later day, so the auto-refresh never becomes a fetch log
+    (ADR-0012 decision 5). Weights are rounded to absorb float noise.
+    """
+    return (
+        reported_holding_count,
+        tuple(
+            sorted(
+                (h.dimension, h.raw_name, round(h.weight, 8), h.rank) for h in holdings
+            )
+        ),
+    )
+
+
+def _load_snapshot(conn: sqlite3.Connection, header: tuple[Any, ...]) -> LookthroughSnapshot:
+    snapshot_id, fund_id, as_of, source, tier, retrieved_at, reported = header
+    rows = conn.execute(
+        "SELECT dimension, raw_name, normalized_name, weight, rank "
+        "FROM holding WHERE snapshot_id = ? ORDER BY rank IS NULL, rank, raw_name",
+        (snapshot_id,),
+    ).fetchall()
+    holdings = [
+        HoldingRow(
+            dimension=str(dim),
+            raw_name=str(raw),
+            normalized_name=None if norm is None else str(norm),
+            weight=float(weight),
+            rank=None if rank is None else int(rank),
+        )
+        for dim, raw, norm, weight, rank in rows
+    ]
+    return LookthroughSnapshot(
+        id=int(snapshot_id),
+        fund_id=str(fund_id),
+        as_of=str(as_of),
+        source=str(source),
+        tier=str(tier),
+        retrieved_at=str(retrieved_at),
+        reported_holding_count=None if reported is None else int(reported),
+        holdings=holdings,
+    )
+
+
+_SNAPSHOT_COLUMNS = "id, fund_id, as_of, source, tier, retrieved_at, reported_holding_count"
+
+
+def _latest_for_source_tier(
+    conn: sqlite3.Connection, fund_id: str, source: str, tier: str
+) -> LookthroughSnapshot | None:
+    header = conn.execute(
+        f"SELECT {_SNAPSHOT_COLUMNS} FROM holdings_snapshot "
+        "WHERE fund_id = ? AND source = ? AND tier = ? ORDER BY id DESC LIMIT 1",
+        (fund_id, source, tier),
+    ).fetchone()
+    return None if header is None else _load_snapshot(conn, header)
+
+
+def insert_lookthrough_snapshot(
+    db_path: str,
+    *,
+    fund_id: str,
+    as_of: str,
+    source: str,
+    tier: str,
+    retrieved_at: str,
+    reported_holding_count: int | None,
+    holdings: list[HoldingRow],
+) -> int | None:
+    """Append one immutable snapshot, skipping an identical re-observation.
+
+    Returns the new snapshot id, or ``None`` when the latest snapshot for the
+    same ``(fund, source, tier)`` is content-identical (ADR-0012 decision 5:
+    corrections append, identical re-observations do not). Never mutates an
+    existing snapshot.
+    """
+    with closing(sqlite3.connect(db_path)) as conn:
+        init_lookthrough_schema(conn)
+        latest = _latest_for_source_tier(conn, fund_id, source, tier)
+        if latest is not None and _snapshot_signature(
+            latest.reported_holding_count, latest.holdings
+        ) == _snapshot_signature(reported_holding_count, holdings):
+            return None
+
+        cursor = conn.execute(
+            "INSERT INTO holdings_snapshot "
+            "(fund_id, as_of, source, tier, retrieved_at, reported_holding_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (fund_id, as_of, source, tier, retrieved_at, reported_holding_count),
+        )
+        snapshot_id = int(cursor.lastrowid or 0)
+        conn.executemany(
+            "INSERT INTO holding "
+            "(snapshot_id, dimension, raw_name, normalized_name, weight, rank) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (snapshot_id, h.dimension, h.raw_name, h.normalized_name, h.weight, h.rank)
+                for h in holdings
+            ],
+        )
+        conn.commit()
+        return snapshot_id
+
+
+def latest_lookthrough_snapshot(db_path: str, fund_id: str) -> LookthroughSnapshot | None:
+    """The analysis snapshot for a fund: highest tier, then latest as_of, then id.
+
+    Prior snapshots are retained as evidence (immutable append-only); this picks
+    the one analysis should read (ADR-0012 decision 5). ``None`` when the fund has
+    no look-through observation yet.
+    """
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='holdings_snapshot'"
+        ).fetchone() is None:
+            return None
+        headers = conn.execute(
+            f"SELECT {_SNAPSHOT_COLUMNS} FROM holdings_snapshot WHERE fund_id = ?",
+            (fund_id,),
+        ).fetchall()
+        if not headers:
+            return None
+        snapshots = [_load_snapshot(conn, header) for header in headers]
+
+    return max(snapshots, key=lambda s: (s.tier_rank, s.as_of, s.id))

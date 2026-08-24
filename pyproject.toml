@@ -55,7 +55,7 @@ name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance",
+    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.concentration",
     "e1f.common",
 ]
 

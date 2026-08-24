@@ -24,15 +24,16 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes seven commands around a shared config/DB:
+The tool exposes eight commands around a shared config/DB:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
+3. **`e1f fetch`** — populate the SQLite DB with prices, FX rates, and look-through snapshots.
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
+8. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -66,6 +67,11 @@ e1f portfolio
 e1f performance
 e1f performance --as-of 2025-12-31   # historical snapshot
 e1f performance --sort value --reverse
+
+# 5. Inspect within-fund concentration (look-through cached by fetch)
+e1f concentration                    # every held fund + overlap candidates
+e1f concentration VWCE               # one fund by ISIN, ticker, or name
+e1f concentration VWCE --explain     # per-metric provenance chain
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -73,7 +79,8 @@ Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
-`e1f portfolio --help`, `e1f performance --help`, `e1f validate --help`.
+`e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
+`e1f validate --help`.
 
 ## Price sources
 
@@ -167,6 +174,26 @@ Reading the metrics (formulas in ADR-0011 §5):
   answers *which positions actually drove the portfolio's gain or loss* — a big
   percentage gain in a tiny position contributes less than a modest gain in a
   large one.
+
+Concentration: `ADR/ADR-0012_concentration_command.md` (output in
+`src/e1f/concentration.py`). `e1f concentration` reports each held fund's
+*within-fund* concentration — by security, sector, and asset class — against an
+explicit coverage denominator, reading the look-through snapshots a bulk
+`e1f fetch` caches from yfinance `funds_data` (so it runs offline). Because that
+source names only the top-10 holdings, the security dimension is reported as an
+**observed** figure plus **rank-constrained bounds** on the unobserved tail
+(`HHI_max = HHI_observed + R·w₁₀`), never a false-precise point value; sector and
+asset-class weightings are complete and reported as point values. Each metric
+carries a four-state status — CALCULATED / BOUNDED / UNAVAILABLE / UNRESOLVED —
+and `--explain` reconstructs each figure's provenance (Result / Inputs / Method /
+limited-by) from the immutable snapshot rather than a logged audit trail. Region
+is UNAVAILABLE (no reliable free source; never inferred from swap collateral).
+This is deliberately **not** portfolio diversification analysis: cross-fund
+single-name overlap is not asserted — matching names surface only as an
+*unresolved candidate* signal, never summed into an exposure figure (that is the
+deferred `overlap` command). Look-through is stored in `holdings_snapshot`,
+`holding`, and `security_alias` tables (immutable, append-only; schema in
+`src/e1f/common.py`).
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring
