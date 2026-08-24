@@ -133,6 +133,33 @@ and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
 price/FX on or before that date shows `n/a` and drops out of the total, and
 annualized figures on under a year of history are flagged.
 
+Reading the metrics (formulas in ADR-0011 §5):
+
+- **XIRR** — money-weighted annualized return. Treats every contribution as a
+  dated cash flow and solves for the single rate that reconciles them with
+  today's value, so a euro invested five years ago counts for more than one
+  added last month. This is the headline: it answers *what did my money actually
+  earn*, the return you'd compare against a savings-account rate. Because it
+  weights by both size and timing, pouring in more just before a rally lifts it
+  and buying just before a drop drags it down — it reflects your real experience,
+  not just the funds'.
+- **TWR** (time-weighted return) — cumulative return with contribution timing
+  removed, so it measures *how the holdings performed* independent of when you
+  paid in. This is the fair way to compare against a benchmark or a fund's own
+  published return, since it isn't flattered or punished by your deposit schedule.
+- **Vol** (annualized volatility) — how much daily returns swing around their
+  average, scaled to a yearly figure. A rough size-of-the-ride gauge: higher vol
+  means larger day-to-day moves in both directions, useful for judging whether an
+  otherwise-good return came with a bumpy path you could stomach.
+- **MaxDD** (maximum drawdown) — the deepest peak-to-trough fall the portfolio
+  endured over the window, measured on the contribution-neutralized wealth index
+  (new money can't paper over a loss). It answers *what's the worst decline I'd
+  have sat through* — a concrete worst-case-so-far, more visceral than volatility
+  for gauging whether you could have held on.
+- **CAGR** — the annualized form of TWR (a constant yearly rate equivalent to the
+  cumulative TWR), so it lines up directly against XIRR: time-weighted vs.
+  money-weighted annual return.
+
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring
 the server's `Retry-After` header when present and falling back to
