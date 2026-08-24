@@ -24,8 +24,8 @@ FR0010717116:
   xid: '524109506'
 IE0003XJA0J9:
   currency: EUR
-  symbol: WEBN:FRA:EUR
-  xid: '894321323'
+  symbol: WEBN:GER:EUR
+  xid: '894412378'
 IE0006WW1TQ4:
   currency: USD
   symbol: EXUS:LSE:USD
@@ -208,8 +208,8 @@ IE00BD6FTQ80:
   xid: '377694284'
 IE00BDBRDM35:
   currency: EUR
-  symbol: EUNA:FRA:EUR
-  xid: '443095222'
+  symbol: EUNA:GER:EUR
+  xid: '443269222'
 IE00BDFL4P12:
   currency: GBX
   symbol: COMM:LSE:GBX
