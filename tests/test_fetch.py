@@ -368,6 +368,44 @@ def test_fetch_yfinance_all_empty(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Summary / day-count reporting
+# ---------------------------------------------------------------------------
+
+def _series(mapping, col='close'):
+    idx = pd.to_datetime(list(mapping))
+    return pd.DataFrame({col: list(mapping.values())}, index=idx)
+
+
+def test_delta_none_before_counts_all_new():
+    after = _series({'2026-08-10': 1.0, '2026-08-11': 2.0, '2026-08-12': 3.0})
+    assert DataExtractor._delta(None, after, 'close') == (3, 0)
+
+
+def test_delta_incremental_only_new_days():
+    before = _series({'2026-08-10': 1.0, '2026-08-11': 2.0})
+    after = _series({'2026-08-10': 1.0, '2026-08-11': 2.0, '2026-08-12': 3.0})
+    assert DataExtractor._delta(before, after, 'close') == (1, 0)
+
+
+def test_delta_counts_replaced_when_value_changed():
+    before = _series({'2026-08-10': 1.0, '2026-08-11': 2.0, '2026-08-12': 3.0})
+    after = _series({'2026-08-10': 1.0, '2026-08-11': 9.0, '2026-08-12': 3.0})
+    assert DataExtractor._delta(before, after, 'close') == (0, 1)
+
+
+def test_changes_phrase_new_and_replaced():
+    assert DataExtractor._changes(None, 0, 12) == '12 days'
+    assert DataExtractor._changes(3, 0, 12) == '+3 new, 12 total'
+    assert DataExtractor._changes(3, 2, 12) == '+3 new, 2 replaced, 12 total'
+
+
+def test_summary_includes_day_changes():
+    df = _series({'2026-08-11': 1.0, '2026-08-12': 2.0})
+    line = DataExtractor._summary(ISIN, 'Test ETF', 'ftgo', df, new=2, replaced=0)
+    assert '— ftgo - +2 new, 2 total -' in line
+
+
+# ---------------------------------------------------------------------------
 # fetch() orchestration
 # ---------------------------------------------------------------------------
 

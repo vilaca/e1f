@@ -82,12 +82,46 @@ class DataExtractor:
         self._init_database()
 
     @staticmethod
-    def _summary(isin: str, name: str, source: str, df: pd.DataFrame,
-                 ticker: str | None = None) -> str:
-        """One-line result: ISIN, name, ticker, count, source and date range."""
+    def _delta(before: pd.DataFrame | None, after: pd.DataFrame,
+               col: str) -> tuple[int, int]:
+        """(new, replaced) day counts between a pre-save and post-save series.
+
+        `new` are dates in `after` that weren't stored before; `replaced` are
+        dates present in both whose value changed (nonzero only for --force /
+        --replace, since the default upsert keeps stored values).
+        """
+        if before is None or before.empty:
+            return len(after), 0
+        common = after.index.intersection(before.index)
+        replaced = int(
+            (after[col].loc[common].to_numpy() != before[col].loc[common].to_numpy()).sum()
+        )
+        return len(after.index.difference(before.index)), replaced
+
+    @staticmethod
+    def _changes(new: int | None, replaced: int, total: int) -> str:
+        """Human phrase for how a stored series changed: '+N new, M replaced, T total'.
+
+        `new is None` marks an untouched series (cache hit / nothing upstream),
+        rendered as a plain total.
+        """
+        if new is None:
+            return f"{total} days"
+        parts = [f"+{new} new"]
+        if replaced:
+            parts.append(f"{replaced} replaced")
+        parts.append(f"{total} total")
+        return ", ".join(parts)
+
+    @classmethod
+    def _summary(cls, isin: str, name: str, source: str, df: pd.DataFrame,
+                 ticker: str | None = None, new: int | None = None,
+                 replaced: int = 0) -> str:
+        """One-line result: ISIN, name, ticker, day changes, source, date range."""
         span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
         tag = f" ({ticker})" if ticker else ""
-        return f"{isin} {name}{tag} — {len(df)} days - {source} - {span}"
+        changes = cls._changes(new, replaced, len(df))
+        return f"{isin} {name}{tag} — {source} - {changes} - {span}"
 
     def _load_universe(self) -> dict[str, ETFDefinition]:
         """Load ETF universe from config."""
@@ -480,10 +514,12 @@ class DataExtractor:
             return False, df  # stale; existing rates still returned for incremental
         return True, df
 
-    @staticmethod
-    def _fx_summary(base: str, quote: str, source: str, df: pd.DataFrame) -> str:
+    @classmethod
+    def _fx_summary(cls, base: str, quote: str, source: str, df: pd.DataFrame,
+                    new: int | None = None, replaced: int = 0) -> str:
         span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
-        return f"{base}/{quote} — {len(df)} days - {source} - {span}"
+        changes = cls._changes(new, replaced, len(df))
+        return f"{base}/{quote} — {source} - {changes} - {span}"
 
     def _needed_fx_quotes(self) -> set[str]:
         """Distinct non-base quote currencies of the currently-held ISINs.
@@ -530,7 +566,9 @@ class DataExtractor:
 
         if df is not None and not df.empty:
             self._save_fx(base, quote, df)
-            logger.info(self._fx_summary(base, quote, source, self._fx_stored(base, quote)))
+            stored = self._fx_stored(base, quote)
+            new, replaced = self._delta(existing, stored, 'rate')
+            logger.info(self._fx_summary(base, quote, source, stored, new, replaced))
         elif have_existing:
             assert existing is not None
             logger.info(self._fx_summary(base, quote, "cache", existing))
@@ -599,7 +637,9 @@ class DataExtractor:
             if fetched:
                 source, ticker = fetched
                 full = self._stored_series(etf_isin)
-                logger.info(self._summary(etf_isin, etf.name, source, full, ticker))
+                new, replaced = self._delta(existing, full, 'close')
+                logger.info(self._summary(
+                    etf_isin, etf.name, source, full, ticker, new, replaced))
                 data_dict[etf_isin] = full['close']
             elif have_existing:
                 assert existing is not None
