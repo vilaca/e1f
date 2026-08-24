@@ -97,6 +97,11 @@ breakpoints so a mid-period contribution starts its own TWR sub-period.
   falls back to a nearest-prior close (§4) because the ISIN has no close on the
   as-of day itself, the value is flagged `~` with its price date and staleness,
   so a carried-forward number is never mistaken for an on-the-day valuation.
+- **Unrealized P&L contribution** (`P&Lctr`) — each holding's P&L as a
+  percentage of the portfolio's total unrealized P&L (`pnlᵢ / Σ pnl`), over the
+  same valuable set the `TOTAL` row aggregates, so the shares sum to 100%.
+  Undefined (`n/a`) when net P&L is zero; the `TOTAL` row shows `100%`. Answers
+  *which holdings drove the gain or loss*, not just each one's own return.
 - **XIRR** — solve `Σ cfᵢ / (1+r)^(tᵢ/365) = 0` (Actual/365 from the first cash
   flow) over dated contributions plus the terminal value. Newton–Raphson with a
   bisection fallback; non-convergence yields `n/a`, never a wrong number.
@@ -110,8 +115,8 @@ breakpoints so a mid-period contribution starts its own TWR sub-period.
 
 ### 6. Full metric set on every per-ISIN row and the total
 
-Every per-ISIN row carries the complete set (value, cost, P&L, XIRR, TWR, vol,
-max drawdown, CAGR), and so does the `TOTAL` row. This needs a per-ISIN daily
+Every per-ISIN row carries the complete set (value, cost, P&L, P&L
+contribution, XIRR, TWR, vol, max drawdown, CAGR), and so does the `TOTAL` row. This needs a per-ISIN daily
 value series, which the design already produces. Output mirrors `_cmd_portfolio`
 — a formatted point-in-time table, sortable, no CSV export in v1.
 
