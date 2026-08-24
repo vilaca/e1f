@@ -315,6 +315,34 @@ def test_build_row_none_when_not_held_at_as_of(tmp_path):
     assert perf._build_row(EUR_ISIN, series, "2024-01-01", config, db) is None
 
 
+def test_build_row_not_estimated_when_priced_on_as_of(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-31", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    row = _row_for(db, config, meta, EUR_ISIN, "2024-12-31")
+    assert row.estimated is False
+    assert row.price_date == "2024-12-31"
+
+
+def test_build_row_estimated_when_price_carried_forward(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-20", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    # No close on the as-of day: value carried forward from 2024-12-20.
+    row = _row_for(db, config, meta, EUR_ISIN, "2024-12-31")
+    assert row.estimated is True
+    assert row.price_date == "2024-12-20"
+    assert row.market_value == pytest.approx(1200.0)
+
+
 # ---------------------------------------------------------------------------
 # Sorting
 # ---------------------------------------------------------------------------
@@ -401,6 +429,63 @@ def test_main_short_history_flagged(tmp_path, capsys):
     assert code == 0
     assert "*" in out
     assert "short history" in out
+
+
+def test_main_estimated_price_flagged(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-20", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "1,200.00~" in out                     # MktVal marked as carried forward
+    # Single stale date collapses to one summary line, no per-ISIN listing.
+    assert "MktVal estimated: no close on 2024-12-31" in out
+    assert "freshest data is 2024-12-20 (11d stale) for all holdings" in out
+    assert EUR_ISIN not in out.split("MktVal estimated")[1]
+
+
+def test_main_estimated_prices_mixed_dates_listed_per_isin(tmp_path, capsys):
+    other = "IE00OTHER0001"
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", other, 100.0, 10.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-20", 12.0),
+            (other, "2024-01-01", 10.0),
+            (other, "2024-12-27", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR", other: "EUR"},
+        names={EUR_ISIN: "Euro Fund", other: "Other Fund"},
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    # Differing stale dates fall back to the per-ISIN listing.
+    assert "MktVal estimated from the latest price before 2024-12-31" in out
+    assert f"{EUR_ISIN}  2024-12-20 (11d stale)" in out
+    assert f"{other}  2024-12-27 (4d stale)" in out
+
+
+def test_main_no_estimate_note_when_priced_on_as_of(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-31", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    assert "~" not in out
+    assert "estimated from the latest price" not in out
 
 
 def test_main_as_of_values_historical_snapshot(tmp_path, capsys):
