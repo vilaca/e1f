@@ -777,3 +777,143 @@ def test_main_force_and_replace_are_mutually_exclusive(capsys):
     with pytest.raises(SystemExit):
         fetch_mod.main([ISIN, '--force', '--replace'])
     assert 'not allowed with argument' in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Look-through population (ADR-0012): yfinance funds_data -> immutable snapshots
+# ---------------------------------------------------------------------------
+
+from e1f.common import (  # noqa: E402
+    DIMENSION_ASSET_CLASS,
+    DIMENSION_SECTOR,
+    DIMENSION_SECURITY,
+    latest_lookthrough_snapshot,
+)
+
+
+class _FakeFundsData:
+    def __init__(self, top=None, sectors=None, assets=None):
+        self._top = top
+        self.sector_weightings = sectors if sectors is not None else {}
+        self.asset_classes = assets if assets is not None else {}
+
+    @property
+    def top_holdings(self):
+        return self._top
+
+
+def _top_df(names_weights):
+    return pd.DataFrame(
+        {"Name": [n for n, _ in names_weights],
+         "Holding Percent": [w for _, w in names_weights]}
+    )
+
+
+def _hold_transaction(db, isin):
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO transactions "
+            "(broker, transaction_id, datetime, symbol, side, shares, price, fee, tax) "
+            "VALUES ('tr', ?, '2024-01-01', ?, 'BUY', 1.0, 10.0, 0.0, 0.0)",
+            (f"t-{isin}", isin),
+        )
+        conn.commit()
+
+
+def _ensure_transactions_table(db):
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS transactions (broker TEXT, transaction_id TEXT, "
+            "datetime TEXT, symbol TEXT, side TEXT, shares REAL, price REAL, fee REAL, "
+            "tax REAL, PRIMARY KEY (broker, transaction_id))"
+        )
+        conn.commit()
+
+
+def test_lookthrough_rows_parse_all_three_dimensions(tmp_path):
+    ext = make_extractor(tmp_path)
+    fd = _FakeFundsData(
+        top=_top_df([("Apple Inc.", 0.07), ("Microsoft Corp", 0.05)]),
+        sectors={"Technology": 0.30, "Financials": 0.15},
+        assets={"stockPosition": 0.99, "cashPosition": 0.01},
+    )
+    rows = ext._lookthrough_rows(fd)
+    security = [r for r in rows if r.dimension == DIMENSION_SECURITY]
+    assert [r.raw_name for r in security] == ["Apple Inc.", "Microsoft Corp"]
+    assert security[0].rank == 1 and security[0].normalized_name == "apple"
+    assert any(r.dimension == DIMENSION_SECTOR and r.raw_name == "Technology" for r in rows)
+    assert any(r.dimension == DIMENSION_ASSET_CLASS for r in rows)
+
+
+def test_lookthrough_rows_scale_percent_to_fraction(tmp_path):
+    ext = make_extractor(tmp_path)
+    fd = _FakeFundsData(top=_top_df([("Apple Inc.", 7.0), ("Msft", 5.0)]))
+    security = [r for r in ext._lookthrough_rows(fd) if r.dimension == DIMENSION_SECURITY]
+    assert security[0].weight == pytest.approx(0.07)  # 7.0% -> 0.07 fraction
+
+
+def test_lookthrough_rows_tolerate_missing_dimensions(tmp_path):
+    ext = make_extractor(tmp_path)
+
+    class Broken:
+        @property
+        def top_holdings(self):
+            raise RuntimeError("no holdings for this fund")
+        sector_weightings = None
+        asset_classes = "not a mapping"
+
+    assert ext._lookthrough_rows(Broken()) == []
+
+
+def test_fetch_lookthrough_tries_ticker_candidates(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    fd = _FakeFundsData(top=_top_df([("Apple Inc.", 0.07)]))
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            # Only the .DE suffix candidate carries data.
+            self.funds_data = fd if symbol == "TST.DE" else _FakeFundsData()
+
+    monkeypatch.setattr(fetch_mod.yf, "Ticker", FakeTicker)
+    rows = ext._fetch_lookthrough(["TST"])
+    assert rows is not None and rows[0].raw_name == "Apple Inc."
+
+
+def test_fetch_lookthrough_returns_none_when_all_empty(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    monkeypatch.setattr(
+        fetch_mod.yf, "Ticker", lambda s: type("T", (), {"funds_data": _FakeFundsData()})()
+    )
+    assert ext._fetch_lookthrough(["TST"]) is None
+
+
+def test_refresh_lookthrough_stores_and_dedupes(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    _ensure_transactions_table(ext.db_path)
+    _hold_transaction(ext.db_path, ISIN)
+    rows = [
+        r for r in ext._lookthrough_rows(
+            _FakeFundsData(top=_top_df([("Apple Inc.", 0.07)]), sectors={"Tech": 1.0})
+        )
+    ]
+    monkeypatch.setattr(ext, "_fetch_lookthrough", lambda tickers: list(rows))
+
+    ext._refresh_lookthrough()
+    snap = latest_lookthrough_snapshot(ext.db_path, ISIN)
+    assert snap is not None and snap.source == "yfinance" and snap.tier == "provider"
+
+    ext._refresh_lookthrough()  # identical re-observation -> no new snapshot
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM holdings_snapshot").fetchone()[0]
+    assert count == 1
+
+
+def test_refresh_lookthrough_warns_when_no_data(tmp_path, monkeypatch, caplog):
+    ext = make_extractor(tmp_path)
+    _ensure_transactions_table(ext.db_path)
+    _hold_transaction(ext.db_path, ISIN)
+    monkeypatch.setattr(ext, "_fetch_lookthrough", lambda tickers: None)
+    with caplog.at_level("WARNING"):
+        ext._refresh_lookthrough()
+    assert any("no yfinance look-through" in r.message for r in caplog.records)
+    assert latest_lookthrough_snapshot(ext.db_path, ISIN) is None

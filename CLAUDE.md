@@ -49,6 +49,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0009` — `validate` error/warning exit-code contract
 - `ADR-0010` — currency + FX foundation: `fx_rates` table, FX auto-fetched into `fetch`, EUR conversion helper
 - `ADR-0011` — `performance` command: XIRR-first return metrics, EUR valuation, net-across-brokers holdings
+- `ADR-0012` — `concentration` command: coverage-aware within-fund concentration, rank-constrained HHI bounds, `overlap` (v1b) deferred
 
 ## Skills
 

@@ -31,6 +31,7 @@ def test_cli_commands_surface():
         "transactions",
         "portfolio",
         "performance",
+        "concentration",
     }
 
 
@@ -97,6 +98,69 @@ def test_fx_rates_schema_contract(tmp_path: Path) -> None:
         "quote": {"type": "TEXT", "pk": 2},
         "date":  {"type": "TEXT", "pk": 3},
         "rate":  {"type": "REAL", "pk": 0},
+    }
+
+
+def _lookthrough_schema(tmp_path: Path) -> sqlite3.Connection:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.dump({"etfs": {}}))
+    db = tmp_path / "lookthrough.db"
+    DataExtractor(
+        config_path=str(cfg),
+        db_path=str(db),
+        currency_meta_path=str(tmp_path / "meta.yaml"),
+    )
+    return sqlite3.connect(str(db))
+
+
+def test_holdings_snapshot_schema_contract(tmp_path: Path) -> None:
+    """holdings_snapshot schema is a data contract — changes need an ADR-0012 note."""
+    with closing(_lookthrough_schema(tmp_path)) as conn:
+        cols = conn.execute("PRAGMA table_info(holdings_snapshot)").fetchall()
+
+    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    assert schema == {
+        "id": {"type": "INTEGER", "pk": 1},
+        "fund_id": {"type": "TEXT", "pk": 0},
+        "as_of": {"type": "TEXT", "pk": 0},
+        "source": {"type": "TEXT", "pk": 0},
+        "tier": {"type": "TEXT", "pk": 0},
+        "retrieved_at": {"type": "TEXT", "pk": 0},
+        "reported_holding_count": {"type": "INTEGER", "pk": 0},
+    }
+
+
+def test_holding_schema_contract(tmp_path: Path) -> None:
+    """holding schema is a data contract — changes need an ADR-0012 note.
+
+    The ``dimension`` discriminator carries all three look-through dimensions
+    (security / sector / asset_class) within the ADR-0012 three-table design.
+    """
+    with closing(_lookthrough_schema(tmp_path)) as conn:
+        cols = conn.execute("PRAGMA table_info(holding)").fetchall()
+
+    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    assert schema == {
+        "snapshot_id": {"type": "INTEGER", "pk": 0},
+        "dimension": {"type": "TEXT", "pk": 0},
+        "raw_name": {"type": "TEXT", "pk": 0},
+        "normalized_name": {"type": "TEXT", "pk": 0},
+        "weight": {"type": "REAL", "pk": 0},
+        "rank": {"type": "INTEGER", "pk": 0},
+    }
+
+
+def test_security_alias_schema_contract(tmp_path: Path) -> None:
+    """security_alias schema is a data contract — empty in v1a, filled by v1b."""
+    with closing(_lookthrough_schema(tmp_path)) as conn:
+        cols = conn.execute("PRAGMA table_info(security_alias)").fetchall()
+
+    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    assert schema == {
+        "raw_name": {"type": "TEXT", "pk": 1},
+        "canonical_name": {"type": "TEXT", "pk": 0},
+        "canonical_key": {"type": "TEXT", "pk": 0},
+        "reviewed_at": {"type": "TEXT", "pk": 0},
     }
 
 

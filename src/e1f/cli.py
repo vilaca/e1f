@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from e1f import (
     autocomplete,
+    concentration,
     config,
     fetch,
     performance,
@@ -34,6 +35,7 @@ PARSER_FACTORIES = {
     "transactions": transactions._build_parser,
     "portfolio": portfolio._build_parser,
     "performance": performance._build_parser,
+    "concentration": concentration._build_parser,
 }
 
 
@@ -48,6 +50,7 @@ COMMANDS: dict[str, Command] = {
     "transactions": transactions.main,
     "portfolio": portfolio.main,
     "performance": performance.main,
+    "concentration": concentration.main,
 }
 
 
@@ -65,6 +68,7 @@ Commands:
   transactions  Ingest and list broker ETF trades in SQLite
   portfolio     Show ETF holdings and average cost from transactions
   performance   Report market value, P&L, and return metrics per holding
+  concentration Within-fund concentration (security/sector/asset-class), coverage-aware
 
 Run 'e1f <command> --help' for command-specific options.
         """,
