@@ -173,8 +173,23 @@ warning**, so the aggregate is never silently understated.
   cleanly later.
 - **Sells / realized P&L** — buy-and-hold is the settled scope. `position_timeline`
   mirrors `compute_holdings`' average-cost SELL handling for share/cost parity,
-  but return math treats cash flows as contributions only; a sell would need
-  realized-P&L and sale-proceeds modeling — its own ADR.
+  but return math treats cash flows as contributions only (`PositionEvent.cash_flow`
+  is `0.0` for a SELL); a sell would need realized-P&L and sale-proceeds modeling —
+  its own ADR.
+
+  **Known limitation, not just an absent feature:** because a sell reduces
+  `shares_held` but books `cash_flow = 0.0`, the TWR series treats the resulting
+  drop in market value as a market *loss* rather than an external outflow. On a
+  flat-market day, selling half a position registers as a ≈ −50% sub-period
+  return (`rₜ = Vₜ / Vₜ₋₁ − 1` with no proceeds subtracted from the denominator),
+  and a full mid-history liquidation drives the wealth index toward zero. This
+  silently corrupts TWR — and everything derived from the same return series
+  (CAGR, volatility, max drawdown) — for any portfolio containing a SELL. It is
+  **latent**, not active: the current DB is buy-only (verified 2026-08-24: 38
+  BUYs, 0 SELLs), but both broker importers and `position_timeline` accept sells,
+  so the first sale produces a wrong TWR with no error. A correct fix must treat
+  sale proceeds as a genuine outflow (`rₜ = (Vₜ + proceeds) / Vₜ₋₁ − 1`, or
+  subtract proceeds from the start-of-day base) — deferred to the sells ADR above.
 - **Cent-exact cost from TR's all-in `amount`** — see decision 3.
 - **CSV / time-series export** of the daily value series — deferred until a
   consumer needs it.
