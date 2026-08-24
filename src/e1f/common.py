@@ -568,6 +568,118 @@ _SHARE_EPSILON = 1e-9
 _BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 
 
+def load_trades(
+    db_path: str,
+) -> list[tuple[str, str, str, str, float, float, float]]:
+    """Chronological trade rows ``(broker, datetime, symbol, side, shares, price, fee)``.
+
+    The shared read behind holdings and performance: ordered by ``datetime`` then
+    ``transaction_id`` so average-cost accounting is deterministic. Empty when the
+    ``transactions`` table is absent.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'"
+        ).fetchone() is None:
+            return []
+        return conn.execute(
+            """
+            SELECT broker, datetime, symbol, side, shares, price, fee
+            FROM transactions
+            ORDER BY datetime, transaction_id
+            """
+        ).fetchall()
+
+
+@dataclass(frozen=True)
+class PositionEvent:
+    """One trade's effect on a per-ISIN position, with running totals.
+
+    ``cash_flow`` is the EUR contributed by this event (``shares * price + fee``);
+    it is ``0.0`` for a SELL, since buy-and-hold return math treats cash flows as
+    contributions only (ADR-0011). ``shares_held`` and ``cost_basis`` are the
+    cumulative average-cost totals *after* the event.
+    """
+
+    date: str
+    cash_flow: float
+    shares_held: float
+    cost_basis: float
+
+
+def position_timeline(
+    rows: list[tuple[str, str, str, str, float, float, float]],
+) -> dict[str, list[PositionEvent]]:
+    """Per-ISIN chronological position events, netted across brokers (ADR-0011).
+
+    Shares are keyed on the ISIN alone (value is broker-agnostic), so contributions
+    to the same fund at different brokers accumulate into one series. Share/cost
+    accounting mirrors ``portfolio.compute_holdings`` average-cost, including SELL
+    reduction, so the two agree on the final snapshot. Dates are the ``YYYY-MM-DD``
+    prefix of the trade datetime.
+    """
+    running: dict[str, tuple[float, float]] = {}
+    timeline: dict[str, list[PositionEvent]] = {}
+
+    for _broker, dt, symbol, side, shares, price, fee in rows:
+        qty = shares or 0.0
+        if qty <= 0:
+            continue
+        unit_price = price or 0.0
+        trade_fee = fee or 0.0
+        held, cost = running.get(symbol, (0.0, 0.0))
+
+        if side in _BUY_SIDES:
+            cash_flow = qty * unit_price + trade_fee
+            held += qty
+            cost += cash_flow
+        elif side == "SELL":
+            if held <= _SHARE_EPSILON:
+                continue
+            sell_qty = min(qty, held)
+            avg = cost / held
+            held -= sell_qty
+            cost -= avg * sell_qty
+            cash_flow = 0.0
+        else:
+            continue
+
+        running[symbol] = (held, cost)
+        timeline.setdefault(symbol, []).append(
+            PositionEvent(
+                date=str(dt)[:10],
+                cash_flow=cash_flow,
+                shares_held=held,
+                cost_basis=cost,
+            )
+        )
+
+    return timeline
+
+
+def pinned_quote_currency(
+    isin: str, currency_meta_path: str = DEFAULT_CURRENCY_META
+) -> str | None:
+    """Currency the stored ``prices.close`` for ``isin`` is denominated in.
+
+    Read from the pinned ftgo resolution sidecar (ADR-0002) — the only trustworthy
+    statement of a stored price's currency, never ``fund_currency`` (ADR-0010).
+    ``None`` when the ISIN is not pinned, so a caller can treat it as unvaluable.
+    """
+    if not os.path.exists(currency_meta_path):
+        return None
+    with open(currency_meta_path) as f:
+        meta = yaml.safe_load(f) or {}
+    entry = meta.get(isin)
+    if not isinstance(entry, dict):
+        return None
+    currency = entry.get("currency")
+    return str(currency) if currency else None
+
+
 def portfolio_isins(db_path: str) -> frozenset[str]:
     """ISINs with a net-positive position derived from stored transactions."""
     import sqlite3

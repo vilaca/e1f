@@ -24,7 +24,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes six commands around a shared config/DB:
+The tool exposes seven commands around a shared config/DB:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
@@ -32,6 +32,7 @@ The tool exposes six commands around a shared config/DB:
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
+7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -60,6 +61,11 @@ e1f transactions trade-republic transactions.csv --db data/e1f.db
 e1f transactions xtb ~/Downloads/EUR_38472916_2006-01-01_2026-08-15.xlsx
 e1f transactions list
 e1f portfolio
+
+# 4. Value the portfolio and measure returns (EUR)
+e1f performance
+e1f performance --as-of 2025-12-31   # historical snapshot
+e1f performance --sort value --reverse
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -67,7 +73,7 @@ Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
-`e1f portfolio --help`, `e1f validate --help`.
+`e1f portfolio --help`, `e1f performance --help`, `e1f validate --help`.
 
 ## Price sources
 
@@ -118,6 +124,14 @@ Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
 (output in `src/e1f/portfolio.py`).
+
+Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
+`src/e1f/performance.py`). `e1f performance` values holdings in EUR
+(`shares × close × FX`, cost basis from `transactions`) and reports XIRR
+(money-weighted, headline), TWR, volatility, max drawdown, and CAGR — per holding
+and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
+price/FX on or before that date shows `n/a` and drops out of the total, and
+annualized figures on under a year of history are flagged.
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring

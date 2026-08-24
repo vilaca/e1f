@@ -17,12 +17,14 @@ The script is the single definition of "green". CI runs the same gates via `scri
 ```
 src/e1f/
   cli.py       — entry point; routes top-level commands
+  autocomplete.py — autocomplete command: Bash/Zsh shell completion
   config.py    — config subcommand: OpenFIGI resolution, YAML management
   fetch.py     — fetch subcommand: ftgo/yfinance price + FX fetching, SQLite
   validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
-  common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion
+  performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics
+  common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion, position timeline
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
   currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs (ADR-0002, ADR-0010)
@@ -46,6 +48,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0008` — destructive `--replace` series repair with a shrink guard
 - `ADR-0009` — `validate` error/warning exit-code contract
 - `ADR-0010` — currency + FX foundation: `fx_rates` table, FX auto-fetched into `fetch`, EUR conversion helper
+- `ADR-0011` — `performance` command: XIRR-first return metrics, EUR valuation, net-across-brokers holdings
 
 ## Skills
 
