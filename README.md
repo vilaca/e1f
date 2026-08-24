@@ -128,8 +128,8 @@ Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
 Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
 `src/e1f/performance.py`). `e1f performance` values holdings in EUR
 (`shares × close × FX`, cost basis from `transactions`) and reports XIRR
-(money-weighted, headline), TWR, volatility, max drawdown, and CAGR — per holding
-and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
+(money-weighted, headline), TWR, volatility, max drawdown, CAGR, and each
+holding's share of total unrealized P&L — per holding and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
 price/FX on or before that date shows `n/a` and drops out of the total, a market
 value carried forward from an earlier close (no price on the as-of day itself) is
 flagged with its price date and staleness, and annualized figures on under a year
@@ -161,6 +161,12 @@ Reading the metrics (formulas in ADR-0011 §5):
 - **CAGR** — the annualized form of TWR (a constant yearly rate equivalent to the
   cumulative TWR), so it lines up directly against XIRR: time-weighted vs.
   money-weighted annual return.
+- **P&Lctr** (unrealized P&L contribution) — each holding's share of the
+  portfolio's total unrealized P&L, summing to 100% across holdings. Unlike P&L%
+  (a holding's own return on its own cost), this weights by size too, so it
+  answers *which positions actually drove the portfolio's gain or loss* — a big
+  percentage gain in a tiny position contributes less than a modest gain in a
+  large one.
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring

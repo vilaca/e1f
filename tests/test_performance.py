@@ -366,6 +366,23 @@ def test_sort_rows_by_isin_default():
     assert [r.isin for r in sort_rows(rows)] == ["A", "B", "C"]
 
 
+def test_assign_pnl_contributions_shares_sum_to_100():
+    # cost=100 each: pnl = +100, -50 -> net +50; shares 200% and -100%.
+    rows = [_perf_row("A", 200.0), _perf_row("B", 50.0)]
+    perf._assign_pnl_contributions(rows)
+    assert rows[0].pnl_contribution == pytest.approx(200.0)
+    assert rows[1].pnl_contribution == pytest.approx(-100.0)
+    assert sum(r.pnl_contribution for r in rows) == pytest.approx(100.0)
+
+
+def test_assign_pnl_contributions_none_when_no_pnl_or_zero_total():
+    # Unvaluable row gets None; a zero net total leaves every share undefined.
+    rows = [_perf_row("A", 200.0), _perf_row("B", 0.0), _perf_row("C", None)]
+    perf._assign_pnl_contributions(rows)
+    # net pnl = +100 (A) - 100 (B) + None (C) = 0 -> all None
+    assert [r.pnl_contribution for r in rows] == [None, None, None]
+
+
 # ---------------------------------------------------------------------------
 # Command (main / _cmd_performance) end to end
 # ---------------------------------------------------------------------------
@@ -396,6 +413,11 @@ def test_main_two_holdings_totals(tmp_path, capsys):
     assert "TOTAL" in out
     assert "1,200.00" in out          # EUR holding market value
     assert "2,200.00" in out          # total market value (1200 + 1000)
+    # P&Lctr: EUR pnl +200, USD pnl +100, net +300 -> 66.7% / 33.3%, TOTAL 100%.
+    assert "P&Lctr" in out
+    assert "66.7%" in out
+    assert "33.3%" in out
+    assert "100.0%" in out             # TOTAL contribution
 
 
 def test_main_unvaluable_row_excluded_from_total_with_warning(tmp_path, capsys):

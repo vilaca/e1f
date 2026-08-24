@@ -364,6 +364,11 @@ class PerformanceRow:
     # forward from stale data rather than priced on the as-of day itself.
     price_date: str | None = None
     estimated: bool = False
+    # Share of the portfolio's total unrealized P&L this holding accounts for,
+    # as a percentage (assigned post-hoc once the total is known; see
+    # ``_assign_pnl_contributions``). None when the holding has no P&L or the
+    # total P&L is zero.
+    pnl_contribution: float | None = None
 
     @property
     def valuable(self) -> bool:
@@ -508,6 +513,21 @@ def sort_rows(
     return sorted(rows, key=lambda row: _sort_key(row, sort_by), reverse=reverse)
 
 
+def _assign_pnl_contributions(rows: list[PerformanceRow]) -> None:
+    """Set each row's share of the total unrealized P&L (mutates in place).
+
+    The denominator is the sum of every valuable holding's P&L — the same set
+    the ``TOTAL`` row aggregates — so contributions add up to 100%. When the
+    net P&L is zero the shares are undefined and left as None.
+    """
+    total = sum(row.pnl for row in rows if row.pnl is not None)
+    for row in rows:
+        if row.pnl is None or total == 0.0:
+            row.pnl_contribution = None
+        else:
+            row.pnl_contribution = 100.0 * row.pnl / total
+
+
 def _fmt_money(value: float | None, *, flag: bool = False) -> str:
     if value is None:
         return "n/a"
@@ -523,9 +543,10 @@ def _fmt_pct(value: float | None, *, scaled: bool = False, flag: bool = False) -
 
 _HEADER = (
     f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>7} {'XIRR':>7} {'TWR':>7} {'Vol':>7} {'MaxDD':>8} {'CAGR':>8}"
+    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'TWR':>7} {'Vol':>7} {'MaxDD':>8} "
+    f"{'CAGR':>8}"
 )
-_RULE_WIDTH = 14 + 28 + 13 * 3 + 7 * 4 + 8 + 8 + 10
+_RULE_WIDTH = 14 + 28 + 13 * 3 + 7 * 5 + 8 + 8 + 11
 
 
 def _format_row(row: PerformanceRow) -> str:
@@ -534,6 +555,7 @@ def _format_row(row: PerformanceRow) -> str:
         f"{row.isin:<14} {row.name:<28} "
         f"{_fmt_money(row.market_value, flag=row.estimated):>13} {_fmt_money(row.cost):>13} "
         f"{_fmt_money(row.pnl):>13} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
+        f"{_fmt_pct(row.pnl_contribution, scaled=True):>7} "
         f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.twr):>7} "
         f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>8} "
         f"{_fmt_pct(row.cagr, flag=flag):>8}"
@@ -573,7 +595,11 @@ def _cmd_performance(
         return 0
 
     excluded = [row.isin for row in rows if not row.valuable]
+    _assign_pnl_contributions(rows)
     rows = sort_rows(rows, sort_by=sort_by, reverse=reverse)
+
+    total = _total_row(rows, holdings, as_of, db_path)
+    total.pnl_contribution = None if not total.pnl else 100.0
 
     print(f"\nPortfolio performance as of {as_of} (EUR)")
     print(_HEADER)
@@ -581,7 +607,7 @@ def _cmd_performance(
     for row in rows:
         print(_format_row(row))
     print("-" * _RULE_WIDTH)
-    print(_format_row(_total_row(rows, holdings, as_of, db_path)))
+    print(_format_row(total))
 
     estimated = [row for row in rows if row.estimated]
     if any(row.short_history for row in rows):
@@ -626,6 +652,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Metrics (all EUR, base currency per ADR-0010):
+  P&Lctr this holding's share of the portfolio's total unrealized P&L (sums to 100%)
   XIRR   money-weighted annualized return (headline — accounts for when you paid in)
   TWR    time-weighted cumulative return (contribution timing neutralized)
   CAGR   annualized TWR
