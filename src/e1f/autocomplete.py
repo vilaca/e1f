@@ -1,5 +1,7 @@
 """Generate and serve shell completion for the e1f CLI."""
 
+from __future__ import annotations
+
 import argparse
 import os
 from collections.abc import Callable
