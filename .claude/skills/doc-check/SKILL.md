@@ -42,7 +42,9 @@ location, never copy the shape into prose. Find violations:
   actual `argparse` definitions in `src/e1f/config.py` (config subcommands),
   `src/e1f/fetch.py` (fetch flags), `src/e1f/transactions.py`
   (`list`, `trade-republic`, `tr`, `xtb`, `--config`, `--db`), `src/e1f/portfolio.py`
-  (`--db`, `--config`), and `src/e1f/autocomplete.py` (shell completion). Top-level
+  (`--db`, `--config`), `src/e1f/performance.py`
+  (`--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`), and
+  `src/e1f/autocomplete.py` (shell completion). Top-level
   commands are wired in `src/e1f/cli.py`
   (`COMMANDS`; frozen in `tests/test_contracts.py`). A README that re-enumerates
   subcommand names or default values is a candidate for drift.
@@ -77,12 +79,13 @@ and verify each still matches the code:
 - **Flag names** — grep each flag in the argparse definitions. At minimum:
   `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
   `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
-  `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`.
+  `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`;
+  `performance`: `--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`.
 - **Command list** — top-level (`cli.py`): `autocomplete`, `config`, `fetch`,
-  `validate`, `transactions`, `portfolio`. Nested: `config`: `add`, `list`,
-  `update`, `remove`, `trim` (in `config.py`); `transactions`: `list`,
+  `validate`, `transactions`, `portfolio`, `performance`. Nested: `config`: `add`,
+  `list`, `update`, `remove`, `trim` (in `config.py`); `transactions`: `list`,
   `trade-republic`, `tr`, `xtb` (in `transactions.py`). `autocomplete`,
-  `validate`, and `portfolio` have no nested subcommands.
+  `validate`, `portfolio`, and `performance` have no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments

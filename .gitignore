@@ -222,3 +222,10 @@ data/*.db
 
 # Local Claude Code settings (personal permission allowlists)
 .claude/settings.local.json
+
+# Local broker exports (personal account data — never commit)
+/*.xlsx
+/transactions_*.csv
+
+# Working handoff notes (local scaffolding, not part of the repo)
+/handoff-*.md

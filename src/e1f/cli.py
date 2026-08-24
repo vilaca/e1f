@@ -14,7 +14,15 @@ import argparse
 import sys
 from collections.abc import Callable
 
-from e1f import autocomplete, config, fetch, portfolio, transactions, validate
+from e1f import (
+    autocomplete,
+    config,
+    fetch,
+    performance,
+    portfolio,
+    transactions,
+    validate,
+)
 
 Command = Callable[[list[str]], int]
 
@@ -25,6 +33,7 @@ PARSER_FACTORIES = {
     "validate": validate._build_parser,
     "transactions": transactions._build_parser,
     "portfolio": portfolio._build_parser,
+    "performance": performance._build_parser,
 }
 
 
@@ -38,6 +47,7 @@ COMMANDS: dict[str, Command] = {
     "validate": validate.main,
     "transactions": transactions.main,
     "portfolio": portfolio.main,
+    "performance": performance.main,
 }
 
 
@@ -54,6 +64,7 @@ Commands:
   validate      Check config, metadata, and stored price data
   transactions  Ingest and list broker ETF trades in SQLite
   portfolio     Show ETF holdings and average cost from transactions
+  performance   Report market value, P&L, and return metrics per holding
 
 Run 'e1f <command> --help' for command-specific options.
         """,

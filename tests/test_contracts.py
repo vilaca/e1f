@@ -30,6 +30,7 @@ def test_cli_commands_surface():
         "validate",
         "transactions",
         "portfolio",
+        "performance",
     }
 
 

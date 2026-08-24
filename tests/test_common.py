@@ -24,6 +24,9 @@ from e1f.common import (
     enrich_fund_metadata,
     fund_currency_from_name,
     fx_rate_asof,
+    load_trades,
+    pinned_quote_currency,
+    position_timeline,
 )
 
 ISIN = 'AA0000000001'
@@ -482,3 +485,95 @@ def test_convert_to_eur_divides_by_quote_per_base(tmp_path):
 def test_convert_to_eur_refuses_pence(tmp_path):
     with pytest.raises(ValueError, match=r'GBX .*no EUR FX rule'):
         convert_to_eur(100.0, 'GBX', '2026-08-14', '/no/such.db')
+
+
+# ---------------------------------------------------------------------------
+# Trade loading / position timeline / pinned currency (ADR-0011)
+# ---------------------------------------------------------------------------
+
+def _tx_db(tmp_path, rows):
+    """Build a DB with a transactions table; rows are the canonical 9-tuples."""
+    db = tmp_path / 'tx.db'
+    with closing(sqlite3.connect(str(db))) as conn:
+        conn.execute(
+            'CREATE TABLE transactions (broker TEXT, transaction_id TEXT, '
+            'datetime TEXT, symbol TEXT, side TEXT, shares REAL, price REAL, '
+            'fee REAL, tax REAL, PRIMARY KEY (broker, transaction_id))'
+        )
+        conn.executemany(
+            'INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', rows
+        )
+        conn.commit()
+    return str(db)
+
+
+def test_load_trades_missing_table_is_empty(tmp_path):
+    db = tmp_path / 'empty.db'
+    with closing(sqlite3.connect(str(db))) as conn:
+        conn.execute('CREATE TABLE other (x INTEGER)')
+        conn.commit()
+    assert load_trades(str(db)) == []
+
+
+def test_load_trades_orders_by_datetime(tmp_path):
+    db = _tx_db(tmp_path, [
+        ('tr', 't2', '2026-02-01', 'ISIN1', 'BUY', 1.0, 100.0, 1.0, 0.0),
+        ('tr', 't1', '2026-01-01', 'ISIN1', 'BUY', 2.0, 90.0, 1.0, 0.0),
+    ])
+    dates = [row[1] for row in load_trades(db)]
+    assert dates == ['2026-01-01', '2026-02-01']
+
+
+def test_position_timeline_nets_across_brokers():
+    rows = [
+        ('tr', '2026-01-01', 'ISIN1', 'BUY', 1.0, 100.0, 1.0),
+        ('xtb', '2026-02-01', 'ISIN1', 'BUY', 2.0, 110.0, 0.0),
+    ]
+    timeline = position_timeline(rows)
+    assert list(timeline) == ['ISIN1']
+    events = timeline['ISIN1']
+    # Netted: shares accumulate across brokers, average-cost running total.
+    assert events[0].shares_held == 1.0
+    assert events[0].cash_flow == 101.0
+    assert events[1].shares_held == 3.0
+    assert events[1].cost_basis == pytest.approx(321.0)
+
+
+def test_position_timeline_sell_reduces_no_cash_flow():
+    rows = [
+        ('tr', '2026-01-01', 'ISIN1', 'BUY', 2.0, 100.0, 0.0),
+        ('tr', '2026-03-01', 'ISIN1', 'SELL', 1.0, 130.0, 0.0),
+    ]
+    events = position_timeline(rows)['ISIN1']
+    assert events[1].shares_held == 1.0
+    assert events[1].cost_basis == pytest.approx(100.0)  # average-cost reduction
+    assert events[1].cash_flow == 0.0  # buy-and-hold: sells are not modelled as inflows
+
+
+def test_position_timeline_skips_nonpositive_and_orphan_sell():
+    rows = [
+        ('tr', '2026-01-01', 'ISIN1', 'BUY', 0.0, 100.0, 0.0),   # zero-share buy skipped
+        ('tr', '2026-02-01', 'ISIN2', 'SELL', 1.0, 100.0, 0.0),  # sell with no position skipped
+        ('tr', '2026-02-02', 'ISIN3', 'DIVIDEND', 1.0, 5.0, 0.0),  # unknown side skipped
+    ]
+    assert position_timeline(rows) == {}
+
+
+def test_position_timeline_date_prefix_from_datetime():
+    rows = [('tr', '2026-01-01 09:30:00', 'ISIN1', 'BUY', 1.0, 100.0, 0.0)]
+    assert position_timeline(rows)['ISIN1'][0].date == '2026-01-01'
+
+
+def test_pinned_quote_currency_reads_sidecar(tmp_path):
+    meta = tmp_path / 'meta.yaml'
+    meta.write_text(yaml.dump({
+        'IE00B4L5Y983': {'currency': 'USD', 'symbol': 'X:LSE:USD', 'xid': '1'},
+    }))
+    assert pinned_quote_currency('IE00B4L5Y983', str(meta)) == 'USD'
+
+
+def test_pinned_quote_currency_absent_is_none(tmp_path):
+    meta = tmp_path / 'meta.yaml'
+    meta.write_text(yaml.dump({'fx_pairs': {'EURUSD': {'xid': '9'}}}))
+    assert pinned_quote_currency('IE00UNKNOWN000', str(meta)) is None
+    assert pinned_quote_currency('IE00B4L5Y983', str(tmp_path / 'missing.yaml')) is None
