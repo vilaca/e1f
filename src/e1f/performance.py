@@ -202,14 +202,23 @@ def _position_asof(events: list[PositionEvent], day: str) -> tuple[float, float]
     return shares, cost
 
 
-def _close_asof(series: HoldingSeries, day: str) -> float | None:
-    """Nearest-prior close on or before ``day``; None if the day precedes history."""
+def _price_index_asof(series: HoldingSeries, day: str) -> int:
+    """Index of the nearest-prior priced day on or before ``day`` (-1 if none)."""
     import bisect
 
-    index = bisect.bisect_right(series.price_dates, day) - 1
-    if index < 0:
-        return None
-    return series.price_closes[index]
+    return bisect.bisect_right(series.price_dates, day) - 1
+
+
+def _close_asof(series: HoldingSeries, day: str) -> float | None:
+    """Nearest-prior close on or before ``day``; None if the day precedes history."""
+    index = _price_index_asof(series, day)
+    return None if index < 0 else series.price_closes[index]
+
+
+def _price_date_asof(series: HoldingSeries, day: str) -> str | None:
+    """Date of the close ``_close_asof`` would use for ``day`` (None if none)."""
+    index = _price_index_asof(series, day)
+    return None if index < 0 else series.price_dates[index]
 
 
 def _value_on(series: HoldingSeries, day: str, db_path: str) -> float | None:
@@ -350,6 +359,11 @@ class PerformanceRow:
     max_drawdown: float | None
     cagr: float | None
     short_history: bool
+    # Date of the close backing ``market_value`` (nearest-prior <= as-of), and
+    # whether that date precedes the as-of date — i.e. the value is carried
+    # forward from stale data rather than priced on the as-of day itself.
+    price_date: str | None = None
+    estimated: bool = False
 
     @property
     def valuable(self) -> bool:
@@ -408,6 +422,9 @@ def _build_row(
         first_priced is not None and first_priced > first_day
     )
 
+    price_date = _price_date_asof(series, as_of) if market_value is not None else None
+    estimated = price_date is not None and price_date < as_of
+
     return PerformanceRow(
         isin=isin,
         name=_etf_name(config_path, isin),
@@ -419,6 +436,8 @@ def _build_row(
         max_drawdown=risk.max_drawdown,
         cagr=cagr,
         short_history=short_history,
+        price_date=price_date,
+        estimated=estimated,
     )
 
 
@@ -459,6 +478,7 @@ def _total_row(
         max_drawdown=risk.max_drawdown,
         cagr=cagr,
         short_history=any(row.short_history for row in included),
+        estimated=any(row.estimated for row in included),
     )
 
 
@@ -488,8 +508,10 @@ def sort_rows(
     return sorted(rows, key=lambda row: _sort_key(row, sort_by), reverse=reverse)
 
 
-def _fmt_money(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:,.2f}"
+def _fmt_money(value: float | None, *, flag: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:,.2f}" + ("~" if flag else "")
 
 
 def _fmt_pct(value: float | None, *, scaled: bool = False, flag: bool = False) -> str:
@@ -510,7 +532,7 @@ def _format_row(row: PerformanceRow) -> str:
     flag = row.short_history
     return (
         f"{row.isin:<14} {row.name:<28} "
-        f"{_fmt_money(row.market_value):>13} {_fmt_money(row.cost):>13} "
+        f"{_fmt_money(row.market_value, flag=row.estimated):>13} {_fmt_money(row.cost):>13} "
         f"{_fmt_money(row.pnl):>13} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
         f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.twr):>7} "
         f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>8} "
@@ -561,8 +583,33 @@ def _cmd_performance(
     print("-" * _RULE_WIDTH)
     print(_format_row(_total_row(rows, holdings, as_of, db_path)))
 
+    estimated = [row for row in rows if row.estimated]
     if any(row.short_history for row in rows):
         print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
+    if estimated:
+        dates = {row.price_date for row in estimated}
+        if len(dates) == 1:
+            price_date = dates.pop()
+            assert price_date is not None  # estimated rows always carry one
+            stale = _window_days(price_date, as_of)
+            scope = (
+                "all holdings"
+                if len(estimated) == len(rows)
+                else f"{len(estimated)} holdings"
+            )
+            print(
+                f"\n~ MktVal estimated: no close on {as_of} — freshest data is "
+                f"{price_date} ({stale}d stale) for {scope} (fetch to refresh)."
+            )
+        else:
+            print(
+                f"\n~ MktVal estimated from the latest price before {as_of} "
+                f"(no close on the as-of day — fetch to refresh):"
+            )
+            for row in sorted(estimated, key=lambda r: r.isin):
+                assert row.price_date is not None  # estimated rows always carry one
+                stale = _window_days(row.price_date, as_of)
+                print(f"    {row.isin}  {row.price_date} ({stale}d stale)")
     if excluded:
         print(
             f"\n⚠ excluded from TOTAL (no price/FX on or before {as_of}): "
@@ -587,6 +634,8 @@ Metrics (all EUR, base currency per ADR-0010):
 
 A holding with no price/FX on or before the as-of date shows n/a and is excluded
 from the TOTAL (with a warning). Vol/CAGR on under a year of history are flagged *.
+A MktVal carried forward from an earlier close (no price on the as-of day itself)
+is flagged ~, with the price date and how stale it is listed below the table.
 
 Examples:
   e1f performance

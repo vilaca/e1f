@@ -93,7 +93,10 @@ breakpoints so a mid-period contribution starts its own TWR sub-period.
 ### 5. Metric definitions
 
 - **Market value / cost / unrealized P&L** — terminal EUR value (as-of),
-  average-cost basis, and their difference (€ and %).
+  average-cost basis, and their difference (€ and %). When the terminal value
+  falls back to a nearest-prior close (§4) because the ISIN has no close on the
+  as-of day itself, the value is flagged `~` with its price date and staleness,
+  so a carried-forward number is never mistaken for an on-the-day valuation.
 - **XIRR** — solve `Σ cfᵢ / (1+r)^(tᵢ/365) = 0` (Actual/365 from the first cash
   flow) over dated contributions plus the terminal value. Newton–Raphson with a
   bisection fallback; non-convergence yields `n/a`, never a wrong number.

@@ -130,8 +130,10 @@ Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
 (`shares × close × FX`, cost basis from `transactions`) and reports XIRR
 (money-weighted, headline), TWR, volatility, max drawdown, and CAGR — per holding
 and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
-price/FX on or before that date shows `n/a` and drops out of the total, and
-annualized figures on under a year of history are flagged.
+price/FX on or before that date shows `n/a` and drops out of the total, a market
+value carried forward from an earlier close (no price on the as-of day itself) is
+flagged with its price date and staleness, and annualized figures on under a year
+of history are flagged.
 
 Reading the metrics (formulas in ADR-0011 §5):
 
