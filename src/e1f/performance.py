@@ -21,11 +21,14 @@ from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     ConfigManager,
+    HoldingSeries,
     PositionEvent,
-    convert_to_eur,
+    build_series as _build_series,
     load_trades,
-    pinned_quote_currency,
+    position_asof as _position_asof,
     position_timeline,
+    price_date_asof as _price_date_asof,
+    value_on as _value_on,
 )
 
 SORT_FIELDS = ("isin", "name", "value", "cost", "pnl", "xirr")
@@ -177,114 +180,14 @@ def annualize(twr: float | None, days: int) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# Valuation layer (reads prices + FX) and per-ISIN series assembly.
+# Per-ISIN series assembly on the shared valuation core (graduated to
+# ``common``, ADR-0013 decision 4). Breakpoint-day assembly and per-point series
+# stay here — they are performance's own return-metric machinery.
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class HoldingSeries:
-    """Everything needed to value and measure one held ISIN as of a date."""
-
-    isin: str
-    events: list[PositionEvent]  # filtered to date <= as_of, chronological
-    price_dates: list[str]       # sorted, <= as_of
-    price_closes: list[float]    # parallel to price_dates, native currency
-    currency: str | None
-
-
-def _position_asof(events: list[PositionEvent], day: str) -> tuple[float, float]:
-    """Shares held and average-cost basis after the last event on or before ``day``."""
-    shares, cost = 0.0, 0.0
-    for event in events:
-        if event.date > day:
-            break
-        shares, cost = event.shares_held, event.cost_basis
-    return shares, cost
-
-
-def _price_index_asof(series: HoldingSeries, day: str) -> int:
-    """Index of the nearest-prior priced day on or before ``day`` (-1 if none)."""
-    import bisect
-
-    return bisect.bisect_right(series.price_dates, day) - 1
-
-
-def _close_asof(series: HoldingSeries, day: str) -> float | None:
-    """Nearest-prior close on or before ``day``; None if the day precedes history."""
-    index = _price_index_asof(series, day)
-    return None if index < 0 else series.price_closes[index]
-
-
-def _price_date_asof(series: HoldingSeries, day: str) -> str | None:
-    """Date of the close ``_close_asof`` would use for ``day`` (None if none)."""
-    index = _price_index_asof(series, day)
-    return None if index < 0 else series.price_dates[index]
-
-
-def _value_on(series: HoldingSeries, day: str, db_path: str) -> float | None:
-    """EUR market value of the position on ``day``; None when it cannot be valued.
-
-    None means: no pinned currency, no price on or before the day, or no FX rate
-    on or before the day (``convert_to_eur`` raising) — every path that would
-    otherwise force a silent or wrong number.
-    """
-    if series.currency is None:
-        return None
-    shares, _cost = _position_asof(series.events, day)
-    if shares <= _SHARE_EPSILON:
-        return 0.0
-    close = _close_asof(series, day)
-    if close is None:
-        return None
-    try:
-        return convert_to_eur(shares * close, series.currency, day, db_path)
-    except ValueError:
-        return None
 
 
 def _contribution_on(events: list[PositionEvent], day: str) -> float:
     return sum(event.cash_flow for event in events if event.date == day)
-
-
-def _load_price_series(db_path: str, isin: str, as_of: str) -> tuple[list[str], list[float]]:
-    """Sorted ``(dates, closes)`` for an ISIN, deduped to one close per day, <= as_of."""
-    import sqlite3
-    from contextlib import closing
-
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
-        ).fetchone() is None:
-            return [], []
-        rows = conn.execute(
-            "SELECT date, close FROM prices WHERE isin = ? ORDER BY date", (isin,)
-        ).fetchall()
-
-    by_day: dict[str, float] = {}
-    for raw_date, close in rows:
-        day = str(raw_date)[:10]
-        if close is None or day > as_of:
-            continue
-        by_day[day] = float(close)  # last write wins if a day repeats
-    dates = sorted(by_day)
-    return dates, [by_day[d] for d in dates]
-
-
-def _build_series(
-    db_path: str,
-    isin: str,
-    events: list[PositionEvent],
-    as_of: str,
-    currency_meta_path: str,
-) -> HoldingSeries:
-    dates, closes = _load_price_series(db_path, isin, as_of)
-    return HoldingSeries(
-        isin=isin,
-        events=events,
-        price_dates=dates,
-        price_closes=closes,
-        currency=pinned_quote_currency(isin, currency_meta_path),
-    )
 
 
 def _breakpoint_days(series: HoldingSeries, first_day: str, as_of: str) -> list[str]:

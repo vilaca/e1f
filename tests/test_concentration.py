@@ -12,6 +12,7 @@ from e1f.common import (
     DIMENSION_SECTOR,
     DIMENSION_SECURITY,
     HoldingRow,
+    _limited_by,
     init_lookthrough_schema,
     insert_lookthrough_snapshot,
     latest_lookthrough_snapshot,
@@ -100,7 +101,7 @@ def test_contract_method_versions_are_declared():
 
 
 def test_limited_by_derives_from_requires_split():
-    lines = conc._limited_by(conc.SECURITY_CONTRACT)
+    lines = _limited_by(conc.SECURITY_CONTRACT)
     limited = next(line for line in lines if "Limited by:" in line)
     not_limited = next(line for line in lines if "Not limited by:" in line)
     assert "reported holding count" in limited
@@ -108,7 +109,7 @@ def test_limited_by_derives_from_requires_split():
 
 
 def test_limited_by_complete_metric_says_nothing():
-    lines = conc._limited_by(conc.SECTOR_CONTRACT)
+    lines = _limited_by(conc.SECTOR_CONTRACT)
     assert any("nothing (complete)" in line for line in lines)
 
 
@@ -243,11 +244,12 @@ def test_resolve_fund_unknown_and_ambiguous():
 # ---------------------------------------------------------------------------
 
 def _fund_with(isin, names):
+    """A ``(fund_id, snapshot)`` pair — the shape ``overlap_candidates`` consumes."""
     rows = [_security(n, 0.05, i + 1) for i, n in enumerate(names)]
     snap = type(
         "S", (), {"by_dimension": lambda self, d: rows if d == DIMENSION_SECURITY else []}
     )()
-    return conc.FundConcentration(isin, isin, snap, [], [], None, None)
+    return (isin, snap)
 
 
 def test_overlap_candidates_lists_shared_names_only():
@@ -263,8 +265,7 @@ def test_overlap_candidates_lists_shared_names_only():
 
 
 def test_overlap_candidates_skips_funds_without_snapshot():
-    lonely = conc.FundConcentration(VWCE, VWCE, None, [], [], None, None)
-    assert conc.overlap_candidates([lonely]) == []
+    assert conc.overlap_candidates([(VWCE, None)]) == []
 
 
 # ---------------------------------------------------------------------------

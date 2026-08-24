@@ -168,6 +168,13 @@ warning**, so the aggregate is never silently understated.
   different listing than the held ISIN.
 - No schema change: `transactions` (ADR-0004), `prices`, and `fx_rates`
   (ADR-0010) are untouched.
+- **Module shape amended by ADR-0013 (decision 4):** the point-in-time EUR
+  valuation core described here — `HoldingSeries`, the price-series loader,
+  `build_series` / `value_on` and their `*_asof` helpers — has graduated *down*
+  into `common` so `overlap` can reuse it without a command→command import
+  (ADR-0003). `performance` re-imports it and keeps its own return-metric
+  machinery (breakpoint-day assembly, XIRR/TWR, P&L rows); behaviour is
+  unchanged. See ADR-0013 for the rationale.
 
 ## Deferred (not in this ADR)
 

@@ -19,6 +19,7 @@ from e1f import (
     concentration,
     config,
     fetch,
+    overlap,
     performance,
     portfolio,
     transactions,
@@ -36,6 +37,7 @@ PARSER_FACTORIES = {
     "portfolio": portfolio._build_parser,
     "performance": performance._build_parser,
     "concentration": concentration._build_parser,
+    "overlap": overlap._build_parser,
 }
 
 
@@ -51,6 +53,7 @@ COMMANDS: dict[str, Command] = {
     "portfolio": portfolio.main,
     "performance": performance.main,
     "concentration": concentration.main,
+    "overlap": overlap.main,
 }
 
 
@@ -69,6 +72,7 @@ Commands:
   portfolio     Show ETF holdings and average cost from transactions
   performance   Report market value, P&L, and return metrics per holding
   concentration Within-fund concentration (security/sector/asset-class), coverage-aware
+  overlap       Cross-fund single-name exposure floor via reviewed canonical identity
 
 Run 'e1f <command> --help' for command-specific options.
         """,

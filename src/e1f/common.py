@@ -12,10 +12,11 @@ import os
 import re
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Self
@@ -754,6 +755,139 @@ def convert_to_eur(amount: float, quote: str, date: str, db_path: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Point-in-time EUR valuation core (ADR-0013 decision 4, graduated down from
+# ``performance``). ``performance`` re-imports these for its return metrics;
+# ``overlap`` consumes ``fund_eur_value`` for a held fund's ``Vf``. The move is a
+# clean downward relocation — every dependency (PositionEvent, convert_to_eur,
+# pinned_quote_currency, load_trades, position_timeline) already lives here.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HoldingSeries:
+    """Everything needed to value and measure one held ISIN as of a date."""
+
+    isin: str
+    events: list[PositionEvent]  # filtered to date <= as_of, chronological
+    price_dates: list[str]       # sorted, <= as_of
+    price_closes: list[float]    # parallel to price_dates, native currency
+    currency: str | None
+
+
+def position_asof(events: list[PositionEvent], day: str) -> tuple[float, float]:
+    """Shares held and average-cost basis after the last event on or before ``day``."""
+    shares, cost = 0.0, 0.0
+    for event in events:
+        if event.date > day:
+            break
+        shares, cost = event.shares_held, event.cost_basis
+    return shares, cost
+
+
+def price_index_asof(series: HoldingSeries, day: str) -> int:
+    """Index of the nearest-prior priced day on or before ``day`` (-1 if none)."""
+    import bisect
+
+    return bisect.bisect_right(series.price_dates, day) - 1
+
+
+def close_asof(series: HoldingSeries, day: str) -> float | None:
+    """Nearest-prior close on or before ``day``; None if the day precedes history."""
+    index = price_index_asof(series, day)
+    return None if index < 0 else series.price_closes[index]
+
+
+def price_date_asof(series: HoldingSeries, day: str) -> str | None:
+    """Date of the close ``close_asof`` would use for ``day`` (None if none)."""
+    index = price_index_asof(series, day)
+    return None if index < 0 else series.price_dates[index]
+
+
+def value_on(series: HoldingSeries, day: str, db_path: str) -> float | None:
+    """EUR market value of the position on ``day``; None when it cannot be valued.
+
+    None means: no pinned currency, no price on or before the day, or no FX rate
+    on or before the day (``convert_to_eur`` raising) — every path that would
+    otherwise force a silent or wrong number.
+    """
+    if series.currency is None:
+        return None
+    shares, _cost = position_asof(series.events, day)
+    if shares <= _SHARE_EPSILON:
+        return 0.0
+    close = close_asof(series, day)
+    if close is None:
+        return None
+    try:
+        return convert_to_eur(shares * close, series.currency, day, db_path)
+    except ValueError:
+        return None
+
+
+def load_price_series(db_path: str, isin: str, as_of: str) -> tuple[list[str], list[float]]:
+    """Sorted ``(dates, closes)`` for an ISIN, deduped to one close per day, <= as_of."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
+        ).fetchone() is None:
+            return [], []
+        rows = conn.execute(
+            "SELECT date, close FROM prices WHERE isin = ? ORDER BY date", (isin,)
+        ).fetchall()
+
+    by_day: dict[str, float] = {}
+    for raw_date, close in rows:
+        day = str(raw_date)[:10]
+        if close is None or day > as_of:
+            continue
+        by_day[day] = float(close)  # last write wins if a day repeats
+    dates = sorted(by_day)
+    return dates, [by_day[d] for d in dates]
+
+
+def build_series(
+    db_path: str,
+    isin: str,
+    events: list[PositionEvent],
+    as_of: str,
+    currency_meta_path: str,
+) -> HoldingSeries:
+    """A fund's price/position series as of ``as_of``, ready to value."""
+    dates, closes = load_price_series(db_path, isin, as_of)
+    return HoldingSeries(
+        isin=isin,
+        events=events,
+        price_dates=dates,
+        price_closes=closes,
+        currency=pinned_quote_currency(isin, currency_meta_path),
+    )
+
+
+def fund_eur_value(
+    isin: str,
+    as_of: str,
+    db_path: str,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> float | None:
+    """EUR value of a held fund on ``as_of`` (``Vf`` for ADR-0013's overlap floor).
+
+    Wraps ``load_trades → position_timeline → build_series → value_on``. Returns
+    ``None`` when the fund cannot be valued — never held on/before ``as_of``, or
+    ``value_on``'s own None (no pinned currency, no price, or no FX). A
+    ``None``-valued fund is excluded from the overlap floor and disclosed
+    (ADR-0013 decision 4), never treated as €0.
+    """
+    events = [
+        event
+        for event in position_timeline(load_trades(db_path)).get(isin, [])
+        if event.date <= as_of
+    ]
+    if not events:
+        return None
+    return value_on(build_series(db_path, isin, events, as_of, currency_meta_path), as_of, db_path)
+
+
+# ---------------------------------------------------------------------------
 # Look-through snapshots (ADR-0012): immutable, append-only observations of a
 # fund's composition, split header (``holdings_snapshot``) / children
 # (``holding``). Shared here so ``fetch`` can populate them and ``concentration``
@@ -998,3 +1132,161 @@ def latest_lookthrough_snapshot(db_path: str, fund_id: str) -> LookthroughSnapsh
         snapshots = [_load_snapshot(conn, header) for header in headers]
 
     return max(snapshots, key=lambda s: (s.tier_rank, s.as_of, s.id))
+
+
+# ---------------------------------------------------------------------------
+# Cross-fund overlap primitives (ADR-0013 decision 8), graduated down from
+# ``concentration`` so both ``concentration`` (its unresolved signal) and
+# ``overlap`` (its worklist + floor) consume one home. The Tier-1 co-occurrence
+# scan is snapshot-only (no command-layer type dependency).
+# ---------------------------------------------------------------------------
+
+
+def overlap_candidates(
+    funds: Iterable[tuple[str, LookthroughSnapshot | None]],
+) -> list[tuple[str, int]]:
+    """Raw security names co-occurring in ≥2 funds' top holdings — the *unresolved*
+    signal (ADR-0012 Tier-1 seed / ADR-0013 decision 3).
+
+    ``funds`` is ``(fund_id, snapshot)`` pairs. Grouped by normalized name (a
+    hint), reported with a representative raw name and the fund count. Never
+    summed into an exposure figure (ADR-0012 decision 2): its only job is to point
+    at where v1b's reviewed canonical resolution would pay off.
+    """
+    by_norm: dict[str, tuple[str, set[str]]] = {}
+    for fund_id, snapshot in funds:
+        if snapshot is None:
+            continue
+        seen_here: set[str] = set()
+        for row in snapshot.by_dimension(DIMENSION_SECURITY):
+            norm = row.normalized_name or normalize_security_name(row.raw_name)
+            if norm in seen_here:
+                continue
+            seen_here.add(norm)
+            display, funds_seen = by_norm.get(norm, (row.raw_name, set()))
+            funds_seen.add(fund_id)
+            by_norm[norm] = (display, funds_seen)
+
+    candidates = [
+        (display, len(funds_seen))
+        for display, funds_seen in by_norm.values()
+        if len(funds_seen) >= 2
+    ]
+    candidates.sort(key=lambda c: (-c[1], c[0].lower()))
+    return candidates
+
+
+def load_security_aliases(db_path: str) -> dict[str, tuple[str, str]]:
+    """``raw_name -> (canonical_key, canonical_name)`` from ``security_alias``.
+
+    Only rows carrying a ``canonical_key`` (a resolved identity) are returned;
+    ``canonical_name`` falls back to the ``raw_name`` when unset. Empty when the
+    table is absent (``fetch`` never ran) or holds no resolutions yet.
+    """
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_alias'"
+        ).fetchone() is None:
+            return {}
+        rows = conn.execute(
+            "SELECT raw_name, canonical_key, canonical_name FROM security_alias "
+            "WHERE canonical_key IS NOT NULL AND canonical_key != ''"
+        ).fetchall()
+    return {
+        str(raw): (str(key), str(name) if name else str(raw))
+        for raw, key, name in rows
+    }
+
+
+def upsert_security_alias(
+    db_path: str,
+    raw_name: str,
+    canonical_key: str,
+    *,
+    canonical_name: str | None = None,
+    reviewed_at: str | None = None,
+) -> str:
+    """Idempotent upsert of one reviewed identity into ``security_alias``.
+
+    ``reviewed_at`` is stamped automatically (now, UTC) because running the write
+    *is* the human review act (ADR-0012 decision 5 / ADR-0013 decision 3);
+    re-resolving bumps it and updates the key. ``canonical_name`` defaults to the
+    ``raw_name``. Returns the ``reviewed_at`` stamp actually written.
+    """
+    reviewed_at = reviewed_at or datetime.now(UTC).isoformat()
+    canonical_name = canonical_name or raw_name
+    with closing(sqlite3.connect(db_path)) as conn:
+        init_lookthrough_schema(conn)
+        conn.execute(
+            "INSERT INTO security_alias (raw_name, canonical_name, canonical_key, reviewed_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(raw_name) DO UPDATE SET "
+            "canonical_name = excluded.canonical_name, "
+            "canonical_key = excluded.canonical_key, "
+            "reviewed_at = excluded.reviewed_at",
+            (raw_name, canonical_name, canonical_key, reviewed_at),
+        )
+        conn.commit()
+    return reviewed_at
+
+
+# ---------------------------------------------------------------------------
+# Provenance vocabulary (ADR-0013 decision 8), graduated down from
+# ``concentration``. The four-state status, the metric-contract shape, and the
+# ``--explain`` rendering helpers live here so ``concentration`` and ``overlap``
+# share one home; per-metric contract *instances* stay in the command modules.
+# This relocates the mechanism only — it does not retrofit ``performance`` /
+# ``portfolio`` onto the model (that generalization is a future ADR, 0014+).
+# ---------------------------------------------------------------------------
+
+
+class Status(StrEnum):
+    """Four-state per-metric status — the single status vocabulary (ADR-0012 decision 7)."""
+
+    CALCULATED = "CALCULATED"    # enough evidence for a point value
+    BOUNDED = "BOUNDED"          # no exact value, but defensible math bounds exist
+    UNAVAILABLE = "UNAVAILABLE"  # not enough reliable info for even a useful bound
+    UNRESOLVED = "UNRESOLVED"    # identity is the blocker, not coverage (v1b)
+
+
+@dataclass(frozen=True)
+class MetricContract:
+    """A metric's data requirements — drives method id + limited-by / not-limited-by."""
+
+    method_version: str
+    requires: tuple[str, ...]          # what, if improved, would tighten/unblock it
+    does_not_require: tuple[str, ...]  # what would not help (or is refused)
+    supports: tuple[str, ...]          # what the metric enables
+    limitations: tuple[str, ...]       # standing caveats that travel with the figure
+
+
+def _limited_by(contract: MetricContract) -> list[str]:
+    limited = "; ".join(contract.requires) if contract.requires else "nothing (complete)"
+    not_limited = "; ".join(contract.does_not_require) if contract.does_not_require else "—"
+    lines = [f"    Limited by:     {limited}", f"    Not limited by: {not_limited}"]
+    if contract.supports:
+        lines.append(f"    Supports:       {'; '.join(contract.supports)}")
+    if contract.limitations:
+        lines.append(f"    Limitations:    {'; '.join(contract.limitations)}")
+    return lines
+
+
+def _explain_metric(
+    title: str, status: Status, result: str, inputs: str, method: str,
+    contract: MetricContract,
+) -> list[str]:
+    return [
+        f"  {title}",
+        f"    Status:         {status.value}   (method = {contract.method_version})",
+        f"    Result:         {result}",
+        f"    Inputs:         {inputs}",
+        f"    Method:         {method}",
+        *_limited_by(contract),
+    ]
+
+
+def _snapshot_provenance(snapshot: LookthroughSnapshot) -> str:
+    return (
+        f"snapshot #{snapshot.id}, source {snapshot.source}/{snapshot.tier}, "
+        f"as_of {snapshot.as_of}, retrieved {snapshot.retrieved_at}"
+    )

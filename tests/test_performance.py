@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from e1f import performance as perf
-from e1f.common import PositionEvent, load_trades, position_timeline
+from e1f.common import PositionEvent, close_asof, load_trades, position_timeline
 from e1f.performance import (
     HoldingSeries,
     annualize,
@@ -150,9 +150,9 @@ def test_close_asof_nearest_prior():
     series = HoldingSeries(
         "I", [], ["2024-01-05", "2024-06-01"], [100.0, 120.0], "EUR"
     )
-    assert perf._close_asof(series, "2024-01-04") is None
-    assert perf._close_asof(series, "2024-03-01") == 100.0
-    assert perf._close_asof(series, "2024-06-01") == 120.0
+    assert close_asof(series, "2024-01-04") is None
+    assert close_asof(series, "2024-03-01") == 100.0
+    assert close_asof(series, "2024-06-01") == 120.0
 
 
 def _fx_db(tmp_path, rows=()):
