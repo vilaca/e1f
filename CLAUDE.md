@@ -27,6 +27,7 @@ src/e1f/
   concentration.py — concentration command: coverage-aware within-fund concentration
   overlap.py   — overlap command: cross-fund single-name exposure floor via canonical identity
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
+  rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
   common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion, position timeline
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
@@ -56,6 +57,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0013` — `overlap` command: cross-fund single-name exposure floor (`≥`) via reviewed `canonical_key`; valuation core + provenance vocabulary + `overlap_candidates` graduate into `common`
 - `ADR-0014` — provenance generalization: `performance` / `portfolio` speak the shared `Status` / `MetricContract` / `--explain` vocabulary, opt-in via `--show-status` / `--explain` (default output unchanged)
 - `ADR-0015` — `correlation` command: return co-movement redundancy + hierarchical clustering, pairwise-overlap alignment, EUR returns; scipy dependency
+- `ADR-0016` — `rebalance` command: minimum-cash buy-only target rebalance (dilute, never sell) + N-month DCA plan; targets are percents of the whole book with a pro-rata residual; target recap + feasibility verdict
 
 ## Skills
 

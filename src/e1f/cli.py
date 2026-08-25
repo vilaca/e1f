@@ -23,6 +23,7 @@ from e1f import (
     overlap,
     performance,
     portfolio,
+    rebalance,
     transactions,
     validate,
 )
@@ -40,6 +41,7 @@ PARSER_FACTORIES = {
     "concentration": concentration._build_parser,
     "overlap": overlap._build_parser,
     "correlation": correlation._build_parser,
+    "rebalance": rebalance._build_parser,
 }
 
 
@@ -57,6 +59,7 @@ COMMANDS: dict[str, Command] = {
     "concentration": concentration.main,
     "overlap": overlap.main,
     "correlation": correlation.main,
+    "rebalance": rebalance.main,
 }
 
 
@@ -77,6 +80,7 @@ Commands:
   concentration Within-fund concentration (security/sector/asset-class), coverage-aware
   overlap       Cross-fund single-name exposure floor via reviewed canonical identity
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
+  rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
 
 Run 'e1f <command> --help' for command-specific options.
         """,
