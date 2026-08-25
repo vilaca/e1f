@@ -21,7 +21,9 @@ from contextlib import closing
 
 import yaml
 
-from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager
+from e1f.common import (
+    BASE_CURRENCY, DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager,
+)
 
 
 def _db_has_prices(db_path: str) -> bool:
@@ -230,11 +232,67 @@ def main(argv: list[str] | None = None) -> int:
                 del cm.config['etfs'][isin]
             cm._save_config()
 
+        needed_quotes = {
+            v['currency'] for k, v in curr_meta.items()
+            if k in kept and isinstance(v, dict)
+            and v.get('currency') and v['currency'] != BASE_CURRENCY
+        }
+
         if to_remove_db:
             print(f"Removing from DB:                {', '.join(to_remove_db)}")
             with closing(sqlite3.connect(args.db)) as conn:
                 conn.executemany("DELETE FROM prices WHERE isin = ?",
                                  [(isin,) for isin in to_remove_db])
+                conn.commit()
+
+        with closing(sqlite3.connect(args.db)) as conn:
+            has_snap = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='holdings_snapshot'"
+            ).fetchone()
+            if has_snap and to_remove_db:
+                snap_ids = [
+                    r[0] for isin in to_remove_db
+                    for r in conn.execute(
+                        "SELECT id FROM holdings_snapshot WHERE fund_id = ?", (isin,)
+                    )
+                ]
+                if snap_ids:
+                    print(f"Removing from holdings_snapshot: {', '.join(to_remove_db)}")
+                    conn.executemany("DELETE FROM holding WHERE snapshot_id = ?",
+                                     [(sid,) for sid in snap_ids])
+                    conn.executemany("DELETE FROM holdings_snapshot WHERE id = ?",
+                                     [(sid,) for sid in snap_ids])
+                    conn.commit()
+
+        with closing(sqlite3.connect(args.db)) as conn:
+            has_alias = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_alias'"
+            ).fetchone()
+            has_holding = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='holding'"
+            ).fetchone()
+            if has_alias and has_holding:
+                n = conn.execute(
+                    "DELETE FROM security_alias WHERE raw_name NOT IN "
+                    "(SELECT DISTINCT raw_name FROM holding)"
+                ).rowcount
+                if n:
+                    print(f"Removing from security_alias:    {n} orphaned alias(es)")
+                    conn.commit()
+
+        with closing(sqlite3.connect(args.db)) as conn:
+            has_fx = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fx_rates'"
+            ).fetchone()
+            fx_pairs = (
+                {(r[0], r[1]) for r in conn.execute("SELECT DISTINCT base, quote FROM fx_rates")}
+                if has_fx else set()
+            )
+            stale_fx = sorted(fx_pairs - {(BASE_CURRENCY, q) for q in needed_quotes})
+            if stale_fx:
+                pairs_str = ', '.join(f"{b}{q}" for b, q in stale_fx)
+                print(f"Removing from fx_rates:          {pairs_str}")
+                conn.executemany("DELETE FROM fx_rates WHERE base = ? AND quote = ?", stale_fx)
                 conn.commit()
 
         if to_remove_curr:
