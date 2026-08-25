@@ -481,11 +481,11 @@ def _fmt_pct(value: float | None, *, scaled: bool = False, flag: bool = False) -
 
 
 _HEADER = (
-    f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'TWR':>7} {'Vol':>7} {'MaxDD':>8} "
+    f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>10} {'Cost€':>10} {'P&L€':>10} "
+    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'TWR':>7} {'Vol':>7} {'MaxDD':>7} "
     f"{'CAGR':>8}"
 )
-_RULE_WIDTH = 14 + 28 + 13 * 3 + 7 * 5 + 8 + 8 + 11
+_RULE_WIDTH = 14 + 28 + 10 * 3 + 7 * 5 + 7 + 8 + 11
 _STATUS_COL = 11
 
 
@@ -506,11 +506,11 @@ def _format_row(row: PerformanceRow, *, show_status: bool = False) -> str:
     flag = row.short_history
     base = (
         f"{row.isin:<14} {row.name:<28} "
-        f"{_fmt_money(row.market_value, flag=row.estimated):>13} {_fmt_money(row.cost):>13} "
-        f"{_fmt_money(row.pnl):>13} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
+        f"{_fmt_money(row.market_value, flag=row.estimated):>10} {_fmt_money(row.cost):>10} "
+        f"{_fmt_money(row.pnl):>10} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
         f"{_fmt_pct(row.pnl_contribution, scaled=True):>7} "
         f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.twr):>7} "
-        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>8} "
+        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>7} "
         f"{_fmt_pct(row.cagr, flag=flag):>8}"
     )
     if show_status:
