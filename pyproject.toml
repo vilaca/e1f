@@ -12,6 +12,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "numpy",
     "pandas",
+    "scipy",
     "PyYAML",
     "requests",
     "yfinance",
@@ -31,6 +32,9 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "UP", "SIM", "PLR", "BLE", "DTZ", "RUF"]
+# Intentional mathematical notation in the correlation command's report and
+# docstrings: ρ (Pearson correlation), × (pair separator), − (minus in formulae).
+allowed-confusables = ["ρ", "×", "−"]
 ignore = [
     "PLR0911",  # too-many-return-statements in config.main (subcommand dispatch)
     "PLR0912",  # too-many-branches in config.main
@@ -44,7 +48,7 @@ ignore = [
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "ftgo.*"]
+module = ["yfinance.*", "ftgo.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.importlinter]
@@ -55,7 +59,7 @@ name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.concentration | e1f.overlap",
+    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.concentration | e1f.overlap | e1f.correlation",
     "e1f.common",
 ]
 

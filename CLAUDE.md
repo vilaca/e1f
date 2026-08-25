@@ -24,6 +24,9 @@ src/e1f/
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
   performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics
+  concentration.py — concentration command: coverage-aware within-fund concentration
+  overlap.py   — overlap command: cross-fund single-name exposure floor via canonical identity
+  correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion, position timeline
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
@@ -51,6 +54,8 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0011` — `performance` command: XIRR-first return metrics, EUR valuation, net-across-brokers holdings
 - `ADR-0012` — `concentration` command: coverage-aware within-fund concentration, rank-constrained HHI bounds, `overlap` (v1b) deferred
 - `ADR-0013` — `overlap` command: cross-fund single-name exposure floor (`≥`) via reviewed `canonical_key`; valuation core + provenance vocabulary + `overlap_candidates` graduate into `common`
+- `ADR-0014` — provenance generalization across commands (PLACEHOLDER, not yet decided)
+- `ADR-0015` — `correlation` command: return co-movement redundancy + hierarchical clustering, pairwise-overlap alignment, EUR returns; scipy dependency
 
 ## Skills
 

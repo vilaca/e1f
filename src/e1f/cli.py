@@ -18,6 +18,7 @@ from e1f import (
     autocomplete,
     concentration,
     config,
+    correlation,
     fetch,
     overlap,
     performance,
@@ -38,6 +39,7 @@ PARSER_FACTORIES = {
     "performance": performance._build_parser,
     "concentration": concentration._build_parser,
     "overlap": overlap._build_parser,
+    "correlation": correlation._build_parser,
 }
 
 
@@ -54,6 +56,7 @@ COMMANDS: dict[str, Command] = {
     "performance": performance.main,
     "concentration": concentration.main,
     "overlap": overlap.main,
+    "correlation": correlation.main,
 }
 
 
@@ -73,6 +76,7 @@ Commands:
   performance   Report market value, P&L, and return metrics per holding
   concentration Within-fund concentration (security/sector/asset-class), coverage-aware
   overlap       Cross-fund single-name exposure floor via reviewed canonical identity
+  correlation   Return co-movement redundancy: correlated-pair flags + clustering
 
 Run 'e1f <command> --help' for command-specific options.
         """,

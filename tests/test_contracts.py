@@ -33,6 +33,7 @@ def test_cli_commands_surface():
         "performance",
         "concentration",
         "overlap",
+        "correlation",
     }
 
 

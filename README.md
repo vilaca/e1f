@@ -24,7 +24,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes eight commands around a shared config/DB:
+The tool exposes ten commands around a shared config/DB:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
@@ -35,6 +35,7 @@ The tool exposes eight commands around a shared config/DB:
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
 8. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
 9. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
+10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -79,6 +80,12 @@ e1f overlap candidates               # resolution worklist (co-occurrence seed +
 e1f overlap resolve "Apple Inc." apple-ord   # assert a reviewed identity
 e1f overlap                          # the ≥ floor report over resolved names in ≥2 funds
 e1f overlap --explain                # per-security Vf×w reconstruction
+
+# 7. Measure return co-movement redundancy (a separate axis from overlap)
+e1f correlation                      # redundant pairs (ρ, combined weight) + clusters
+e1f correlation --explain            # reconstruct each flagged pair from source
+e1f correlation --explain IE00B4L5Y983 IE00BK5BQT80   # reconstruct one named pair
+e1f correlation --rho-flag 0.95 --weight-flag 0.10   # tune the flag thresholds
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -87,7 +94,7 @@ the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
 `e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f validate --help`.
+`e1f overlap --help`, `e1f correlation --help`, `e1f validate --help`.
 
 ## Price sources
 
@@ -201,6 +208,28 @@ single-name overlap is not asserted — matching names surface only as an
 deferred `overlap` command). Look-through is stored in `holdings_snapshot`,
 `holding`, and `security_alias` tables (immutable, append-only; schema in
 `src/e1f/common.py`).
+
+Correlation: `ADR/ADR-0015_correlation_command.md` (output in
+`src/e1f/correlation.py`). `e1f correlation` measures return **co-movement** — the
+statistical axis of redundancy that look-through data cannot see. Where `overlap`
+asks what the funds *hold* in common, `correlation` asks how they *move* in common;
+the two stay separate commands so statistical co-movement is never mistaken for
+established shared holdings. Each fund pair is correlated over its own shared window
+(an exact-date inner join of the two funds' EUR daily returns), so a young fund
+neither drops out nor truncates every other pair; a pair below the minimum overlap
+(default 60 aligned observations), or with a degenerate sample, is reported
+UNAVAILABLE with an explicit reason and its window and `n`, never as a point
+estimate. It reports (a) redundant pairs — correlation `≥ 0.90` *and* combined EUR
+weight `≥ 20%` (both tunable), sorted by `ρ × weight` — and (b) a hierarchical
+clustering (average linkage, cut at `ρ ≈ 0.80`) run only over funds with a valid
+distance to *every* peer, so no fabricated distance ever reaches the linkage and one
+sparse fund can shrink the clustered set. `--explain` reconstructs each flagged pair
+from source data (a bounded preview of the aligned return vectors plus a digest),
+never a persisted result; naming two held ISINs (`--explain ISIN_A ISIN_B`)
+reconstructs just that pair on demand, at any status and regardless of the flag
+thresholds. Each ISIN in the report is annotated with its fund name from the
+universe config (`--config`). This command adds a runtime dependency on scipy (used only
+for the clustering step; Pearson ρ is computed in pure NumPy).
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring
