@@ -28,10 +28,12 @@ src/e1f/
   overlap.py   — overlap command: cross-fund single-name exposure floor via canonical identity
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
-  common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion, position timeline
+  scenario.py  — scenario command: CRUD for named ISIN:pct baskets (one YAML, many scenarios)
+  common.py    — shared primitives: defaults, ETFDefinition, retry logic, FX conversion, position timeline, rebalance plan core
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
   currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs (ADR-0002, ADR-0010)
+  scenarios.yaml         — named ISIN:pct baskets for rebalance/correlation (ADR-0017, gitignored)
   e1f.db                 — SQLite DB: prices, fx_rates, transactions (gitignored)
 ADR/           — decision log; one ADR per decision, no gaps in numbering
 tests/         — pytest suite; 90% coverage floor enforced
@@ -58,6 +60,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0014` — provenance generalization: `performance` / `portfolio` speak the shared `Status` / `MetricContract` / `--explain` vocabulary, opt-in via `--show-status` / `--explain` (default output unchanged)
 - `ADR-0015` — `correlation` command: return co-movement redundancy + hierarchical clustering, pairwise-overlap alignment, EUR returns; scipy dependency
 - `ADR-0016` — `rebalance` command: minimum-cash buy-only target rebalance (dilute, never sell) + N-month DCA plan; targets are percents of the whole book with a pro-rata residual; target recap + feasibility verdict
+- `ADR-0017` — `scenario` command: named ISIN:pct baskets in one gitignored YAML; CRUD-only, consumed by `rebalance --scenario` and `correlation --scenario` (the latter correlates the *post-rebalance* portfolio); rebalance plan core graduates into `common`
 
 ## Skills
 

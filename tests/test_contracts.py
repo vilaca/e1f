@@ -35,6 +35,7 @@ def test_cli_commands_surface():
         "overlap",
         "correlation",
         "rebalance",
+        "scenario",
     }
 
 

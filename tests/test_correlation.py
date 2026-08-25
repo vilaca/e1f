@@ -776,3 +776,73 @@ def test_preview_short_vectors_shown_whole_long_vectors_elided():
 def test_cli_type_parsers_accept_in_range_values():
     assert correlation._int_at_least(2)("60") == 60
     assert correlation._bounded_float(-1.0, 1.0)("0.5") == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# --scenario: correlate the POST-rebalance portfolio a scenario implies (ADR-0017)
+# ---------------------------------------------------------------------------
+
+
+def _scenario_file(tmp_path, name, targets):
+    from e1f.common import Scenario, save_scenario
+    path = str(tmp_path / "s.yaml")
+    save_scenario(Scenario(name=name, targets=targets), path)
+    return path
+
+
+def test_scenario_correlates_post_rebalance_universe(tmp_path, capsys):
+    # A, B held with identical returns; targets sum to 100% (no residual) →
+    # post-rebalance universe is exactly {A, B}, both flagged at ρ=1.
+    returns = _pattern(70, 0)
+    db, meta = _seed_funds(tmp_path, {A: returns, B: returns})
+    sf = _scenario_file(tmp_path, "core", {A: 60.0, B: 40.0})
+    code = correlation.main([
+        "--db", db, "--currency-meta", meta, "--as-of", "2024-12-31",
+        "--scenario", "core", "--scenarios-file", sf,
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "post-rebalance weights, 2 funds" in out
+    assert "Correlation universe: 2 funds" in out
+    assert "ρ 1.00" in out
+
+
+def test_scenario_includes_diluted_residual_funds(tmp_path, capsys):
+    # A, B, C held; only A targeted (60%) → B and C absorb the 40% residual, so
+    # the post-rebalance portfolio (and correlation universe) is all three.
+    returns = _pattern(70, 0)
+    db, meta = _seed_funds(tmp_path, {A: returns, B: returns, C: returns})
+    sf = _scenario_file(tmp_path, "core", {A: 60.0})
+    code = correlation.main([
+        "--db", db, "--currency-meta", meta, "--as-of", "2024-12-31",
+        "--scenario", "core", "--scenarios-file", sf,
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "post-rebalance weights, 3 funds" in out
+
+
+def test_scenario_infeasible_rebalance_is_unavailable(tmp_path, capsys):
+    # A is the only held fund; targeting A:70 leaves a 30% residual with no
+    # untargeted fund to absorb it → rebalance infeasible → correlation UNAVAILABLE.
+    returns = _pattern(70, 0)
+    db, meta = _seed_funds(tmp_path, {A: returns})
+    sf = _scenario_file(tmp_path, "core", {A: 70.0})
+    code = correlation.main([
+        "--db", db, "--currency-meta", meta, "--as-of", "2024-12-31",
+        "--scenario", "core", "--scenarios-file", sf,
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UNAVAILABLE" in out and "infeasible" in out
+
+
+def test_scenario_missing_name_errors(tmp_path):
+    returns = _pattern(70, 0)
+    db, meta = _seed_funds(tmp_path, {A: returns})
+    sf = _scenario_file(tmp_path, "core", {A: 100.0})
+    with pytest.raises(SystemExit):
+        correlation.main([
+            "--db", db, "--currency-meta", meta,
+            "--scenario", "ghost", "--scenarios-file", sf,
+        ])

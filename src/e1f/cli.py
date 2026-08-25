@@ -24,6 +24,7 @@ from e1f import (
     performance,
     portfolio,
     rebalance,
+    scenario,
     transactions,
     validate,
 )
@@ -42,6 +43,7 @@ PARSER_FACTORIES = {
     "overlap": overlap._build_parser,
     "correlation": correlation._build_parser,
     "rebalance": rebalance._build_parser,
+    "scenario": scenario._build_parser,
 }
 
 
@@ -60,6 +62,7 @@ COMMANDS: dict[str, Command] = {
     "overlap": overlap.main,
     "correlation": correlation.main,
     "rebalance": rebalance.main,
+    "scenario": scenario.main,
 }
 
 
@@ -81,6 +84,7 @@ Commands:
   overlap       Cross-fund single-name exposure floor via reviewed canonical identity
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
+  scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)
 
 Run 'e1f <command> --help' for command-specific options.
         """,

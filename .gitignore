@@ -220,6 +220,9 @@ __marimo__/
 # Local price database
 data/*.db
 
+# Local rebalance/correlation scenarios (personal target allocations — never commit)
+data/scenarios.yaml
+
 # Local Claude Code settings (personal permission allowlists)
 .claude/settings.local.json
 
