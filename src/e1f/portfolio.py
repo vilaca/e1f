@@ -15,11 +15,13 @@ from typing import Any
 
 from e1f.common import (
     DEFAULT_CONFIG,
+    DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     ConfigManager,
     MetricContract,
     Status,
     _explain_metric,
+    pinned_quote_currency,
 )
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
@@ -143,15 +145,22 @@ def _etf_name(config_path: str, symbol: str) -> str:
     return str(data.get("name", ""))[:40]
 
 
-def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str, str, float | None]:
+def _fund_meta(
+    config_path: str, symbol: str, currency_meta_path: str = DEFAULT_CURRENCY_META
+) -> tuple[str, str, str, str, float | None]:
     data = ConfigManager(config_path).get(symbol) or {}
     asset_class = str(data.get("asset_class") or "")[:12]
-    fund_currency = str(data.get("fund_currency") or "")
+    fund_ccy = str(data.get("fund_currency") or "")
+    trade_ccy = pinned_quote_currency(symbol, currency_meta_path) or fund_ccy
+    ccy = (
+        f"{trade_ccy}({fund_ccy})" if trade_ccy and fund_ccy and trade_ccy != fund_ccy
+        else (trade_ccy or fund_ccy)
+    )
     distribution = str(data.get("distribution") or "")
     ter = data.get("ter")
     ter_float = float(ter) if isinstance(ter, (int, float)) else None
     ter_text = f"{ter_float:.2f}%" if ter_float is not None else ""
-    return asset_class, fund_currency, distribution, ter_text, ter_float
+    return asset_class, ccy, distribution, ter_text, ter_float
 
 
 def yearly_fee_est(ter_float: float | None, total_paid: float) -> float | None:
@@ -172,7 +181,7 @@ def _distribution_label(distribution: str) -> str:
 _BROKER_LABELS = {"trade_republic": "tr"}
 _ASSET_CLASS_LABELS = {"Real Estate": "REITs", "Equity": "Eqty"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 140  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 144  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -272,6 +281,7 @@ def _cmd_portfolio(
     db_path: str,
     config_path: str,
     *,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
     sort_by: str = "broker",
     reverse: bool = False,
     show_cost_basis: bool = False,
@@ -298,7 +308,7 @@ def _cmd_portfolio(
 
     header = (
         f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'Class':<6} "
-        f"{'CCY':<4} {'Dist':<4} {'TER':>6} {'Weight':>7}"
+        f"{'CCY':<8} {'Dist':<4} {'TER':>6} {'Weight':>7}"
     )
     if show_cost_basis:
         header += f" {'Units':>10} {'Avg paid':>10} {'Last px':>8} {'Total':>8} {'Fee/yr':>8}"
@@ -314,12 +324,12 @@ def _cmd_portfolio(
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         asset_class, fund_currency, distribution, ter, ter_float = _fund_meta(
-            config_path, holding.symbol
+            config_path, holding.symbol, currency_meta_path
         )
         weight = holding_weight_pct(holding, total_invested)
         row = (
             f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
-            f"{_asset_class_label(asset_class):<6} {fund_currency:<4} "
+            f"{_asset_class_label(asset_class):<6} {fund_currency:<8} "
             f"{_distribution_label(distribution):<4} {ter:>6} {weight:>6.1f}%"
         )
         if show_cost_basis:
@@ -376,6 +386,11 @@ Examples:
         help="ETF universe config for security names",
     )
     parser.add_argument(
+        "--currency-meta",
+        default=DEFAULT_CURRENCY_META,
+        help="Currency metadata YAML (pinned ftgo resolutions)",
+    )
+    parser.add_argument(
         "--sort",
         choices=SORT_FIELDS,
         default="broker",
@@ -413,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_portfolio(
             args.db,
             args.config,
+            currency_meta_path=args.currency_meta,
             sort_by=args.sort,
             reverse=args.reverse,
             show_cost_basis=args.show_cost_basis,

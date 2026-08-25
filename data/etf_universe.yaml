@@ -369,7 +369,7 @@ etfs:
       exchange: LN
     resolved_at: '2026-08-15T22:44:12.051567+00:00'
     source: OpenFIGI
-    fund_currency: USD
+    fund_currency: EUR
     distribution: Accumulating
     ter: 0.25
     asset_class: Equity
@@ -419,7 +419,7 @@ etfs:
       exchange: US
     resolved_at: '2026-08-15T22:44:10.711008+00:00'
     source: OpenFIGI
-    fund_currency: USD
+    fund_currency: EUR
     distribution: Accumulating
     ter: 0.18
     asset_class: Equity
@@ -442,7 +442,7 @@ etfs:
       exchange: LN
     resolved_at: '2026-08-15T22:43:52.681266+00:00'
     source: OpenFIGI
-    fund_currency: USD
+    fund_currency: EUR
     distribution: Accumulating
     ter: 0.15
     asset_class: Equity
