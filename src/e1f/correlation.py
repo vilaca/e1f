@@ -667,7 +667,37 @@ def _explain_pair(
     )
 
 
-def render(report: CorrelationReport) -> list[str]:
+def _matrix_lines(report: CorrelationReport) -> list[str]:
+    universe = report.universe
+    if len(universe) < 2:
+        return []
+    n = len(universe)
+    isins = [fund.isin for fund in universe]
+
+    col_w = 6  # " -0.45" or "  0.87" or "  1.00" or "     —"
+    idx_w = 3
+    lines = ["\nPairwise correlation matrix (ρ):"]
+    lines.append(" " * idx_w + "".join(f"{i + 1:>{col_w}}" for i in range(n)))
+    for i, isin_a in enumerate(isins):
+        row = f"{i + 1:>{idx_w}}"
+        for j, isin_b in enumerate(isins):
+            if i == j:
+                row += f"{'1.00':>{col_w}}"
+            else:
+                overlap = report.pairs[_pair_key(isin_a, isin_b)]
+                if overlap.status == Status.CALCULATED and overlap.rho is not None:
+                    row += f"{overlap.rho:>{col_w}.2f}"
+                else:
+                    row += f"{'—':>{col_w}}"
+        lines.append(row)
+    lines.append("")
+    for i, fund in enumerate(universe):
+        name = report.names.get(fund.isin, "")[:_NAME_WIDTH]
+        lines.append(f"  {i + 1:2d}  {fund.isin}  {name}".rstrip())
+    return lines
+
+
+def render(report: CorrelationReport, *, matrix: bool = False) -> list[str]:
     lines = [
         f"\nReturn co-movement — ADR-0015 (as of {report.as_of})",
         f"Window policy: pairwise overlap · min {report.min_overlap} return "
@@ -678,6 +708,8 @@ def render(report: CorrelationReport) -> list[str]:
     lines.extend(_cluster_lines(report))
     lines.extend(_unavailable_lines(report))
     lines.extend(_excluded_universe_lines(report))
+    if matrix:
+        lines.extend(_matrix_lines(report))
     lines.extend(_NOTES)
     return lines
 
@@ -757,6 +789,7 @@ def _cmd_correlation(
     weight_flag: float,
     min_overlap: int,
     explain: bool,
+    matrix: bool,
     pair: list[str],
     scenario_name: str | None = None,
     scenario_targets: dict[str, float] | None = None,
@@ -817,7 +850,7 @@ def _cmd_correlation(
             print(line)
         return 0
 
-    for line in (render_explain(report) if explain else render(report)):
+    for line in (render_explain(report) if explain else render(report, matrix=matrix)):
         print(line)
     return 0
 
@@ -945,6 +978,11 @@ Examples:
         help="Reconstruct the flagged pairs from source — pair flags only, not clusters "
         "(aligned-sample preview + digest); combine with two ISINs to reconstruct one pair",
     )
+    parser.add_argument(
+        "--matrix",
+        action="store_true",
+        help="Append the full N×N pairwise ρ table to the report (— for UNAVAILABLE pairs)",
+    )
     return parser
 
 
@@ -981,6 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
             weight_flag=args.weight_flag,
             min_overlap=args.min_overlap,
             explain=args.explain,
+            matrix=args.matrix,
             pair=args.pair,
             scenario_name=args.scenario,
             scenario_targets=scenario_targets,
