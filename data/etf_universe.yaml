@@ -507,3 +507,27 @@ etfs:
     distribution: Accumulating
     ter: 0.17
     asset_class: Equity
+  IE00BF4RFH31:
+    name: ISHARES MSCI WLD SMALL CAP
+    tickers:
+    - WSML
+    - WLDS
+    - IUSN
+    - IMWSF
+    exchange: LN
+    figi: BBG00JSHKS97
+    listings:
+    - ticker: WSML
+      exchange: LN
+    - ticker: WLDS
+      exchange: LN
+    - ticker: IUSN
+      exchange: GR
+    - ticker: IMWSF
+      exchange: US
+    resolved_at: '2026-08-25T13:46:38.960028+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
