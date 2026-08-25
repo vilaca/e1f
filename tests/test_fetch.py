@@ -421,6 +421,26 @@ def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
     assert list(combined.columns) == [ISIN]
 
 
+def test_incremental_fetch_overlaps_last_stored_date(tmp_path, monkeypatch):
+    # ftgo returns empty when start == end (same-day range). The incremental
+    # fetch must pass start = last_stored_date (not +1 day) so the range is
+    # always start < end, while the DO NOTHING upsert keeps it idempotent.
+    yesterday = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, close_df([100.0], end=yesterday.strftime('%Y-%m-%d')))
+
+    captured = {}
+
+    def capture_start(isin, start=None):
+        captured['start'] = start
+        return close_df([100.0, 101.0], end=pd.Timestamp.now().strftime('%Y-%m-%d'))
+
+    monkeypatch.setattr(ext, '_fetch_ftgo', capture_start)
+    ext.fetch()
+
+    assert captured['start'] == yesterday
+
+
 def test_fetch_ftgo_then_yfinance_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
     ext = make_extractor(tmp_path, fallback=True)
