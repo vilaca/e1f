@@ -64,11 +64,14 @@ e1f transactions trade-republic transactions.csv --db data/e1f.db
 e1f transactions xtb ~/Downloads/EUR_38472916_2006-01-01_2026-08-15.xlsx
 e1f transactions list
 e1f portfolio
+e1f portfolio --explain              # + provenance block (ADR-0014)
 
 # 4. Value the portfolio and measure returns (EUR)
 e1f performance
 e1f performance --as-of 2025-12-31   # historical snapshot
 e1f performance --sort value --reverse
+e1f performance --show-status        # + per-holding provenance Status column (ADR-0014)
+e1f performance --explain            # + per-holding provenance blocks (implies --show-status)
 
 # 5. Inspect within-fund concentration (look-through cached by fetch)
 e1f concentration                    # every held fund + overlap candidates
@@ -144,7 +147,8 @@ same file is idempotent (duplicate `(broker, transaction_id)` rows are skipped).
 Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
-(output in `src/e1f/portfolio.py`).
+(output in `src/e1f/portfolio.py`). `--show-status` / `--explain` add opt-in
+provenance disclosure (ADR-0014; see below).
 
 Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
 `src/e1f/performance.py`). `e1f performance` values holdings in EUR
@@ -154,7 +158,8 @@ holding's share of total unrealized P&L — per holding and portfolio-wide. `--a
 price/FX on or before that date shows `n/a` and drops out of the total, a market
 value carried forward from an earlier close (no price on the as-of day itself) is
 flagged with its price date and staleness, and annualized figures on under a year
-of history are flagged.
+of history are flagged. `--show-status` / `--explain` add opt-in provenance
+disclosure (ADR-0014; see below).
 
 Reading the metrics (formulas in ADR-0011 §5):
 
@@ -230,6 +235,15 @@ reconstructs just that pair on demand, at any status and regardless of the flag
 thresholds. Each ISIN in the report is annotated with its fund name from the
 universe config (`--config`). This command adds a runtime dependency on scipy (used only
 for the clustering step; Pearson ρ is computed in pure NumPy).
+
+Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
+and `overlap` always speak the shared provenance vocabulary — a four-state `Status`
+(CALCULATED / BOUNDED / UNAVAILABLE / UNRESOLVED) and a per-metric contract. ADR-0014
+extends the *same* vocabulary to `performance` and `portfolio`, where it is **opt-in**
+so the default table (with its `~` / `*` / `n/a` markers) stays byte-for-byte
+unchanged: `--show-status` adds a lightweight `Status` column and `--explain` adds the
+verbose per-metric block (Result / Inputs / Method / limited-by) and implies the
+column. No new numbers are computed — this is disclosure only.
 
 All sources (OpenFIGI, ftgo, yfinance) are fetched with retry-on-failure:
 rate limits (HTTP 429) and server errors are retried with backoff, honoring

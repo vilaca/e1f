@@ -54,7 +54,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0011` — `performance` command: XIRR-first return metrics, EUR valuation, net-across-brokers holdings
 - `ADR-0012` — `concentration` command: coverage-aware within-fund concentration, rank-constrained HHI bounds, `overlap` (v1b) deferred
 - `ADR-0013` — `overlap` command: cross-fund single-name exposure floor (`≥`) via reviewed `canonical_key`; valuation core + provenance vocabulary + `overlap_candidates` graduate into `common`
-- `ADR-0014` — provenance generalization across commands (PLACEHOLDER, not yet decided)
+- `ADR-0014` — provenance generalization: `performance` / `portfolio` speak the shared `Status` / `MetricContract` / `--explain` vocabulary, opt-in via `--show-status` / `--explain` (default output unchanged)
 - `ADR-0015` — `correlation` command: return co-movement redundancy + hierarchical clustering, pairwise-overlap alignment, EUR returns; scipy dependency
 
 ## Skills
