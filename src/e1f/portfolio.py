@@ -13,11 +13,37 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any
 
-from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, ConfigManager
+from e1f.common import (
+    DEFAULT_CONFIG,
+    DEFAULT_DB,
+    ConfigManager,
+    MetricContract,
+    Status,
+    _explain_metric,
+)
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 _SHARE_EPSILON = 1e-9
 SORT_FIELDS = ("broker", "isin", "name", "weight", "total", "units", "avg", "ter")
+_STATUS_COL = 11
+
+
+# Provenance contract (ADR-0014). Holdings are derived exactly from stored
+# transactions — no market data, no look-through — so every holding is CALCULATED;
+# ``Status`` / ``MetricContract`` and the ``--explain`` helper live in ``common``
+# (ADR-0013 decision 8), this instance stays here.
+HOLDINGS_CONTRACT = MetricContract(
+    method_version="average_cost_v1",
+    requires=(),  # complete: derived fully from the stored transaction history
+    does_not_require=("price data", "FX rates", "look-through holdings"),
+    supports=("net shares", "average cost", "total paid", "cost-basis weight"),
+    limitations=(
+        "average-cost accounting (not FIFO/LIFO); realized-gain tax lots not tracked",
+        "weight is a share of cost basis, not market value",
+        "fund metadata (asset class, currency, distribution, TER) shown only where "
+        "the config carries it",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -178,6 +204,38 @@ def sort_holdings(
     )
 
 
+def _has_config_entry(config_path: str, symbol: str) -> bool:
+    return ConfigManager(config_path).get(symbol) is not None
+
+
+def render_holdings_explain(
+    holdings: list[Holding], config_path: str, total_invested: float
+) -> list[str]:
+    """Reconstruct the holdings provenance block from the computed holdings.
+
+    Portfolio holdings share one identical contract and status, so ``--explain``
+    emits a single block (not one per row, ADR-0014 decision 4) and reports config
+    metadata completeness across the set. Nothing is read from a persisted log.
+    """
+    missing = sorted(h.symbol for h in holdings if not _has_config_entry(config_path, h.symbol))
+    completeness = (
+        f"config metadata present for all {len(holdings)} holdings"
+        if not missing
+        else f"{len(missing)} of {len(holdings)} holdings not in config "
+        f"(metadata blank): {', '.join(missing)}"
+    )
+    lines = ["\nProvenance (--explain) — reconstructed from source, not a log:"]
+    lines.extend(_explain_metric(
+        "Holdings (average-cost)",
+        Status.CALCULATED,
+        f"{len(holdings)} holdings ; €{total_invested:,.2f} total cost basis",
+        f"net BUY/SELL per broker+symbol from stored transactions ; {completeness}",
+        "average-cost accounting ; weight = total_paid / Σ total_paid",
+        HOLDINGS_CONTRACT,
+    ))
+    return lines
+
+
 def _cmd_portfolio(
     db_path: str,
     config_path: str,
@@ -185,7 +243,10 @@ def _cmd_portfolio(
     sort_by: str = "broker",
     reverse: bool = False,
     show_cost_basis: bool = False,
+    show_status: bool = False,
+    explain: bool = False,
 ) -> int:
+    show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     rows = _load_trade_rows(db_path)
     holdings = compute_holdings(rows)
 
@@ -209,8 +270,13 @@ def _cmd_portfolio(
     )
     if show_cost_basis:
         header += f" {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
+    if show_status:
+        header += f" {'Status':>{_STATUS_COL}}"
     print(header)
-    print("-" * (_TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 42))
+    rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 42
+    if show_status:
+        rule += _STATUS_COL + 1
+    print("-" * rule)
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         asset_class, fund_currency, distribution, ter = _fund_meta(
@@ -227,11 +293,16 @@ def _cmd_portfolio(
                 f" {holding.shares:>10.4f} {holding.avg_cost:>12.4f}"
                 f" {holding.total_paid:>14.4f}"
             )
+        if show_status:
+            row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
     total = f"\nTotal: {len(holdings)} holdings"
     if show_cost_basis:
         total += f", {total_invested:.4f} total paid"
     print(total)
+    if explain:
+        for line in render_holdings_explain(holdings, config_path, total_invested):
+            print(line)
     return 0
 
 
@@ -241,11 +312,17 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Show ETF holdings and average cost per share from transactions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Provenance (ADR-0014, off by default): --show-status adds a Status column
+(uniformly CALCULATED — holdings are exact from transactions); --explain adds a
+provenance block with config-metadata completeness and implies --show-status.
+
 Examples:
   e1f portfolio
   e1f portfolio --db data/e1f.db --config data/etf_universe.yaml
   e1f portfolio --sort weight --reverse
   e1f portfolio --sort total --reverse
+  e1f portfolio --show-status
+  e1f portfolio --explain
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -272,6 +349,16 @@ Examples:
         action="store_true",
         help="Show units, average paid, and total paid columns",
     )
+    parser.add_argument(
+        "--show-status",
+        action="store_true",
+        help="Add a provenance Status column (ADR-0014)",
+    )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Add a provenance block (Status/contract/limited-by; implies --show-status)",
+    )
 
     return parser
 
@@ -286,6 +373,8 @@ def main(argv: list[str] | None = None) -> int:
             sort_by=args.sort,
             reverse=args.reverse,
             show_cost_basis=args.show_cost_basis,
+            show_status=args.show_status,
+            explain=args.explain,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

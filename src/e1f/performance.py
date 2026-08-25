@@ -22,7 +22,10 @@ from e1f.common import (
     DEFAULT_DB,
     ConfigManager,
     HoldingSeries,
+    MetricContract,
     PositionEvent,
+    Status,
+    _explain_metric,
     build_series as _build_series,
     load_trades,
     position_asof as _position_asof,
@@ -35,6 +38,39 @@ SORT_FIELDS = ("isin", "name", "value", "cost", "pnl", "xirr")
 _TRADING_DAYS = 252
 _SHARE_EPSILON = 1e-9
 _SHORT_HISTORY_DAYS = 365
+
+
+# ---------------------------------------------------------------------------
+# Provenance contracts (ADR-0014). ``Status`` / ``MetricContract`` and the
+# ``--explain`` helpers live in ``common`` (ADR-0013 decision 8); these instances
+# stay here — performance's metrics fall into two provenance families.
+# ---------------------------------------------------------------------------
+
+
+VALUATION_CONTRACT = MetricContract(
+    method_version="eur_valuation_v1",
+    requires=(
+        "a close on/before the as-of date",
+        "an FX rate to EUR for a foreign-priced fund",
+    ),
+    does_not_require=("look-through holdings", "canonical security identity"),
+    supports=("market value", "unrealized P&L", "P&L %", "P&L share"),
+    limitations=(
+        "shares × close × FX at the as-of date; a stale close is carried forward "
+        "and flagged (~), never re-priced",
+    ),
+)
+RETURN_CONTRACT = MetricContract(
+    method_version="xirr_twr_v1",
+    requires=("a dated contribution series", "a terminal EUR value"),
+    does_not_require=("a benchmark", "intraday prices"),
+    supports=("XIRR", "TWR", "CAGR", "volatility", "max drawdown"),
+    limitations=(
+        "annualized figures (Vol, CAGR) under a year of history are extrapolated "
+        "and flagged (*)",
+        "XIRR/TWR are n/a without a sign change or ≥2 valuation points",
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -450,11 +486,25 @@ _HEADER = (
     f"{'CAGR':>8}"
 )
 _RULE_WIDTH = 14 + 28 + 13 * 3 + 7 * 5 + 8 + 8 + 11
+_STATUS_COL = 11
 
 
-def _format_row(row: PerformanceRow) -> str:
+def row_status(row: PerformanceRow) -> Status:
+    """The row's valuation gate: CALCULATED with a EUR value, else UNAVAILABLE (ADR-0014)."""
+    return Status.CALCULATED if row.valuable else Status.UNAVAILABLE
+
+
+def _header(show_status: bool) -> str:
+    return _HEADER + (f" {'Status':>{_STATUS_COL}}" if show_status else "")
+
+
+def _rule_width(show_status: bool) -> int:
+    return _RULE_WIDTH + (_STATUS_COL + 1 if show_status else 0)
+
+
+def _format_row(row: PerformanceRow, *, show_status: bool = False) -> str:
     flag = row.short_history
-    return (
+    base = (
         f"{row.isin:<14} {row.name:<28} "
         f"{_fmt_money(row.market_value, flag=row.estimated):>13} {_fmt_money(row.cost):>13} "
         f"{_fmt_money(row.pnl):>13} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
@@ -463,6 +513,64 @@ def _format_row(row: PerformanceRow) -> str:
         f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>8} "
         f"{_fmt_pct(row.cagr, flag=flag):>8}"
     )
+    if show_status:
+        base += f" {row_status(row).value:>{_STATUS_COL}}"
+    return base
+
+
+def render_row_explain(row: PerformanceRow) -> list[str]:
+    """Reconstruct a holding's provenance chain from the row itself.
+
+    Nothing is read from a persisted log — the chain is recomputed from the row's
+    fields, so it is always what the code did (ADR-0012 decision 7, ADR-0014).
+    """
+    title = f"{row.isin}  {row.name}".rstrip()
+    lines = [f"\n{title}"]
+
+    if row.valuable:
+        when = f" @ {row.price_date}" if row.price_date else ""
+        stale = " (carried forward — stale close)" if row.estimated else ""
+        val_result = (
+            f"MktVal €{_fmt_money(row.market_value)} ; "
+            f"P&L €{_fmt_money(row.pnl)} ({_fmt_pct(row.pnl_pct, scaled=True)}) ; "
+            f"P&L share {_fmt_pct(row.pnl_contribution, scaled=True)}"
+        )
+        val_inputs = f"shares × close × FX{when}{stale}"
+    else:
+        val_result = "unavailable — no close/FX on or before the as-of date (excluded from TOTAL)"
+        val_inputs = "no price/FX for this holding"
+    lines.extend(_explain_metric(
+        "Market valuation",
+        row_status(row),
+        val_result,
+        val_inputs,
+        "shares × close × FX → EUR (ADR-0010/0011)",
+        VALUATION_CONTRACT,
+    ))
+
+    return_metrics = (row.xirr, row.twr, row.cagr, row.volatility, row.max_drawdown)
+    ret_status = (
+        Status.CALCULATED if any(m is not None for m in return_metrics) else Status.UNAVAILABLE
+    )
+    extrapolated = (
+        " ; annualized figures extrapolated (short history)"
+        if row.short_history and ret_status is Status.CALCULATED
+        else ""
+    )
+    ret_result = (
+        f"XIRR {_fmt_pct(row.xirr)} ; TWR {_fmt_pct(row.twr)} ; CAGR {_fmt_pct(row.cagr)} ; "
+        f"Vol {_fmt_pct(row.volatility)} ; MaxDD {_fmt_pct(row.max_drawdown)}{extrapolated}"
+    )
+    lines.extend(_explain_metric(
+        "Return metrics",
+        ret_status,
+        ret_result,
+        "dated contribution series + terminal EUR value",
+        "XIRR money-weighted ; TWR chain-linked ; CAGR = annualized TWR ; "
+        "Vol = stdev(daily r)×√252 ; MaxDD on the wealth index",
+        RETURN_CONTRACT,
+    ))
+    return lines
 
 
 def _cmd_performance(
@@ -472,8 +580,11 @@ def _cmd_performance(
     as_of: str,
     sort_by: str = "isin",
     reverse: bool = False,
+    show_status: bool = False,
+    explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
 ) -> int:
+    show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     timeline = position_timeline(load_trades(db_path))
     if not timeline:
         print("No ETF holdings in database")
@@ -505,12 +616,12 @@ def _cmd_performance(
     total.pnl_contribution = None if not total.pnl else 100.0
 
     print(f"\nPortfolio performance as of {as_of} (EUR)")
-    print(_HEADER)
-    print("-" * _RULE_WIDTH)
+    print(_header(show_status))
+    print("-" * _rule_width(show_status))
     for row in rows:
-        print(_format_row(row))
-    print("-" * _RULE_WIDTH)
-    print(_format_row(total))
+        print(_format_row(row, show_status=show_status))
+    print("-" * _rule_width(show_status))
+    print(_format_row(total, show_status=show_status))
 
     estimated = [row for row in rows if row.estimated]
     if any(row.short_history for row in rows):
@@ -544,6 +655,14 @@ def _cmd_performance(
             f"\n⚠ excluded from TOTAL (no price/FX on or before {as_of}): "
             + ", ".join(sorted(excluded))
         )
+
+    if explain:
+        print("\nProvenance (--explain) — reconstructed from source, not a log:")
+        for row in rows:
+            for line in render_row_explain(row):
+                print(line)
+        for line in render_row_explain(total):
+            print(line)
     return 0
 
 
@@ -567,10 +686,16 @@ from the TOTAL (with a warning). Vol/CAGR on under a year of history are flagged
 A MktVal carried forward from an earlier close (no price on the as-of day itself)
 is flagged ~, with the price date and how stale it is listed below the table.
 
+Provenance (ADR-0014, off by default): --show-status adds a Status column
+(CALCULATED / UNAVAILABLE, the row's valuation gate); --explain adds per-holding
+provenance blocks and implies --show-status.
+
 Examples:
   e1f performance
   e1f performance --as-of 2025-12-31
   e1f performance --sort value --reverse
+  e1f performance --show-status
+  e1f performance --explain
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -600,6 +725,16 @@ Examples:
     parser.add_argument(
         "--reverse", "-r", action="store_true", help="Descending sort order"
     )
+    parser.add_argument(
+        "--show-status",
+        action="store_true",
+        help="Add a per-holding provenance Status column (ADR-0014)",
+    )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Per-holding provenance blocks (Status/contract/limited-by; implies --show-status)",
+    )
     return parser
 
 
@@ -620,6 +755,8 @@ def main(argv: list[str] | None = None) -> int:
             as_of=args.as_of,
             sort_by=args.sort,
             reverse=args.reverse,
+            show_status=args.show_status,
+            explain=args.explain,
             currency_meta_path=args.currency_meta,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1

@@ -583,3 +583,77 @@ def test_main_help_exits_zero(capsys):
         perf.main(["--help"])
     assert excinfo.value.code == 0
     assert "performance" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Provenance disclosure (ADR-0014): row_status, --show-status, --explain
+# ---------------------------------------------------------------------------
+
+
+def _status_row(**overrides):
+    base = dict(
+        isin="X", name="n", cost=1.0, market_value=10.0, xirr=0.1, twr=0.1,
+        volatility=0.2, max_drawdown=-0.1, cagr=0.1, short_history=False,
+    )
+    base.update(overrides)
+    return perf.PerformanceRow(**base)
+
+
+def test_row_status_calculated_when_valuable():
+    assert perf.row_status(_status_row(market_value=10.0)) is perf.Status.CALCULATED
+
+
+def test_row_status_unavailable_when_not_valuable():
+    assert perf.row_status(_status_row(market_value=None)) is perf.Status.UNAVAILABLE
+
+
+def _two_holdings_one_unvaluable(tmp_path):
+    unk = "IE00UNK000001"
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-12-01", unk, 5.0, 20.0),  # no price -> unvaluable
+        ],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-31", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    ), unk
+
+
+def test_main_default_has_no_status_column(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-31", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    assert "Status" not in out
+    assert "CALCULATED" not in out
+
+
+def test_main_show_status_adds_column_with_both_states(tmp_path, capsys):
+    (db, config, meta), _unk = _two_holdings_one_unvaluable(tmp_path)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--show-status"))
+    out = capsys.readouterr().out
+    assert "Status" in out
+    assert "CALCULATED" in out    # the valuable holding + TOTAL
+    assert "UNAVAILABLE" in out   # the unvaluable holding
+
+
+def test_main_explain_implies_status_and_prints_blocks(tmp_path, capsys):
+    (db, config, meta), unk = _two_holdings_one_unvaluable(tmp_path)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--explain"))
+    out = capsys.readouterr().out
+    assert "Status" in out                          # --explain implies the column
+    assert "reconstructed from source, not a log" in out
+    assert "method = eur_valuation_v1" in out
+    assert "method = xirr_twr_v1" in out
+    assert "Result:" in out and "Inputs:" in out and "Limited by:" in out
+    assert "Not limited by: look-through holdings" in out
+    # the unvaluable holding's block names its UNAVAILABLE valuation
+    assert "no close/FX on or before the as-of date" in out
+    assert unk in out

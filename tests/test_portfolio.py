@@ -361,3 +361,68 @@ def test_main_portfolio_help(capsys):
     assert "--sort" in out
     assert "--reverse" in out
     assert "--show-cost-basis" in out
+    assert "--show-status" in out
+    assert "--explain" in out
+
+
+# ---------------------------------------------------------------------------
+# Provenance disclosure (ADR-0014): --show-status, --explain
+# ---------------------------------------------------------------------------
+
+
+def _seed_two(tmp_path, *, config_isins):
+    from contextlib import closing
+    import sqlite3
+    from e1f.transactions import BROKER_TRADE_REPUBLIC, init_transactions_database
+
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {i: {"name": f"Fund {i}"} for i in config_isins}}))
+    unknown = "IE00UNKNOWN001"
+    init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executemany(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (BROKER_TRADE_REPUBLIC, "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 100.0, 0.0, 0.0),
+                (BROKER_TRADE_REPUBLIC, "2", "2024-01-02", unknown, "BUY", 1.0, 300.0, 0.0, 0.0),
+            ],
+        )
+        conn.commit()
+    return str(db), str(config), unknown
+
+
+def test_main_default_has_no_status_column(tmp_path, capsys):
+    db, config, _unknown = _seed_two(tmp_path, config_isins=[ISIN_ETF])
+    portfolio_mod.main(["--db", db, "--config", config])
+    out = capsys.readouterr().out
+    assert "Status" not in out
+    assert "CALCULATED" not in out
+
+
+def test_main_show_status_adds_calculated_column(tmp_path, capsys):
+    db, config, _unknown = _seed_two(tmp_path, config_isins=[ISIN_ETF])
+    portfolio_mod.main(["--db", db, "--config", config, "--show-status"])
+    out = capsys.readouterr().out
+    assert "Status" in out
+    assert out.count("CALCULATED") == 2  # both holdings, uniformly CALCULATED
+
+
+def test_main_explain_implies_status_and_reports_metadata_gap(tmp_path, capsys):
+    db, config, unknown = _seed_two(tmp_path, config_isins=[ISIN_ETF])
+    portfolio_mod.main(["--db", db, "--config", config, "--explain"])
+    out = capsys.readouterr().out
+    assert "Status" in out                       # --explain implies the column
+    assert "reconstructed from source, not a log" in out
+    assert "method = average_cost_v1" in out
+    assert "Not limited by: price data" in out
+    # the holding whose ISIN is absent from config is named as a metadata gap
+    assert "1 of 2 holdings not in config" in out
+    assert unknown in out
+
+
+def test_main_explain_all_metadata_present(tmp_path, capsys):
+    db, config, _unknown = _seed_two(tmp_path, config_isins=[ISIN_ETF, "IE00UNKNOWN001"])
+    portfolio_mod.main(["--db", db, "--config", config, "--explain"])
+    out = capsys.readouterr().out
+    assert "config metadata present for all 2 holdings" in out
