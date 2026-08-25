@@ -893,3 +893,77 @@ def _sell(txid, day, isin, shares, price_eur, fee=0.0, broker="tr"):
 
 def _args(db, config, meta, *extra):
     return ["--db", db, "--config", config, "--currency-meta", meta, *extra]
+
+
+# ---------------------------------------------------------------------------
+# --scenario: load targets (and months) from a saved scenario (ADR-0017)
+# ---------------------------------------------------------------------------
+
+
+def _feasible_seed(tmp_path):
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", A, 100.0, 60.0),  # A = 6000
+            _buy("t2", "2024-01-01", B, 100.0, 40.0),  # B = 4000
+        ],
+        prices=[(A, "2024-01-01", 60.0), (B, "2024-01-01", 40.0)],
+        currencies={A: "EUR", B: "EUR"},
+        names={A: "Fund A", B: "Fund B"},
+    )
+
+
+def _write_scenario(tmp_path, **body):
+    from e1f.common import Scenario, save_scenario
+    path = str(tmp_path / "s.yaml")
+    save_scenario(Scenario(**body), path)
+    return path
+
+
+def test_scenario_loads_targets_and_months(tmp_path, capsys):
+    db, config, meta = _feasible_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="core", targets={A: 60.0, B: 40.0}, months=5)
+    code = reb.main(_args(db, config, meta,
+                         "--scenario", "core", "--scenarios-file", sf,
+                         "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "DCA: 5 months" in out
+
+
+def test_scenario_cli_months_overrides_stored(tmp_path, capsys):
+    db, config, meta = _feasible_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="core", targets={A: 60.0, B: 40.0}, months=5)
+    code = reb.main(_args(db, config, meta,
+                         "--scenario", "core", "--scenarios-file", sf,
+                         "--months", "3", "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "DCA: 3 months" in out and "DCA: 5" not in out
+
+
+def test_scenario_without_months_defaults_to_lump_sum(tmp_path, capsys):
+    db, config, meta = _feasible_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="core", targets={A: 60.0, B: 40.0})
+    code = reb.main(_args(db, config, meta,
+                         "--scenario", "core", "--scenarios-file", sf,
+                         "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "DCA" not in out  # months=1 → no DCA banner
+
+
+def test_scenario_and_target_mutually_exclusive(tmp_path):
+    db, config, meta = _feasible_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="core", targets={A: 60.0})
+    with pytest.raises(SystemExit):
+        reb.main(_args(db, config, meta,
+                       "--scenario", "core", "--scenarios-file", sf,
+                       "--target", f"{A}:60"))
+
+
+def test_scenario_missing_name_errors(tmp_path):
+    db, config, meta = _feasible_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="core", targets={A: 60.0})
+    with pytest.raises(SystemExit):
+        reb.main(_args(db, config, meta, "--scenario", "ghost", "--scenarios-file", sf))

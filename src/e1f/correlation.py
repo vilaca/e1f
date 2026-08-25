@@ -46,16 +46,21 @@ from e1f.common import (
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
+    DEFAULT_SCENARIOS,
     ConfigManager,
     MetricContract,
     Status,
     _explain_metric,
     UNSUPPORTED_FX_CURRENCIES,
+    assemble_rebalance_valuations,
+    compute_rebalance,
     convert_to_eur,
     fund_eur_value,
+    get_scenario,
     load_price_series,
     pinned_quote_currency,
     portfolio_isins,
+    post_rebalance_weights,
 )
 
 # A return correlation below roughly one quarter of trading days is dominated by
@@ -390,22 +395,36 @@ def analyze(
     cluster_rho: float,
     weight_flag: float,
     min_overlap: int,
+    isins: list[str] | None = None,
+    weights: dict[str, float] | None = None,
 ) -> CorrelationReport:
-    """Build the whole report: universe → pairs → flags → clusters → taxonomy."""
-    held = sorted(portfolio_isins(db_path))
+    """Build the whole report: universe → pairs → flags → clusters → taxonomy.
+
+    By default the universe is the held portfolio, weighted by each fund's current
+    EUR value.  A scenario (ADR-0017) overrides both: ``isins`` and ``weights``
+    describe the *post-rebalance* portfolio the scenario implies (targeted funds
+    at their targets, untargeted funds diluted), so the report answers "how
+    correlated is the portfolio I'd hold after this rebalance?".  A fund not yet
+    held is included as long as it has a usable return series; the held-value gate
+    is skipped when ``weights`` is supplied.
+    """
+    source = sorted(isins) if isins is not None else sorted(portfolio_isins(db_path))
     config_entries = dict(ConfigManager(config_path).list())
     names = {
-        isin: str((config_entries.get(isin) or {}).get("name", "")) for isin in held
+        isin: str((config_entries.get(isin) or {}).get("name", "")) for isin in source
     }
 
     unvaluable: list[str] = []
     no_history: list[str] = []
     valued: list[tuple[str, float, list[tuple[str, float]]]] = []
-    for isin in held:
-        value = fund_eur_value(isin, as_of, db_path, currency_meta_path)
-        if value is None or value <= 0.0:
-            unvaluable.append(isin)
-            continue
+    for isin in source:
+        if weights is None:
+            value = fund_eur_value(isin, as_of, db_path, currency_meta_path)
+            if value is None or value <= 0.0:
+                unvaluable.append(isin)
+                continue
+        else:
+            value = weights.get(isin, 0.0)  # scenario weight; no held-value gate
         returns = eur_return_series(db_path, isin, as_of, currency_meta_path)
         if not returns:
             no_history.append(isin)  # value but no usable history — a distinct category
@@ -739,12 +758,39 @@ def _cmd_correlation(
     min_overlap: int,
     explain: bool,
     pair: list[str],
+    scenario_name: str | None = None,
+    scenario_targets: dict[str, float] | None = None,
 ) -> int:
-    held = portfolio_isins(db_path)
-    if not held:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
-        return 0
+    isins: list[str] | None = None
+    weights: dict[str, float] | None = None
+
+    if scenario_targets is not None:
+        # Correlate the POST-rebalance portfolio the scenario implies (ADR-0017):
+        # run the buy-only plan, then weight by each fund's final EUR value.
+        values, held_set, _untargeted, _price_dates = assemble_rebalance_valuations(
+            db_path, currency_meta_path, scenario_targets, as_of
+        )
+        plan = compute_rebalance(scenario_targets, values, held_set)
+        if not plan.feasible:
+            print(f"\nReturn co-movement — ADR-0015 (as of {as_of})")
+            print(
+                f"\nUNAVAILABLE — cannot build the post-rebalance portfolio for scenario "
+                f"{scenario_name!r}: rebalance is infeasible ({plan.reason}). "
+                f"Run 'e1f rebalance --scenario {scenario_name}' for the full diagnosis."
+            )
+            return 0
+        weights = post_rebalance_weights(plan, values)
+        isins = sorted(weights)
+        print(
+            f"Universe: portfolio after applying scenario {scenario_name!r} "
+            f"(post-rebalance weights, {len(isins)} funds)"
+        )
+    else:  # held-portfolio mode
+        held = portfolio_isins(db_path)
+        if not held:
+            print("No ETF holdings in database")
+            print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+            return 0
 
     report = analyze(
         db_path,
@@ -755,6 +801,8 @@ def _cmd_correlation(
         cluster_rho=cluster_rho,
         weight_flag=weight_flag,
         min_overlap=min_overlap,
+        isins=isins,
+        weights=weights,
     )
 
     if pair:  # two named ISINs → reconstruct just that pair, at any status
@@ -824,6 +872,7 @@ Examples:
   e1f correlation --explain
   e1f correlation --rho-flag 0.95 --weight-flag 0.10
   e1f correlation --explain IE00B4L5Y983 IE00BK5BQT80   # reconstruct one named pair
+  e1f correlation --scenario core            # correlate the post-rebalance book (ADR-0017)
         """,
     )
     parser.add_argument(
@@ -877,6 +926,20 @@ Examples:
         help="Minimum aligned return observations to correlate a pair (≥ 2; default 60)",
     )
     parser.add_argument(
+        "--scenario",
+        "-s",
+        metavar="NAME",
+        help="Correlate the POST-rebalance portfolio a saved scenario implies "
+        "(ADR-0017) instead of the held portfolio — targeted funds at their "
+        "targets, untargeted funds diluted, weighted by final EUR value "
+        "(see 'e1f scenario').",
+    )
+    parser.add_argument(
+        "--scenarios-file",
+        default=DEFAULT_SCENARIOS,
+        help="Scenarios YAML file path (used with --scenario).",
+    )
+    parser.add_argument(
         "--explain",
         action="store_true",
         help="Reconstruct the flagged pairs from source — pair flags only, not clusters "
@@ -897,6 +960,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.pair and len(args.pair) != 2:
         parser.error("give exactly two held-fund ISINs to reconstruct a pair (or none)")
+
+    scenario_targets: dict[str, float] | None = None
+    if args.scenario:
+        try:
+            scenario = get_scenario(args.scenario, args.scenarios_file)
+        except Exception as e:  # noqa: BLE001 — surface as a clean parser error
+            parser.error(str(e))
+        scenario_targets = {isin: pct / 100.0 for isin, pct in scenario.targets.items()}
+
     try:
         _validate_as_of(args.as_of)
         return _cmd_correlation(
@@ -910,6 +982,8 @@ def main(argv: list[str] | None = None) -> int:
             min_overlap=args.min_overlap,
             explain=args.explain,
             pair=args.pair,
+            scenario_name=args.scenario,
+            scenario_targets=scenario_targets,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

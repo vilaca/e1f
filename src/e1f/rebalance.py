@@ -21,20 +21,17 @@ from e1f.common import (
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
+    DEFAULT_SCENARIOS,
     ConfigManager,
     MetricContract,
+    RebalancePlan,
     Status,
     _explain_metric,
-    build_series as _build_series,
-    load_trades,
-    position_asof as _position_asof,
-    position_timeline,
-    price_date_asof as _price_date_asof,
-    value_on as _value_on,
+    _FLOAT_CLAMP,
+    assemble_rebalance_valuations as _assemble,
+    compute_rebalance,
+    get_scenario,
 )
-
-_SHARE_EPSILON = 1e-9
-_FLOAT_CLAMP = 1e-9  # clamp for binder-fund buy rounding and bound equality checks
 
 _NAME_W = 24   # name column width; " (resid)" (8 chars) fits within it
 _EUR_W = 12    # money columns: Current€, Buy€, Monthly€, Final€
@@ -61,149 +58,9 @@ REBALANCE_CONTRACT = MetricContract(
 
 
 # ---------------------------------------------------------------------------
-# Pure-math core (no DB). Tested in isolation — the silent-bug-prone centre.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RebalancePlan:
-    """Result of the buy-only rebalance math (ADR-0016 decisions 3/5).
-
-    ``feasible`` is True when a finite V'_min exists.  ``buys`` maps universe
-    ISIN → EUR buy amount (0.0 for the binder(s)); covers pinned funds and
-    valued untargeted funds.  Empty when infeasible.
-
-    ``binders``: pinned ISIN(s) whose bound v_i/t_i equals V'_min (sorted).
-    ``residual_bound_binds``: True when the residual bound v_rest/R also equals
-    V'_min (so the whole residual bucket gets zero buys).
-    """
-
-    feasible: bool
-    reason: str | None            # UNAVAILABLE reason, or None if feasible
-    unvaluable_targets: list[str] # ISINs triggering target_unvaluable (sorted)
-    v: float                      # Σ valued held v_f
-    v_prime: float                 # V'_min (0.0 if infeasible)
-    c_min: float                   # total cash injection (0.0 if infeasible)
-    buys: dict[str, float]        # ISIN → EUR buy
-    binders: list[str]             # sorted pinned ISINs binding V'_min
-    residual_bound_binds: bool    # True if v_rest/R == V'_min
-
-
-def compute_rebalance(
-    targets: dict[str, float],
-    values: dict[str, float | None],
-    held: frozenset[str],
-) -> RebalancePlan:
-    """Buy-only minimum-cash rebalance (ADR-0016 decisions 3/5).
-
-    ``targets``: ISIN → fraction in (0, 1] (already validated; non-empty; Σ ≤ 1).
-    ``values``: universe ISIN → EUR value.  ``None`` = held-but-unvaluable;
-    ``0.0`` = not held (open-a-position if targeted); ``>0`` = valued position.
-    ``held``: ISINs with positive shares as-of (needed to distinguish held-unvaluable
-    from unheld).
-
-    Feasibility check order (first match wins, ADR-0016 decision 5):
-      target_unvaluable → empty_portfolio → residual_full / residual_unallocable.
-    """
-    # target_unvaluable: held targeted fund with no price/FX
-    unvaluable_targets = sorted(
-        isin for isin in targets if isin in held and values.get(isin) is None
-    )
-    if unvaluable_targets:
-        return RebalancePlan(
-            feasible=False, reason="target_unvaluable",
-            unvaluable_targets=unvaluable_targets,
-            v=0.0, v_prime=0.0, c_min=0.0, buys={}, binders=[],
-            residual_bound_binds=False,
-        )
-
-    # V = Σ valued held v_f (untargeted unvaluables already excluded by caller)
-    v_held: dict[str, float] = {
-        isin: v for isin, v in values.items()
-        if v is not None and isin in held
-    }
-    V = sum(v_held.values())
-
-    # empty_portfolio: no valued anchor
-    if V <= 0.0:
-        return RebalancePlan(
-            feasible=False, reason="empty_portfolio",
-            unvaluable_targets=[],
-            v=0.0, v_prime=0.0, c_min=0.0, buys={}, binders=[],
-            residual_bound_binds=False,
-        )
-
-    R = 1.0 - sum(targets.values())
-    v_rest = sum(v for isin, v in v_held.items() if isin not in targets)
-
-    # residual feasibility checks
-    if R < _FLOAT_CLAMP and v_rest > 0.0:
-        return RebalancePlan(
-            feasible=False, reason="residual_full",
-            unvaluable_targets=[],
-            v=V, v_prime=0.0, c_min=0.0, buys={}, binders=[],
-            residual_bound_binds=False,
-        )
-    if R >= _FLOAT_CLAMP and v_rest <= 0.0:
-        return RebalancePlan(
-            feasible=False, reason="residual_unallocable",
-            unvaluable_targets=[],
-            v=V, v_prime=0.0, c_min=0.0, buys={}, binders=[],
-            residual_bound_binds=False,
-        )
-
-    # Compute V'_min = max over pin bounds [and residual bound]
-    # Pin bound for fund i: v_i / t_i. v_i = 0 for unheld targets → bound = 0, never binds.
-    pin_bounds: list[tuple[float, str]] = [
-        (_v_for_bound(values.get(isin)) / t_i, isin) for isin, t_i in targets.items()
-    ]
-
-    v_prime = max(b for b, _ in pin_bounds)
-    residual_bound: float | None = None
-    if R >= _FLOAT_CLAMP and v_rest > 0.0:
-        residual_bound = v_rest / R
-        v_prime = max(v_prime, residual_bound)
-
-    c_min = v_prime - V
-
-    binders = sorted(
-        isin for b, isin in pin_bounds if abs(b - v_prime) <= _FLOAT_CLAMP
-    )
-    residual_bound_binds = (
-        residual_bound is not None and abs(residual_bound - v_prime) <= _FLOAT_CLAMP
-    )
-
-    # Per-fund buys
-    buys: dict[str, float] = {}
-    for isin, t_i in targets.items():
-        v_i = _v_for_bound(values.get(isin))
-        c_i = t_i * v_prime - v_i
-        # Clamp analytically-zero negatives on the binder fund (float noise)
-        if -_FLOAT_CLAMP <= c_i < 0.0:
-            c_i = 0.0
-        buys[isin] = c_i
-
-    if R >= _FLOAT_CLAMP and v_rest > 0.0:
-        c_rest = R * v_prime - v_rest
-        for isin, v_j in v_held.items():
-            if isin not in targets and v_j > 0.0:
-                buys[isin] = c_rest * v_j / v_rest
-
-    return RebalancePlan(
-        feasible=True, reason=None, unvaluable_targets=[],
-        v=V, v_prime=v_prime, c_min=c_min,
-        buys=buys, binders=binders,
-        residual_bound_binds=residual_bound_binds,
-    )
-
-
-def _v_for_bound(v: float | None) -> float:
-    """Return the EUR value for a bound computation: None → 0.0 (unheld)."""
-    return 0.0 if v is None else v
-
-
-# ---------------------------------------------------------------------------
-# Display rows (built by the DB layer, consumed by the renderer).
+# Display rows (built by the DB layer, consumed by the renderer).  The plan math
+# (RebalancePlan, compute_rebalance) and valuation assembly live in `common`
+# (graduated in ADR-0017); this module owns rendering + the CLI.
 # ---------------------------------------------------------------------------
 
 
@@ -474,72 +331,13 @@ def render_explain(
 
 
 # ---------------------------------------------------------------------------
-# DB-level assembly: load valuations, build display rows.
+# Display rows built from the plan + valuations (assembly lives in `common`).
 # ---------------------------------------------------------------------------
 
 
 def _etf_name(config_path: str, isin: str) -> str:
     data = ConfigManager(config_path).get(isin)
     return str((data or {}).get("name", ""))[:_NAME_W]
-
-
-def _assemble(
-    db_path: str,
-    config_path: str,
-    currency_meta_path: str,
-    targets: dict[str, float],
-    as_of: str,
-) -> tuple[
-    dict[str, float | None],  # values
-    frozenset[str],           # held (positive shares as-of)
-    list[str],                # untargeted_unvaluable (sorted)
-    dict[str, str | None],    # price_dates per ISIN
-]:
-    """Load universe valuations using position_timeline (as-of-aware, ADR-0016 decision 7).
-
-    Seeds the held set from position_timeline capped at as_of — NOT portfolio_isins(),
-    which is current-net and as-of-blind (a fund sold after as_of would be wrongly dropped).
-    """
-    timeline = position_timeline(load_trades(db_path))
-
-    held_isins: set[str] = set()
-    for isin, events in timeline.items():
-        capped = [e for e in events if e.date <= as_of]
-        if not capped:
-            continue
-        shares, _ = _position_asof(capped, as_of)
-        if shares > _SHARE_EPSILON:
-            held_isins.add(isin)
-
-    universe = held_isins | set(targets)
-    values: dict[str, float | None] = {}
-    price_dates: dict[str, str | None] = {}
-    untargeted_unvaluable: list[str] = []
-
-    for isin in universe:
-        events_all = timeline.get(isin, [])
-        capped = [e for e in events_all if e.date <= as_of]
-        shares, _ = _position_asof(capped, as_of) if capped else (0.0, 0.0)
-        is_held = shares > _SHARE_EPSILON
-
-        if not is_held:
-            values[isin] = 0.0
-            price_dates[isin] = None
-            continue
-
-        series = _build_series(db_path, isin, capped, as_of, currency_meta_path)
-        val = _value_on(series, as_of, db_path)
-
-        if val is None:
-            values[isin] = None
-            price_dates[isin] = None
-            if isin not in targets:
-                untargeted_unvaluable.append(isin)
-        else:
-            values[isin] = val
-            price_dates[isin] = _price_date_asof(series, as_of)
-
-    return values, frozenset(held_isins), sorted(untargeted_unvaluable), price_dates
 
 
 def _build_rows(
@@ -648,7 +446,7 @@ def _cmd_rebalance(
 
     targets: dict[str, float] = {isin: pct / 100.0 for isin, pct in targets_raw}
     values, held, untargeted_unvaluable, price_dates = _assemble(
-        db_path, config_path, currency_meta_path, targets, as_of
+        db_path, currency_meta_path, targets, as_of
     )
     plan = compute_rebalance(targets, values, held)
 
@@ -759,11 +557,17 @@ Provenance (ADR-0014, off by default): --show-status adds a Status column;
   --explain adds one provenance block (implies --show-status), reconstructed
   from source — which bound produced V'_min, all binding fund(s), residual split.
 
+Scenarios (ADR-0017): save a basket once with 'e1f scenario save NAME ...' and
+  recall it with --scenario NAME (loads its targets and stored months). A
+  --months / --as-of typed here overrides the scenario's stored value.
+
 Examples:
   e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40
   e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40 --months 10
   e1f rebalance --target IE00B4L5Y983:30 --explain
   e1f rebalance --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --as-of 2025-12-31
+  e1f rebalance --scenario core
+  e1f rebalance --scenario core --months 6 --explain
         """,
     )
     parser.add_argument(
@@ -778,9 +582,22 @@ Examples:
     parser.add_argument(
         "--months",
         type=_int_at_least(1),
-        default=1,
+        default=None,
         metavar="N",
-        help="Spread the plan into N equal monthly buys (≥ 1; default 1 = lump sum).",
+        help="Spread the plan into N equal monthly buys (≥ 1; default 1 = lump sum). "
+        "Overrides a scenario's stored months.",
+    )
+    parser.add_argument(
+        "--scenario",
+        "-s",
+        metavar="NAME",
+        help="Load targets (and months) from a saved scenario instead of --target "
+        "(see 'e1f scenario'). Mutually exclusive with --target.",
+    )
+    parser.add_argument(
+        "--scenarios-file",
+        default=DEFAULT_SCENARIOS,
+        help="Scenarios YAML file path (used with --scenario).",
     )
     parser.add_argument(
         "--as-of",
@@ -815,16 +632,34 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # Resolve the target source: --scenario or --target (never both).
+    if args.scenario and args.targets:
+        parser.error("--scenario and --target are mutually exclusive")
+
+    targets_raw: list[tuple[str, float]]
+    scenario_months: int | None = None
+    if args.scenario:
+        try:
+            scenario = get_scenario(args.scenario, args.scenarios_file)
+        except Exception as e:  # noqa: BLE001 — surface as a clean parser error
+            parser.error(str(e))
+        targets_raw = sorted(scenario.targets.items())
+        scenario_months = scenario.months
+    else:
+        targets_raw = args.targets or []
+
     # Post-parse cross-arg checks (cannot live in per-arg type=)
-    targets_raw: list[tuple[str, float]] = args.targets or []
     if not targets_raw:
-        parser.error("at least one --target ISIN:PCT is required")
+        parser.error("at least one --target ISIN:PCT (or --scenario NAME) is required")
     isins = [isin for isin, _ in targets_raw]
     if len(isins) != len(set(isins)):
-        parser.error("duplicate ISIN in --target arguments")
+        parser.error("duplicate ISIN in targets")
     total_pct = sum(pct for _, pct in targets_raw)
     if total_pct > 100.0 + 1e-9:
         parser.error(f"target percentages sum to {total_pct:.2f}% — must not exceed 100%")
+
+    # --months (CLI) overrides a scenario's stored months; default lump-sum is 1.
+    months = args.months if args.months is not None else (scenario_months or 1)
 
     try:
         _validate_as_of(args.as_of)
@@ -833,7 +668,7 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             args.currency_meta,
             targets_raw=targets_raw,
-            months=args.months,
+            months=months,
             as_of=args.as_of,
             show_status=args.show_status,
             explain=args.explain,

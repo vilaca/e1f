@@ -37,6 +37,7 @@ The tool exposes eleven commands around a shared config/DB:
 9. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 11. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
+12. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -96,6 +97,13 @@ e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40   # min-cash pla
 e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40 --months 10  # DCA
 e1f rebalance --target IE00B4L5Y983:30 --explain     # + provenance block (ADR-0014)
 e1f rebalance --target IE00B4L5Y983:60 --as-of 2025-12-31   # historical snapshot
+
+# 9. Save a basket once, reuse it across commands (ADR-0017)
+e1f scenario save core --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --months 10
+e1f scenario list                    # names, target counts, sums
+e1f scenario show core               # targets with fund names
+e1f rebalance --scenario core        # recall the saved basket (--months here overrides)
+e1f correlation --scenario core      # correlate the POST-rebalance portfolio it implies
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -105,7 +113,7 @@ project root, so commands work from any directory. Flag overrides are per comman
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
 `e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
 `e1f overlap --help`, `e1f correlation --help`, `e1f rebalance --help`,
-`e1f validate --help`.
+`e1f scenario --help`, `e1f validate --help`.
 
 ## Price sources
 
@@ -258,6 +266,19 @@ N equal monthly buys (a today's-prices snapshot — re-run to refresh). Infeasib
 targets are reported UNAVAILABLE with the reason and fix (never an approximate plan
 that hides a sale), exit code `0`. Provenance is opt-in per ADR-0014
 (`--show-status` / `--explain`).
+
+Scenarios: `ADR/ADR-0017_scenarios.md` (`src/e1f/scenario.py`; shared I/O and the
+rebalance plan core in `src/e1f/common.py`). `e1f scenario` saves named ISIN:pct
+baskets in one gitignored `data/scenarios.yaml` — CRUD only (`save` / `list` /
+`show` / `delete`); it never runs an analysis. The two consumers recall a basket
+with `--scenario NAME`: `rebalance` loads its targets and stored `months` (a
+`--months` / `--as-of` typed on the CLI overrides), while `correlation` correlates
+the **post-rebalance** portfolio the basket implies — targeted funds at their
+targets, untargeted funds diluted, weighted by final EUR value — answering "how
+correlated is the book I'd hold *after* this rebalance?". A basket fund need not be
+held yet (it needs only price history); an infeasible implied rebalance is reported
+UNAVAILABLE. This is why the buy-only plan core graduated into `common`, so
+`correlation` can run the plan without importing `rebalance` (ADR-0003).
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`
