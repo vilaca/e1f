@@ -7,9 +7,9 @@ IE0003XJA0J9:
   symbol: WEBN:GER:EUR
   xid: '894412378'
 IE0006WW1TQ4:
-  currency: USD
-  symbol: EXUS:LSE:USD
-  xid: '871828461'
+  currency: EUR
+  symbol: EXUS:FRA:EUR
+  xid: '870965546'
 IE000YYE6WK5:
   currency: USD
   symbol: DFNS:LSE:USD
@@ -67,9 +67,9 @@ IE00BK5BQX27:
   symbol: VWCG:GER:EUR
   xid: '544533916'
 IE00BKM4GZ66:
-  currency: USD
-  symbol: EIMI:LSE:USD
-  xid: '75070652'
+  currency: EUR
+  symbol: IS3N:GER:EUR
+  xid: '74818802'
 IE00BM67HK77:
   currency: EUR
   symbol: XDWH:GER:EUR
