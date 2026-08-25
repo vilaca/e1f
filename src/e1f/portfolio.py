@@ -24,7 +24,7 @@ from e1f.common import (
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 _SHARE_EPSILON = 1e-9
-SORT_FIELDS = ("broker", "isin", "name", "weight", "total", "units", "avg", "ter")
+SORT_FIELDS = ("broker", "isin", "name", "weight", "total", "units", "avg", "ter", "fee_yr")
 _STATUS_COL = 11
 
 
@@ -72,6 +72,20 @@ def _load_trade_rows(
             ORDER BY datetime, transaction_id
             """
         ).fetchall()
+
+
+def _last_known_price(db_path: str, isin: str) -> float | None:
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
+        ).fetchone() is None:
+            return None
+        row = conn.execute(
+            "SELECT close FROM prices"
+            " WHERE isin = ? AND close IS NOT NULL ORDER BY date DESC LIMIT 1",
+            (isin,),
+        ).fetchone()
+    return float(row[0]) if row else None
 
 
 def compute_holdings(
@@ -129,14 +143,22 @@ def _etf_name(config_path: str, symbol: str) -> str:
     return str(data.get("name", ""))[:40]
 
 
-def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str, str]:
+def _fund_meta(config_path: str, symbol: str) -> tuple[str, str, str, str, float | None]:
     data = ConfigManager(config_path).get(symbol) or {}
     asset_class = str(data.get("asset_class") or "")[:12]
     fund_currency = str(data.get("fund_currency") or "")
     distribution = str(data.get("distribution") or "")
     ter = data.get("ter")
-    ter_text = f"{float(ter):.2f}%" if isinstance(ter, (int, float)) else ""
-    return asset_class, fund_currency, distribution, ter_text
+    ter_float = float(ter) if isinstance(ter, (int, float)) else None
+    ter_text = f"{ter_float:.2f}%" if ter_float is not None else ""
+    return asset_class, fund_currency, distribution, ter_text, ter_float
+
+
+def yearly_fee_est(ter_float: float | None, total_paid: float) -> float | None:
+    """Estimated annual fee in EUR: TER% × cost basis."""
+    if ter_float is None or total_paid <= 0:
+        return None
+    return ter_float / 100.0 * total_paid
 
 
 def _distribution_label(distribution: str) -> str:
@@ -148,12 +170,17 @@ def _distribution_label(distribution: str) -> str:
 
 
 _BROKER_LABELS = {"trade_republic": "tr"}
+_ASSET_CLASS_LABELS = {"Real Estate": "REITs", "Equity": "Eqty"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 130  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 140  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
     return _BROKER_LABELS.get(broker, broker)
+
+
+def _asset_class_label(asset_class: str) -> str:
+    return _ASSET_CLASS_LABELS.get(asset_class, asset_class)
 
 
 def _sort_key(
@@ -180,6 +207,11 @@ def _sort_key(
     if sort_by == "ter":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
         return float(ter) if isinstance(ter, (int, float)) else -1.0
+    if sort_by == "fee_yr":
+        ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
+        ter_float = float(ter) if isinstance(ter, (int, float)) else None
+        fee = yearly_fee_est(ter_float, holding.total_paid)
+        return fee if fee is not None else -1.0
     raise ValueError(f"unsupported sort field: {sort_by}")
 
 
@@ -265,40 +297,51 @@ def _cmd_portfolio(
     )
 
     header = (
-        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'Asset class':<12} "
+        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'Class':<6} "
         f"{'CCY':<4} {'Dist':<4} {'TER':>6} {'Weight':>7}"
     )
     if show_cost_basis:
-        header += f" {'Units':>10} {'Avg paid':>10} {'Total paid':>10}"
+        header += f" {'Units':>10} {'Avg paid':>10} {'Last px':>8} {'Total':>8} {'Fee/yr':>8}"
     if show_status:
         header += f" {'Status':>{_STATUS_COL}}"
     print(header)
-    rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 42
+    rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 58
     if show_status:
         rule += _STATUS_COL + 1
     print("-" * rule)
+    total_fee_est = 0.0
+    has_any_fee = False
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
-        asset_class, fund_currency, distribution, ter = _fund_meta(
+        asset_class, fund_currency, distribution, ter, ter_float = _fund_meta(
             config_path, holding.symbol
         )
         weight = holding_weight_pct(holding, total_invested)
         row = (
             f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
-            f"{asset_class:<12} {fund_currency:<4} "
+            f"{_asset_class_label(asset_class):<6} {fund_currency:<4} "
             f"{_distribution_label(distribution):<4} {ter:>6} {weight:>6.1f}%"
         )
         if show_cost_basis:
+            fee = yearly_fee_est(ter_float, holding.total_paid)
+            fee_str = f"€{fee:.2f}" if fee is not None else "—"
+            if fee is not None:
+                total_fee_est += fee
+                has_any_fee = True
+            last_px = _last_known_price(db_path, holding.symbol)
+            last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
             row += (
                 f" {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
-                f" {holding.total_paid:>10.4f}"
+                f" {last_px_str} {holding.total_paid:>8.2f} {fee_str:>8}"
             )
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
     total = f"\nTotal: {len(holdings)} holdings"
     if show_cost_basis:
-        total += f", {total_invested:.4f} total paid"
+        total += f", {total_invested:.2f} total paid"
+        if has_any_fee:
+            total += f", ~€{total_fee_est:.2f}/yr in fees"
     print(total)
     if explain:
         for line in render_holdings_explain(holdings, config_path, total_invested):

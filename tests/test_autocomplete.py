@@ -45,6 +45,7 @@ def test_completes_nested_commands_and_options(capsys):
         "units",
         "avg",
         "ter",
+        "fee_yr",
     }
 
 
