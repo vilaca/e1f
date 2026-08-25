@@ -10,6 +10,7 @@ from e1f.portfolio import (
     compute_holdings,
     holding_weight_pct,
     sort_holdings,
+    yearly_fee_est,
     _broker_label,
     _distribution_label,
 )
@@ -134,6 +135,12 @@ def test_holding_weight_pct():
     assert holding_weight_pct(holdings[0], total) == 75.0
     assert holding_weight_pct(holdings[1], total) == 25.0
     assert holding_weight_pct(holdings[0], 0.0) == 0.0
+
+
+def test_yearly_fee_est():
+    assert yearly_fee_est(0.20, 1000.0) == pytest.approx(2.0)
+    assert yearly_fee_est(None, 1000.0) is None
+    assert yearly_fee_est(0.20, 0.0) is None
 
 
 def test_distribution_label():
@@ -269,14 +276,14 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
     assert "trade_republic" not in out
     assert ISIN_ETF in out
     assert "Core MSCI World USD (Acc)" in out
-    assert "Asset class" in out
-    assert "Equity" in out
+    assert "Class" in out
+    assert "Eqty" in out
     assert "USD" in out
     assert "ACC" in out
     assert "Accumulating" not in out
     assert "0.22%" in out
     assert "Avg paid" in out
-    assert "Total paid" in out
+    assert "Total" in out
     assert "Weight" in out
     assert "Total: 1 holdings" in out
 
@@ -323,7 +330,38 @@ def test_main_portfolio_displays_money_with_four_decimals(tmp_path, capsys):
     assert code == 0
     assert "15.7826" in out
     assert "12.5455" in out
-    assert "198.0000" in out
+    assert "198.00" in out
+
+
+def test_main_portfolio_shows_yearly_fee_estimate(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {ISIN_ETF: {"name": "Test ETF", "ter": 0.20}}}))
+
+    from contextlib import closing
+    import sqlite3
+    from e1f.transactions import BROKER_TRADE_REPUBLIC, init_transactions_database
+
+    init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (BROKER_TRADE_REPUBLIC, "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 1000.0, 0.0, 0.0),
+        )
+        conn.commit()
+
+    # Fee/yr is only shown with --show-cost-basis
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Fee/yr" not in out
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config), "--show-cost-basis"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Fee/yr" in out
+    assert "€2.00" in out          # 0.20% of €1000 = €2.00
+    assert "~€2.00/yr in fees" in out
 
 
 def test_main_portfolio_unknown_isin_shows_blank_name(tmp_path, capsys):
