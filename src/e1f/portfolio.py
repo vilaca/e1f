@@ -149,7 +149,7 @@ def _distribution_label(distribution: str) -> str:
 
 _BROKER_LABELS = {"trade_republic": "tr"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 136  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 130  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -269,7 +269,7 @@ def _cmd_portfolio(
         f"{'CCY':<4} {'Dist':<4} {'TER':>6} {'Weight':>7}"
     )
     if show_cost_basis:
-        header += f" {'Units':>10} {'Avg paid':>12} {'Total paid':>14}"
+        header += f" {'Units':>10} {'Avg paid':>10} {'Total paid':>10}"
     if show_status:
         header += f" {'Status':>{_STATUS_COL}}"
     print(header)
@@ -290,8 +290,8 @@ def _cmd_portfolio(
         )
         if show_cost_basis:
             row += (
-                f" {holding.shares:>10.4f} {holding.avg_cost:>12.4f}"
-                f" {holding.total_paid:>14.4f}"
+                f" {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
+                f" {holding.total_paid:>10.4f}"
             )
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
