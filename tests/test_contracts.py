@@ -34,6 +34,7 @@ def test_cli_commands_surface():
         "concentration",
         "overlap",
         "correlation",
+        "rebalance",
     }
 
 

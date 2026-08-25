@@ -24,7 +24,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes ten commands around a shared config/DB:
+The tool exposes eleven commands around a shared config/DB:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
@@ -36,6 +36,7 @@ The tool exposes ten commands around a shared config/DB:
 8. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
 9. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
+11. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -89,6 +90,12 @@ e1f correlation                      # redundant pairs (ρ, combined weight) + c
 e1f correlation --explain            # reconstruct each flagged pair from source
 e1f correlation --explain IE00B4L5Y983 IE00BK5BQT80   # reconstruct one named pair
 e1f correlation --rho-flag 0.95 --weight-flag 0.10   # tune the flag thresholds
+
+# 8. Plan a buy-only rebalance to target weights (percents of the whole book)
+e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40   # min-cash plan
+e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40 --months 10  # DCA
+e1f rebalance --target IE00B4L5Y983:30 --explain     # + provenance block (ADR-0014)
+e1f rebalance --target IE00B4L5Y983:60 --as-of 2025-12-31   # historical snapshot
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -97,7 +104,8 @@ the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
 `e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f correlation --help`, `e1f validate --help`.
+`e1f overlap --help`, `e1f correlation --help`, `e1f rebalance --help`,
+`e1f validate --help`.
 
 ## Price sources
 
@@ -235,6 +243,21 @@ reconstructs just that pair on demand, at any status and regardless of the flag
 thresholds. Each ISIN in the report is annotated with its fund name from the
 universe config (`--config`). This command adds a runtime dependency on scipy (used only
 for the clustering step; Pearson ρ is computed in pure NumPy).
+
+Rebalance: `ADR/ADR-0016_rebalance_command.md` (output in `src/e1f/rebalance.py`).
+`e1f rebalance` is the family's one **prescriptive** command — but arithmetic, not an
+optimizer: the user names target weights and it computes the unique **buy-only**
+plan (never selling; an overweight holding is diluted, never trimmed) that reaches
+them at the minimum fresh cash `C_min`. Targets are percents of the **whole valued
+book**, so they need not sum to 100% — the remainder is a residual shared pro-rata
+by current EUR value among untargeted holdings. The report opens with a target recap
+(the target sum, and each target scaled to 100% among the targeted funds), then the
+plan table — one row per fund in (valued held ∪ targeted), each fund's `Buy€`, the
+binding fund(s) that force `C_min`, and a `TOTAL`. `--months N` slices the plan into
+N equal monthly buys (a today's-prices snapshot — re-run to refresh). Infeasible
+targets are reported UNAVAILABLE with the reason and fix (never an approximate plan
+that hides a sale), exit code `0`. Provenance is opt-in per ADR-0014
+(`--show-status` / `--explain`).
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`
