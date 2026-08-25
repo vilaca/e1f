@@ -6,6 +6,8 @@ Usage:
     e1f fetch IE00BM67HK77    # fetch a single ISIN
     e1f fetch --force         # ignore the cache and re-download
     e1f fetch IE00BM67HK77 --replace  # atomically replace one stored series
+    e1f fetch --replace               # replace all series in the config
+    e1f fetch --replace --portfolio   # replace all series with an open position
     e1f fetch --fallback      # fall back to yfinance when ftgo has no data
 
 Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
@@ -698,11 +700,6 @@ class DataExtractor:
 
     def fetch(self, isin: str | None = None) -> pd.DataFrame:
         """Fetch data for specific ISIN or all ETFs and persist to the DB."""
-        # replace is destructive (delete-then-insert per ISIN); never let it run
-        # across the whole universe. Enforced here, not just in the CLI, so
-        # library callers can't wipe every series with a bare fetch().
-        if self.replace and not isin:
-            raise ValueError("replace requires a single ISIN")
 
         etfs: Mapping[str, ETFDefinition | None]
         if isin:
@@ -809,10 +806,11 @@ Examples:
   # Force a re-download, ignoring the cache
   e1f fetch --force
 
-  # Repair one ETF by atomically replacing its complete stored series.
-  # Deletes the stored rows first; refuses to shrink the series (a sign of a
+  # Repair one or more ETFs by atomically replacing their stored series.
+  # Deletes stored rows first; refuses to shrink the series (a sign of a
   # truncated response) unless --allow-shrink is also given.
   e1f fetch IE00BM67HK77 --replace
+  e1f fetch --replace --portfolio
         """
     )
 
@@ -825,7 +823,7 @@ Examples:
     refresh_group.add_argument(
         '--replace',
         action='store_true',
-        help="Replace one ISIN's complete stored series after a successful fetch",
+        help="Replace complete stored series after a successful fetch (one ISIN, --portfolio, or all)",  # noqa: E501
     )
     parser.add_argument(
         '--allow-shrink',
@@ -858,10 +856,6 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
     args = _build_parser().parse_args(argv)
-
-    if args.replace and not args.isin:
-        print("✗ Error: --replace requires an ISIN")
-        return 1
 
     if args.allow_shrink and not args.replace:
         print("✗ Error: --allow-shrink only applies with --replace")
