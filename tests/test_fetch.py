@@ -503,20 +503,18 @@ def test_fetch_replace_truncated_response_preserves_stored_rows(tmp_path, monkey
     assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0, 102.0]
 
 
-def test_fetch_replace_without_isin_raises_before_touching_data(tmp_path, monkeypatch):
-    # The CLI guards this, but a library caller must not be able to replace the
-    # whole universe with a bare fetch(). The guard runs before any fetch/DELETE.
+def test_fetch_replace_without_isin_replaces_all(tmp_path, monkeypatch):
+    monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
     ext = make_extractor(tmp_path, replace=True)
     ext._save_prices(ISIN, close_df([100.0, 101.0]))
     monkeypatch.setattr(
         ext, '_fetch_ftgo',
-        lambda *a, **k: pytest.fail('fetch must abort before hitting a source'),
+        lambda isin, ticker, start=None: close_df([200.0, 201.0, 202.0]),
     )
 
-    with pytest.raises(ValueError, match='replace requires a single ISIN'):
-        ext.fetch()
+    ext.fetch()
 
-    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+    assert list(ext._stored_series(ISIN)['close']) == [200.0, 201.0, 202.0]
 
 
 def test_fetch_replace_via_yfinance_fallback(tmp_path, monkeypatch):
@@ -781,10 +779,33 @@ def test_main_failure_returns_1(tmp_path, monkeypatch, capsys):
     assert 'No data fetched' in capsys.readouterr().out
 
 
-def test_main_replace_requires_isin(capsys):
+def test_main_replace_without_isin_accepted(capsys, tmp_path, monkeypatch):
+    monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
+    monkeypatch.setattr('e1f.fetch.DEFAULT_DB', str(tmp_path / 'e1f.db'))
     rc = fetch_mod.main(['--replace'])
-    assert rc == 1
-    assert '--replace requires an ISIN' in capsys.readouterr().out
+    assert rc == 0
+
+
+def test_replace_portfolio_replaces_only_held_isin(tmp_path, monkeypatch):
+    monkeypatch.setattr('e1f.fetch.time.sleep', lambda s: None)
+    other_isin = 'IE00B4K48X80'
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    ext._save_prices(other_isin, close_df([50.0, 51.0]))
+    seed_held(ext, ISIN)
+    fetched = []
+    monkeypatch.setattr(
+        ext, '_fetch_ftgo',
+        lambda isin, ticker, start=None: fetched.append(isin) or close_df([200.0, 201.0, 202.0]),
+    )
+    held = fetch_mod.portfolio_isins(ext.db_path)
+    ext.etf_universe = {k: v for k, v in ext.etf_universe.items() if k in held}
+
+    ext.fetch()
+
+    assert fetched == [ISIN]
+    assert list(ext._stored_series(ISIN)['close']) == [200.0, 201.0, 202.0]
+    assert list(ext._stored_series(other_isin)['close']) == [50.0, 51.0]
 
 
 def test_main_allow_shrink_requires_replace(capsys):
