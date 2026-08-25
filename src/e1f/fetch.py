@@ -567,7 +567,7 @@ class DataExtractor:
         since = None
         if have_existing and not self.force_refresh:
             assert existing is not None
-            since = existing.index.max() + pd.Timedelta(days=1)
+            since = existing.index.max()
 
         df = self._fetch_fx_ftgo(base, quote, since)
         source = "ftgo"
@@ -729,7 +729,9 @@ class DataExtractor:
             since = None
             if have_existing and not self.force_refresh:
                 assert existing is not None
-                since = existing.index.max() + pd.Timedelta(days=1)
+                # ftgo returns empty when start == end; overlap by one day so the
+                # range is always start < end. The DO NOTHING upsert makes this safe.
+                since = existing.index.max()
 
             fetched = None  # (source, label) on success
             # ftgo resolves by ISIN (a single, pinned security), so try it once.
