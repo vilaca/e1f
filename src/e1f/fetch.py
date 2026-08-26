@@ -23,7 +23,6 @@ import time
 import warnings
 from collections.abc import Mapping
 from contextlib import closing
-from datetime import UTC, datetime
 from typing import Any, cast
 
 import pandas as pd
@@ -38,18 +37,11 @@ from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     DEFAULT_START_DATE,
-    DIMENSION_ASSET_CLASS,
-    DIMENSION_SECTOR,
-    DIMENSION_SECURITY,
     UNSUPPORTED_FX_CURRENCIES,
     ConfigManager,
     ETFDefinition,
-    HoldingRow,
     call_with_retry,
     fund_currency_from_name,
-    init_lookthrough_schema,
-    insert_lookthrough_snapshot,
-    normalize_security_name,
     portfolio_isins,
 )
 
@@ -210,9 +202,6 @@ class DataExtractor:
                     PRIMARY KEY (base, quote, date)
                 )
             """)
-            # Look-through snapshot tables (ADR-0012) live in the same DB; the
-            # concentration command reads what a bulk fetch caches here.
-            init_lookthrough_schema(conn)
             conn.commit()
 
     @staticmethod
@@ -588,116 +577,6 @@ class DataExtractor:
         else:
             logger.warning(f"✗ {base}/{quote} — all FX sources failed")
 
-    # ------------------------------------------------------------------
-    # Look-through (ADR-0012): cache each held fund's yfinance funds_data
-    # composition as an immutable snapshot, so `concentration` runs offline.
-    # yfinance is the only look-through source, so this refreshes regardless of
-    # --fallback; it is best-effort and never fails a price/FX fetch.
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _ticker_candidates(ticker: str) -> list[str]:
-        candidates = [ticker]
-        if not any(ticker.endswith(suffix) for suffix in (".L", ".DE")):
-            candidates += [ticker + ".L", ticker + ".DE"]
-        return candidates
-
-    @staticmethod
-    def _scale_weights(pairs: list[tuple[str, float]]) -> list[tuple[str, float]]:
-        """Normalize a weight group to fractions; scale down if it looks like percent."""
-        values = [w for _, w in pairs]
-        if values and max(values) > 1.5:
-            return [(name, w / 100.0) for name, w in pairs]
-        return pairs
-
-    def _security_rows(self, funds_data: Any) -> list[HoldingRow]:
-        try:
-            df = funds_data.top_holdings
-        except Exception:  # noqa: BLE001 — yfinance raises arbitrary types on missing data
-            return []
-        if df is None or getattr(df, "empty", True):
-            return []
-        pairs: list[tuple[str, float]] = []
-        for index, row in df.iterrows():
-            name = str(row.get("Name") or index or "").strip()
-            pct = row.get("Holding Percent")
-            if not name or pct is None:
-                continue
-            pairs.append((name, float(pct)))
-        pairs = self._scale_weights(pairs)
-        pairs.sort(key=lambda p: p[1], reverse=True)
-        return [
-            HoldingRow(DIMENSION_SECURITY, name, normalize_security_name(name), weight, rank)
-            for rank, (name, weight) in enumerate(pairs, start=1)
-        ]
-
-    def _weight_rows(
-        self, funds_data: Any, attribute: str, dimension: str
-    ) -> list[HoldingRow]:
-        try:
-            mapping = getattr(funds_data, attribute)
-        except Exception:  # noqa: BLE001 — yfinance raises arbitrary types on missing data
-            return []
-        if not isinstance(mapping, Mapping):
-            return []
-        pairs = [(str(k), float(v)) for k, v in mapping.items() if v is not None]
-        pairs = self._scale_weights(pairs)
-        return [HoldingRow(dimension, name, None, weight, None) for name, weight in pairs]
-
-    def _lookthrough_rows(self, funds_data: Any) -> list[HoldingRow]:
-        return [
-            *self._security_rows(funds_data),
-            *self._weight_rows(funds_data, "sector_weightings", DIMENSION_SECTOR),
-            *self._weight_rows(funds_data, "asset_classes", DIMENSION_ASSET_CLASS),
-        ]
-
-    def _fetch_lookthrough(self, tickers: list[str]) -> list[HoldingRow] | None:
-        for ticker in tickers:
-            for candidate in self._ticker_candidates(ticker):
-                try:
-                    funds_data = call_with_retry(
-                        f"yfinance funds_data {candidate}",
-                        lambda c=candidate: yf.Ticker(c).funds_data,  # type: ignore[misc]
-                        retries=2,
-                        is_retryable=self._yf_rate_limited,
-                    )
-                except Exception as e:  # noqa: BLE001 — yfinance raises arbitrary types
-                    logger.debug("yfinance funds_data failed for %s: %s", candidate, e)
-                    continue
-                rows = self._lookthrough_rows(funds_data)
-                if rows:
-                    return rows
-        return None
-
-    def _refresh_lookthrough(self) -> None:
-        """Refresh look-through snapshots for every held fund (best-effort)."""
-        today = self.end_date.strftime("%Y-%m-%d")
-        retrieved_at = datetime.now(UTC).isoformat()
-        for isin in sorted(portfolio_isins(self.db_path)):
-            etf = self.etf_universe.get(isin)
-            if not etf or not etf.tickers:
-                continue
-            rows = self._fetch_lookthrough(etf.tickers)
-            if not rows:
-                logger.warning(f"✗ {isin} {etf.name} — no yfinance look-through")
-                continue
-            snapshot_id = insert_lookthrough_snapshot(
-                self.db_path,
-                fund_id=isin,
-                as_of=today,
-                source="yfinance",
-                tier="provider",
-                retrieved_at=retrieved_at,
-                reported_holding_count=None,
-                holdings=rows,
-            )
-            if snapshot_id is None:
-                logger.info(f"{isin} look-through — unchanged")
-            else:
-                logger.info(
-                    f"{isin} look-through — snapshot #{snapshot_id} ({len(rows)} rows)"
-                )
-
     def fetch(self, isin: str | None = None) -> pd.DataFrame:
         """Fetch data for specific ISIN or all ETFs and persist to the DB."""
 
@@ -773,12 +652,10 @@ class DataExtractor:
             raise RuntimeError("No data fetched")
 
         # Keep the daily FX series for the held portfolio current alongside a
-        # bulk price fetch (ADR-0010), and refresh the held funds' look-through
-        # cache (ADR-0012). Targeted single-ISIN fetches and --replace repairs
-        # both carry an ISIN, so both refreshes are skipped for them.
+        # bulk price fetch (ADR-0010). Targeted single-ISIN fetches and --replace
+        # repairs carry an ISIN, so the FX refresh is skipped for them.
         if isin is None:
             self._refresh_fx()
-            self._refresh_lookthrough()
 
         combined = pd.DataFrame(data_dict)
         combined = combined.sort_index().ffill().dropna()

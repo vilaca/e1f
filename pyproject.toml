@@ -31,7 +31,7 @@ src = ["src"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "UP", "SIM", "PLR", "BLE", "DTZ", "RUF"]
+select = ["E", "F", "B", "UP", "SIM", "PLR", "PLC0415", "BLE", "DTZ", "RUF"]
 # Intentional mathematical notation in the correlation command's report and
 # docstrings: ρ (Pearson correlation), × (pair separator), − (minus in formulae).
 allowed-confusables = ["ρ", "×", "−"]
@@ -43,6 +43,11 @@ ignore = [
     "PLR0915",  # too-many-statements in config.main
     "PLR2004",  # magic-value-comparison: HTTP status codes (429, 500, 600) are self-documenting
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Application code keeps all imports at the top of the file (PLC0415). Tests may
+# import locally — deferred loads after fixture setup, per-test symbol pulls.
+"tests/**" = ["PLC0415"]
 
 [tool.mypy]
 strict = true
@@ -59,8 +64,41 @@ name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.concentration | e1f.overlap | e1f.correlation | e1f.rebalance | e1f.scenario",
+    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.correlation | e1f.rebalance | e1f.scenario",
     "e1f.common",
+]
+
+# Experimental tier is isolated (ADR-0024): stable command modules and shared
+# ``common`` may never import ``e1f.experimental``. The CLI router (``e1f.cli``)
+# is deliberately absent from the sources — it is the sole crossing, so it can
+# register the experimental commands.
+[[tool.importlinter.contracts]]
+name = "Experimental tier is isolated: only cli may import it (ADR-0024)"
+type = "forbidden"
+source_modules = [
+    "e1f.autocomplete",
+    "e1f.config",
+    "e1f.fetch",
+    "e1f.validate",
+    "e1f.transactions",
+    "e1f.portfolio",
+    "e1f.performance",
+    "e1f.correlation",
+    "e1f.rebalance",
+    "e1f.scenario",
+    "e1f.common",
+]
+forbidden_modules = ["e1f.experimental"]
+
+# Within the experimental tier: command modules depend on experimental.common
+# (and not on each other); experimental.common never imports the commands. It
+# may still consume shared ``e1f.common`` (unconstrained here).
+[[tool.importlinter.contracts]]
+name = "Experimental layers: commands -> experimental.common (ADR-0024)"
+type = "layers"
+layers = [
+    "e1f.experimental.backtest | e1f.experimental.concentration | e1f.experimental.overlap | e1f.experimental.lookthrough",
+    "e1f.experimental.common",
 ]
 
 [tool.setuptools.packages.find]

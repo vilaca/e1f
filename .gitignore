@@ -232,3 +232,4 @@ data/scenarios.yaml
 
 # Working handoff notes (local scaffolding, not part of the repo)
 /handoff-*.md
+.claude/projects/

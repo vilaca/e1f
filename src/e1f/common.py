@@ -6,16 +6,17 @@ The ``config`` command writes the universe; the ``fetch`` command reads it
 back.
 """
 
+import bisect
 import builtins
 import logging
 import os
 import re
 import sqlite3
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any, Self
 
 import requests
 import yaml
+from ftgo import get_fund_stats, get_xid
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +190,6 @@ def _best_ftgo_name(names: list[str], hint: str) -> str:
 
 def _ftgo_load(isin: str) -> tuple[Any, str | None]:
     try:
-        from ftgo import get_xid
-
         matches = get_xid(isin, display_mode="all")
         if matches is None or matches.empty:
             return None, "no FT Markets listing"
@@ -226,8 +226,6 @@ def _ftgo_xid_for_hint(matches: Any, hint: str) -> str:
 
 
 def _ftgo_ter(matches: Any, hint: str) -> float | None:
-    from ftgo import get_fund_stats
-
     stats = get_fund_stats(_ftgo_xid_for_hint(matches, hint))
     for field in _FTGO_TER_FIELDS:
         if field in stats:
@@ -576,8 +574,6 @@ def load_trades(
     ``transaction_id`` so average-cost accounting is deterministic. Empty when the
     ``transactions`` table is absent.
     """
-    import sqlite3
-    from contextlib import closing
 
     with closing(sqlite3.connect(db_path)) as conn:
         if conn.execute(
@@ -681,8 +677,6 @@ def pinned_quote_currency(
 
 def portfolio_isins(db_path: str) -> frozenset[str]:
     """ISINs with a net-positive position derived from stored transactions."""
-    import sqlite3
-    from contextlib import closing
 
     with closing(sqlite3.connect(db_path)) as conn:
         if conn.execute(
@@ -717,8 +711,6 @@ def fx_rate_asof(db_path: str, quote: str, date: str, base: str = BASE_CURRENCY)
     ``date`` — an unfetched pair, or a date preceding the series — so a caller can
     never silently value with a missing rate.
     """
-    import sqlite3
-    from contextlib import closing
 
     if quote == base:
         return 1.0
@@ -787,8 +779,6 @@ def position_asof(events: list[PositionEvent], day: str) -> tuple[float, float]:
 
 def price_index_asof(series: HoldingSeries, day: str) -> int:
     """Index of the nearest-prior priced day on or before ``day`` (-1 if none)."""
-    import bisect
-
     return bisect.bisect_right(series.price_dates, day) - 1
 
 
@@ -888,348 +878,6 @@ def fund_eur_value(
     return value_on(build_series(db_path, isin, events, as_of, currency_meta_path), as_of, db_path)
 
 
-# ---------------------------------------------------------------------------
-# Look-through snapshots (ADR-0012): immutable, append-only observations of a
-# fund's composition, split header (``holdings_snapshot``) / children
-# (``holding``). Shared here so ``fetch`` can populate them and ``concentration``
-# can read them without the two command modules importing each other (ADR-0003).
-# ---------------------------------------------------------------------------
-
-# The three look-through dimensions stored per snapshot. ``security`` rows are
-# rank-ordered named holdings (top-10 from yfinance); ``sector`` / ``asset_class``
-# rows are complete weightings and carry no rank.
-DIMENSION_SECURITY = "security"
-DIMENSION_SECTOR = "sector"
-DIMENSION_ASSET_CLASS = "asset_class"
-
-# Source tier priority: higher wins when several snapshots exist for one fund
-# (ADR-0012 decision 5). ``provider`` is yfinance; the rest are v1b territory.
-_TIER_RANK = {"inferred": 0, "provider": 1, "curated": 2, "issuer": 3}
-
-_SECURITY_SUFFIXES = frozenset(
-    {"inc", "corp", "co", "plc", "ltd", "ag", "sa", "nv", "se", "the", "class"}
-)
-
-
-@dataclass(frozen=True)
-class HoldingRow:
-    """One child row of a look-through snapshot (one dimension, one key)."""
-
-    dimension: str
-    raw_name: str
-    normalized_name: str | None
-    weight: float
-    rank: int | None
-
-
-@dataclass(frozen=True)
-class LookthroughSnapshot:
-    """One immutable observation of one fund's composition from one source."""
-
-    id: int
-    fund_id: str
-    as_of: str
-    source: str
-    tier: str
-    retrieved_at: str
-    reported_holding_count: int | None
-    holdings: list[HoldingRow]
-
-    def by_dimension(self, dimension: str) -> list[HoldingRow]:
-        return [h for h in self.holdings if h.dimension == dimension]
-
-    @property
-    def tier_rank(self) -> int:
-        return _TIER_RANK.get(self.tier, _TIER_RANK["provider"])
-
-
-def normalize_security_name(name: str) -> str:
-    """Fold a holding name to a coarse match key — a *hint*, never identity.
-
-    Lower-cases, drops punctuation and common corporate suffixes, and collapses
-    whitespace so ``"Apple Inc."`` and ``"APPLE INC"`` co-occur in the unresolved
-    overlap-candidate signal (ADR-0012 decision 2). It deliberately does not
-    resolve share classes, dual listings, or ADRs — that is the reviewed
-    ``security_alias`` work of v1b, not a string algorithm.
-    """
-    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
-    kept = [t for t in tokens if t not in _SECURITY_SUFFIXES]
-    return " ".join(kept or tokens)
-
-
-def init_lookthrough_schema(conn: sqlite3.Connection) -> None:
-    """Create the ADR-0012 look-through tables if absent (idempotent).
-
-    ``holdings_snapshot`` is the immutable header (one observation of one fund
-    from one source/tier); ``holding`` holds its children across all three
-    dimensions; ``security_alias`` is the deliberately-empty v1a resolution table
-    that v1b fills incrementally from the overlap-candidate report.
-    """
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS holdings_snapshot (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fund_id TEXT NOT NULL,
-            as_of TEXT NOT NULL,
-            source TEXT NOT NULL,
-            tier TEXT NOT NULL,
-            retrieved_at TEXT NOT NULL,
-            reported_holding_count INTEGER
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS holding (
-            snapshot_id INTEGER NOT NULL,
-            dimension TEXT NOT NULL,
-            raw_name TEXT NOT NULL,
-            normalized_name TEXT,
-            weight REAL NOT NULL,
-            rank INTEGER,
-            FOREIGN KEY (snapshot_id) REFERENCES holdings_snapshot(id)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS security_alias (
-            raw_name TEXT PRIMARY KEY,
-            canonical_name TEXT,
-            canonical_key TEXT,
-            reviewed_at TEXT
-        )
-        """
-    )
-    conn.commit()
-
-
-def _snapshot_signature(
-    reported_holding_count: int | None, holdings: list[HoldingRow]
-) -> tuple[Any, ...]:
-    """Content fingerprint for identical-observation dedupe (as_of excluded).
-
-    Two observations with the same composition are the *same* snapshot even if
-    re-fetched on a later day, so the auto-refresh never becomes a fetch log
-    (ADR-0012 decision 5). Weights are rounded to absorb float noise.
-    """
-    return (
-        reported_holding_count,
-        tuple(
-            sorted(
-                (h.dimension, h.raw_name, round(h.weight, 8), h.rank) for h in holdings
-            )
-        ),
-    )
-
-
-def _load_snapshot(conn: sqlite3.Connection, header: tuple[Any, ...]) -> LookthroughSnapshot:
-    snapshot_id, fund_id, as_of, source, tier, retrieved_at, reported = header
-    rows = conn.execute(
-        "SELECT dimension, raw_name, normalized_name, weight, rank "
-        "FROM holding WHERE snapshot_id = ? ORDER BY rank IS NULL, rank, raw_name",
-        (snapshot_id,),
-    ).fetchall()
-    holdings = [
-        HoldingRow(
-            dimension=str(dim),
-            raw_name=str(raw),
-            normalized_name=None if norm is None else str(norm),
-            weight=float(weight),
-            rank=None if rank is None else int(rank),
-        )
-        for dim, raw, norm, weight, rank in rows
-    ]
-    return LookthroughSnapshot(
-        id=int(snapshot_id),
-        fund_id=str(fund_id),
-        as_of=str(as_of),
-        source=str(source),
-        tier=str(tier),
-        retrieved_at=str(retrieved_at),
-        reported_holding_count=None if reported is None else int(reported),
-        holdings=holdings,
-    )
-
-
-_SNAPSHOT_COLUMNS = "id, fund_id, as_of, source, tier, retrieved_at, reported_holding_count"
-
-
-def _latest_for_source_tier(
-    conn: sqlite3.Connection, fund_id: str, source: str, tier: str
-) -> LookthroughSnapshot | None:
-    header = conn.execute(
-        f"SELECT {_SNAPSHOT_COLUMNS} FROM holdings_snapshot "
-        "WHERE fund_id = ? AND source = ? AND tier = ? ORDER BY id DESC LIMIT 1",
-        (fund_id, source, tier),
-    ).fetchone()
-    return None if header is None else _load_snapshot(conn, header)
-
-
-def insert_lookthrough_snapshot(
-    db_path: str,
-    *,
-    fund_id: str,
-    as_of: str,
-    source: str,
-    tier: str,
-    retrieved_at: str,
-    reported_holding_count: int | None,
-    holdings: list[HoldingRow],
-) -> int | None:
-    """Append one immutable snapshot, skipping an identical re-observation.
-
-    Returns the new snapshot id, or ``None`` when the latest snapshot for the
-    same ``(fund, source, tier)`` is content-identical (ADR-0012 decision 5:
-    corrections append, identical re-observations do not). Never mutates an
-    existing snapshot.
-    """
-    with closing(sqlite3.connect(db_path)) as conn:
-        init_lookthrough_schema(conn)
-        latest = _latest_for_source_tier(conn, fund_id, source, tier)
-        if latest is not None and _snapshot_signature(
-            latest.reported_holding_count, latest.holdings
-        ) == _snapshot_signature(reported_holding_count, holdings):
-            return None
-
-        cursor = conn.execute(
-            "INSERT INTO holdings_snapshot "
-            "(fund_id, as_of, source, tier, retrieved_at, reported_holding_count) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (fund_id, as_of, source, tier, retrieved_at, reported_holding_count),
-        )
-        snapshot_id = int(cursor.lastrowid or 0)
-        conn.executemany(
-            "INSERT INTO holding "
-            "(snapshot_id, dimension, raw_name, normalized_name, weight, rank) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                (snapshot_id, h.dimension, h.raw_name, h.normalized_name, h.weight, h.rank)
-                for h in holdings
-            ],
-        )
-        conn.commit()
-        return snapshot_id
-
-
-def latest_lookthrough_snapshot(db_path: str, fund_id: str) -> LookthroughSnapshot | None:
-    """The analysis snapshot for a fund: highest tier, then latest as_of, then id.
-
-    Prior snapshots are retained as evidence (immutable append-only); this picks
-    the one analysis should read (ADR-0012 decision 5). ``None`` when the fund has
-    no look-through observation yet.
-    """
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='holdings_snapshot'"
-        ).fetchone() is None:
-            return None
-        headers = conn.execute(
-            f"SELECT {_SNAPSHOT_COLUMNS} FROM holdings_snapshot WHERE fund_id = ?",
-            (fund_id,),
-        ).fetchall()
-        if not headers:
-            return None
-        snapshots = [_load_snapshot(conn, header) for header in headers]
-
-    return max(snapshots, key=lambda s: (s.tier_rank, s.as_of, s.id))
-
-
-# ---------------------------------------------------------------------------
-# Cross-fund overlap primitives (ADR-0013 decision 8), graduated down from
-# ``concentration`` so both ``concentration`` (its unresolved signal) and
-# ``overlap`` (its worklist + floor) consume one home. The Tier-1 co-occurrence
-# scan is snapshot-only (no command-layer type dependency).
-# ---------------------------------------------------------------------------
-
-
-def overlap_candidates(
-    funds: Iterable[tuple[str, LookthroughSnapshot | None]],
-) -> list[tuple[str, int]]:
-    """Raw security names co-occurring in ≥2 funds' top holdings — the *unresolved*
-    signal (ADR-0012 Tier-1 seed / ADR-0013 decision 3).
-
-    ``funds`` is ``(fund_id, snapshot)`` pairs. Grouped by normalized name (a
-    hint), reported with a representative raw name and the fund count. Never
-    summed into an exposure figure (ADR-0012 decision 2): its only job is to point
-    at where v1b's reviewed canonical resolution would pay off.
-    """
-    by_norm: dict[str, tuple[str, set[str]]] = {}
-    for fund_id, snapshot in funds:
-        if snapshot is None:
-            continue
-        seen_here: set[str] = set()
-        for row in snapshot.by_dimension(DIMENSION_SECURITY):
-            norm = row.normalized_name or normalize_security_name(row.raw_name)
-            if norm in seen_here:
-                continue
-            seen_here.add(norm)
-            display, funds_seen = by_norm.get(norm, (row.raw_name, set()))
-            funds_seen.add(fund_id)
-            by_norm[norm] = (display, funds_seen)
-
-    candidates = [
-        (display, len(funds_seen))
-        for display, funds_seen in by_norm.values()
-        if len(funds_seen) >= 2
-    ]
-    candidates.sort(key=lambda c: (-c[1], c[0].lower()))
-    return candidates
-
-
-def load_security_aliases(db_path: str) -> dict[str, tuple[str, str]]:
-    """``raw_name -> (canonical_key, canonical_name)`` from ``security_alias``.
-
-    Only rows carrying a ``canonical_key`` (a resolved identity) are returned;
-    ``canonical_name`` falls back to the ``raw_name`` when unset. Empty when the
-    table is absent (``fetch`` never ran) or holds no resolutions yet.
-    """
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_alias'"
-        ).fetchone() is None:
-            return {}
-        rows = conn.execute(
-            "SELECT raw_name, canonical_key, canonical_name FROM security_alias "
-            "WHERE canonical_key IS NOT NULL AND canonical_key != ''"
-        ).fetchall()
-    return {
-        str(raw): (str(key), str(name) if name else str(raw))
-        for raw, key, name in rows
-    }
-
-
-def upsert_security_alias(
-    db_path: str,
-    raw_name: str,
-    canonical_key: str,
-    *,
-    canonical_name: str | None = None,
-    reviewed_at: str | None = None,
-) -> str:
-    """Idempotent upsert of one reviewed identity into ``security_alias``.
-
-    ``reviewed_at`` is stamped automatically (now, UTC) because running the write
-    *is* the human review act (ADR-0012 decision 5 / ADR-0013 decision 3);
-    re-resolving bumps it and updates the key. ``canonical_name`` defaults to the
-    ``raw_name``. Returns the ``reviewed_at`` stamp actually written.
-    """
-    reviewed_at = reviewed_at or datetime.now(UTC).isoformat()
-    canonical_name = canonical_name or raw_name
-    with closing(sqlite3.connect(db_path)) as conn:
-        init_lookthrough_schema(conn)
-        conn.execute(
-            "INSERT INTO security_alias (raw_name, canonical_name, canonical_key, reviewed_at) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(raw_name) DO UPDATE SET "
-            "canonical_name = excluded.canonical_name, "
-            "canonical_key = excluded.canonical_key, "
-            "reviewed_at = excluded.reviewed_at",
-            (raw_name, canonical_name, canonical_key, reviewed_at),
-        )
-        conn.commit()
-    return reviewed_at
-
 
 # ---------------------------------------------------------------------------
 # Provenance vocabulary (ADR-0013 decision 8), graduated down from
@@ -1285,12 +933,6 @@ def _explain_metric(
         *_limited_by(contract),
     ]
 
-
-def _snapshot_provenance(snapshot: LookthroughSnapshot) -> str:
-    return (
-        f"snapshot #{snapshot.id}, source {snapshot.source}/{snapshot.tier}, "
-        f"as_of {snapshot.as_of}, retrieved {snapshot.retrieved_at}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1618,3 +1260,97 @@ def post_rebalance_weights(
         isin: (values.get(isin) or 0.0) + buy for isin, buy in plan.buys.items()
     }
     return {isin: v for isin, v in finals.items() if v > 0.0}
+
+
+# ---------------------------------------------------------------------------
+# Money-weighted return solver (XIRR), graduated down from ``performance``
+# (ADR-0019 decision 9). ``performance`` imports ``xirr`` from here for its
+# return metrics; the contribution-timing backtest core below uses it for
+# per-strategy IRR. Newton-Raphson with a bisection fallback, Actual/365.
+# ---------------------------------------------------------------------------
+
+
+def _npv(rate: float, flows: list[tuple[float, float]]) -> float:
+    return float(sum(amount / (1.0 + rate) ** t for t, amount in flows))
+
+
+def _npv_derivative(rate: float, flows: list[tuple[float, float]]) -> float:
+    return float(sum(-t * amount / (1.0 + rate) ** (t + 1.0) for t, amount in flows))
+
+
+def _newton(
+    flows: list[tuple[float, float]],
+    *,
+    guess: float = 0.1,
+    tol: float = 1e-9,
+    iterations: int = 100,
+) -> float | None:
+    """Newton-Raphson root of NPV(rate); None if it leaves the domain or stalls."""
+    rate = guess
+    for _ in range(iterations):
+        try:
+            derivative = _npv_derivative(rate, flows)
+            if derivative == 0.0:
+                return None
+            step = _npv(rate, flows) / derivative
+        except (OverflowError, ZeroDivisionError):
+            return None
+        rate -= step
+        if rate <= -1.0:  # (1+rate) must stay positive for fractional powers
+            return None
+        if abs(step) < tol:
+            return rate if abs(_npv(rate, flows)) < 1e-6 else None
+    return None
+
+
+def _bisect(
+    flows: list[tuple[float, float]],
+    *,
+    low: float = -0.9999,
+    high: float = 100.0,
+    iterations: int = 500,
+) -> float | None:
+    """Bisection fallback on a bracket with a guaranteed sign change."""
+    f_low = _npv(low, flows)
+    f_high = _npv(high, flows)
+    if f_low == 0.0:
+        return low
+    if f_high == 0.0:
+        return high
+    if (f_low > 0.0) == (f_high > 0.0):
+        return None  # no sign change in the bracket — no root to find
+    mid = low
+    for _ in range(iterations):
+        mid = (low + high) / 2.0
+        f_mid = _npv(mid, flows)
+        if abs(f_mid) < 1e-9 or (high - low) / 2.0 < 1e-12:
+            return mid
+        if (f_mid > 0.0) == (f_low > 0.0):
+            low, f_low = mid, f_mid
+        else:
+            high = mid
+    return mid
+
+
+def xirr(cash_flows: list[tuple[str, float]]) -> float | None:
+    """Money-weighted annualized return over dated cash flows (Actual/365).
+
+    ``cash_flows`` are ``(YYYY-MM-DD, amount)`` with contributions negative
+    (money out) and the terminal value positive (money notionally back). Solves
+    ``sum(amount / (1+r)^(days/365)) = 0`` by Newton with a bisection fallback.
+    Returns ``None`` (never a wrong number) when there is no sign change (all
+    same-sign flows) or neither method converges (ADR-0011 guards this to
+    ``n/a``).
+    """
+    if len(cash_flows) < 2:
+        return None
+    amounts = [amount for _, amount in cash_flows]
+    if not (any(a > 0 for a in amounts) and any(a < 0 for a in amounts)):
+        return None
+
+    start = min(date.fromisoformat(d) for d, _ in cash_flows)
+    flows = [
+        ((date.fromisoformat(d) - start).days / 365.0, amount)
+        for d, amount in cash_flows
+    ]
+    return _newton(flows) or _bisect(flows)

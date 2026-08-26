@@ -405,7 +405,7 @@ def test_ftgo_ter_parses_ongoing_charge(monkeypatch):
         def __getitem__(self, idx):
             return {'xid': '123'}
 
-    monkeypatch.setattr('ftgo.get_fund_stats', lambda xid: {'Ongoing charge': '0.22%'})
+    monkeypatch.setattr('e1f.common.get_fund_stats', lambda xid: {'Ongoing charge': '0.22%'})
 
     import e1f.common as common_mod
     ter = common_mod._ftgo_ter(FakeMatches(), 'Test ETF USD (Acc)')
@@ -581,3 +581,61 @@ def test_pinned_quote_currency_absent_is_none(tmp_path):
     meta.write_text(yaml.dump({'fx_pairs': {'EURUSD': {'xid': '9'}}}))
     assert pinned_quote_currency('IE00UNKNOWN000', str(meta)) is None
     assert pinned_quote_currency('IE00B4L5Y983', str(tmp_path / 'missing.yaml')) is None
+
+
+# ---------------------------------------------------------------------------
+# Pure XIRR solver (Newton + bisection) — graduated from performance (ADR-0019).
+# ---------------------------------------------------------------------------
+
+from e1f import common as _common  # noqa: E402
+from e1f.common import _bisect, _newton, xirr  # noqa: E402
+
+
+def test_xirr_lump_sum_known_10_percent():
+    # -1000 today, +1100 one year later => exactly 10% annualized.
+    assert xirr([("2024-01-01", -1000.0), ("2024-12-31", 1100.0)]) == pytest.approx(0.10)
+
+
+def test_xirr_doubling_over_two_years_is_root_two_minus_one():
+    rate = xirr([("2020-01-01", -1000.0), ("2021-12-31", 2000.0)])
+    assert rate == pytest.approx(2 ** 0.5 - 1, rel=1e-4)  # ~41.42%
+
+
+def test_xirr_multiple_contributions():
+    rate = xirr([
+        ("2024-01-01", -1000.0),
+        ("2024-07-01", -1000.0),
+        ("2024-12-31", 2100.0),
+    ])
+    assert rate is not None and rate > 0.0
+
+
+def test_xirr_requires_two_flows():
+    assert xirr([("2024-01-01", -1000.0)]) is None
+
+
+def test_xirr_requires_sign_change():
+    assert xirr([("2024-01-01", -1.0), ("2024-06-01", -2.0)]) is None
+    assert xirr([("2024-01-01", 1.0), ("2024-06-01", 2.0)]) is None
+
+
+def test_xirr_falls_back_to_bisection(monkeypatch):
+    # When Newton yields nothing, xirr still returns the bisection root.
+    monkeypatch.setattr(_common, "_newton", lambda flows: None)
+    assert xirr([("2024-01-01", -1000.0), ("2024-12-31", 1100.0)]) == pytest.approx(0.10)
+
+
+def test_newton_returns_none_on_divergence():
+    flows = [(0.0, -1000.0), (1.0, 1100.0)]
+    assert _newton(flows, guess=50.0) is None
+
+
+def test_newton_returns_none_on_zero_derivative():
+    # Same-date opposite flows: NPV is constant in rate, derivative is 0.
+    assert _newton([(0.0, -100.0), (0.0, 100.0)]) is None
+
+
+def test_bisect_finds_root_and_reports_no_sign_change():
+    flows = [(0.0, -1000.0), (1.0, 1100.0)]
+    assert _bisect(flows) == pytest.approx(0.10, rel=1e-4)
+    assert _bisect([(0.0, 100.0), (1.0, 100.0)]) is None  # both endpoints positive
