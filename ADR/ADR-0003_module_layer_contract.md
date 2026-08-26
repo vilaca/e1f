@@ -17,8 +17,8 @@ The module graph is stratified into three layers, enforced by import-linter
 
 ```
 e1f.cli                              ← entry point; may import any layer below
-e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance  ← commands; may import common, never each other
-e1f.common                           ← shared primitives; imports nothing internal
+e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.correlation | e1f.rebalance | e1f.scenario  ← stable commands; may import common, never each other
+e1f.common                           ← shared primitives package (ADR-0025); submodules may import each other, never command modules
 ```
 
 New modules are placed at the lowest layer that satisfies their needs. A module
@@ -40,5 +40,9 @@ orchestrates multiple commands or adds a new top-level subcommand goes at the
 
 - Adding a new module that violates the contract fails the `layers` gate.
 - Cross-command helpers (code used by more than one command module) must live in
-  `common`, not in any command module.
+  `e1f.common`, not in any command module. The layer is a package (ADR-0025);
+  command modules keep importing from `e1f.common`.
 - This ADR must be updated when a new layer or module is added.
+- Experimental command modules live under `e1f.experimental` behind a separate
+  one-way boundary (ADR-0024); they are not on this command layer. The live
+  import-linter list is `[tool.importlinter]` in `pyproject.toml`.

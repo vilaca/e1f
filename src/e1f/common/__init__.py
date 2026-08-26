@@ -1,0 +1,114 @@
+"""Shared primitives for the e1f ETF tooling.
+
+Command modules keep importing from ``e1f.common`` (ADR-0003). The package
+split (ADR-0025) is an internal layout: one module per concern, re-exported
+here so existing import paths stay valid.
+"""
+
+from .defaults import (
+    BASE_CURRENCY,
+    DEFAULT_CONFIG,
+    DEFAULT_CURRENCY_META,
+    DEFAULT_DB,
+    DEFAULT_SCENARIOS,
+    DEFAULT_START_DATE,
+    UNSUPPORTED_FX_CURRENCIES,
+    XTB_EXCHANGE_SUFFIX,
+)
+from .holdings import (
+    HoldingSeries,
+    PositionEvent,
+    build_series,
+    close_asof,
+    convert_to_eur,
+    fund_eur_value,
+    fx_rate_asof,
+    load_price_series,
+    load_trades,
+    pinned_quote_currency,
+    portfolio_isins,
+    position_asof,
+    position_timeline,
+    price_date_asof,
+    value_on,
+)
+from .metrics import (
+    MetricContract,
+    Status,
+    _explain_metric,
+    _limited_by,
+    xirr,
+)
+from .rebalance import (
+    RebalancePlan,
+    _FLOAT_CLAMP,
+    assemble_rebalance_valuations,
+    compute_rebalance,
+    post_rebalance_weights,
+)
+from .retry import call_with_retry
+from .scenarios import (
+    Scenario,
+    ScenarioError,
+    delete_scenario,
+    get_scenario,
+    load_scenarios,
+    save_scenario,
+)
+from .universe import (
+    ConfigManager,
+    ETFDefinition,
+    OpenFIGIResolver,
+    distribution_from_name,
+    enrich_fund_metadata,
+    fund_currency_from_name,
+)
+
+__all__ = [
+    "BASE_CURRENCY",
+    "DEFAULT_CONFIG",
+    "DEFAULT_CURRENCY_META",
+    "DEFAULT_DB",
+    "DEFAULT_SCENARIOS",
+    "DEFAULT_START_DATE",
+    "UNSUPPORTED_FX_CURRENCIES",
+    "XTB_EXCHANGE_SUFFIX",
+    "_FLOAT_CLAMP",
+    "ConfigManager",
+    "ETFDefinition",
+    "HoldingSeries",
+    "MetricContract",
+    "OpenFIGIResolver",
+    "PositionEvent",
+    "RebalancePlan",
+    "Scenario",
+    "ScenarioError",
+    "Status",
+    "_explain_metric",
+    "_limited_by",
+    "assemble_rebalance_valuations",
+    "build_series",
+    "call_with_retry",
+    "close_asof",
+    "compute_rebalance",
+    "convert_to_eur",
+    "delete_scenario",
+    "distribution_from_name",
+    "enrich_fund_metadata",
+    "fund_currency_from_name",
+    "fund_eur_value",
+    "fx_rate_asof",
+    "get_scenario",
+    "load_price_series",
+    "load_scenarios",
+    "load_trades",
+    "pinned_quote_currency",
+    "portfolio_isins",
+    "position_asof",
+    "position_timeline",
+    "post_rebalance_weights",
+    "price_date_asof",
+    "save_scenario",
+    "value_on",
+    "xirr",
+]

@@ -92,7 +92,7 @@ def read_db_isins(path):
 
 def mock_resolver(monkeypatch, result=RESOLVED):
     monkeypatch.setattr(OpenFIGIResolver, "resolve", lambda self, isin: result)
-    monkeypatch.setattr("e1f.common.enrich_fund_metadata", lambda isin, info: info)
+    monkeypatch.setattr("e1f.common.universe.enrich_fund_metadata", lambda isin, info: info)
 
 
 def test_list_empty(paths, capsys):

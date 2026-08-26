@@ -333,7 +333,7 @@ def test_fetch_ftgo_no_data_returns_none(tmp_path, monkeypatch):
 
 
 def test_fetch_ftgo_request_error_gives_up_after_retries(tmp_path, monkeypatch):
-    monkeypatch.setattr('e1f.common.time.sleep', lambda s: None)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', lambda s: None)
     ext = make_extractor(tmp_path)
     calls = {'n': 0}
 

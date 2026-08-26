@@ -74,18 +74,24 @@ and verify each still matches the code:
   `pyproject.toml` `requires-python`. (Also caught deterministically by
   `tests/test_contracts.py`; flag here for completeness.)
 - **Default paths** — README mentions `data/etf_universe.yaml`, `data/e1f.db`,
-  `data/currency_metadata.yaml`; verify these match `common.py` `DEFAULT_*`
+  `data/currency_metadata.yaml`; verify these match `common/defaults.py` `DEFAULT_*`
   constants.
 - **Flag names** — grep each flag in the argparse definitions. At minimum:
   `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
   `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
   `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`;
   `performance`: `--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`.
-- **Command list** — top-level (`cli.py`): `autocomplete`, `config`, `fetch`,
-  `validate`, `transactions`, `portfolio`, `performance`. Nested: `config`: `add`,
-  `list`, `update`, `remove`, `trim` (in `config.py`); `transactions`: `list`,
-  `trade-republic`, `tr`, `xtb` (in `transactions.py`). `autocomplete`,
-  `validate`, `portfolio`, and `performance` have no nested subcommands.
+- **Command list** — top-level (`cli.py` `COMMANDS`; frozen in
+  `tests/test_contracts.py`): stable `autocomplete`, `config`, `fetch`,
+  `validate`, `transactions`, `portfolio`, `performance`, `correlation`,
+  `rebalance`, `scenario`; experimental `lookthrough`, `concentration`,
+  `overlap`, `backtest`. Nested: `config`: `add`, `list`, `update`, `remove`,
+  `trim` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
+  `xtb` (in `transactions.py`); `scenario`: `save`, `list`, `show`, `delete`
+  (in `scenario.py`); `overlap`: default report, `candidates`, `resolve`
+  (in `src/e1f/experimental/overlap.py`). `autocomplete`, `validate`,
+  `portfolio`, `performance`, `correlation`, `rebalance`, `lookthrough`,
+  `concentration`, and `backtest` have no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
