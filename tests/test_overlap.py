@@ -6,8 +6,8 @@ from contextlib import closing
 import pytest
 import yaml
 
-from e1f import overlap
-from e1f.common import (
+from e1f.experimental import overlap
+from e1f.experimental.common import (
     DIMENSION_SECURITY,
     HoldingRow,
     insert_lookthrough_snapshot,
@@ -15,7 +15,7 @@ from e1f.common import (
     normalize_security_name,
     upsert_security_alias,
 )
-from e1f.overlap import (
+from e1f.experimental.overlap import (
     Observation,
     ValuationView,
     compute_floors,

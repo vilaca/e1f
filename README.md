@@ -24,20 +24,27 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes eleven commands around a shared config/DB:
+The tool exposes fourteen commands around a shared config/DB. Ten are stable; the
+last four are an isolated **experimental** tier (ADR-0024) — still rough, and
+walled off so no stable command depends on them:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-3. **`e1f fetch`** — populate the SQLite DB with prices, FX rates, and look-through snapshots.
+3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
-8. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
-9. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
-10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
-11. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
-12. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
+8. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
+9. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
+10. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
+
+Experimental tier (ADR-0024):
+
+11. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
+12. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
+13. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
+14. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
@@ -75,7 +82,8 @@ e1f performance --sort value --reverse
 e1f performance --show-status        # + per-holding provenance Status column (ADR-0014)
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)
 
-# 5. Inspect within-fund concentration (look-through cached by fetch)
+# 5. Inspect within-fund concentration (experimental; look-through cached by `e1f lookthrough`)
+e1f lookthrough                      # refresh yfinance look-through snapshots first
 e1f concentration                    # every held fund + overlap candidates
 e1f concentration VWCE               # one fund by ISIN, ticker, or name
 e1f concentration VWCE --explain     # per-metric provenance chain
@@ -104,6 +112,15 @@ e1f scenario list                    # names, target counts, sums
 e1f scenario show core               # targets with fund names
 e1f rebalance --scenario core        # recall the saved basket (--months here overrides)
 e1f correlation --scenario core      # correlate the POST-rebalance portfolio it implies
+
+# 10. Backtest contribution timing over one ETF's real history (ADR-0019)
+e1f backtest --isin IE00B3YLTY66                       # dip vs DCA + matched cash-drag/blind-even controls
+e1f backtest --isin IE00B3YLTY66 --aggressiveness 8 --curvature 2   # tune the dip response
+e1f backtest --isin IE00B3YLTY66 --window 120          # rolling-window outcome distribution
+e1f backtest --isin IE00B3YLTY66 --strategy "deploy=daily-dip,n=20"   # within-month daily dip slices (ADR-0021)
+e1f backtest --isin IE00B3YLTY66 --strategy "deploy=daily-dip-carry,n=20"  # carry unspent slices onto the next dip (ADR-0023)
+e1f backtest --isin IE00B3YLTY66 --blind-seeds 0       # skip the blind-random robustness block
+e1f backtest --isin IE00B3YLTY66 --explain             # + assumptions/provenance block
 ```
 
 Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
@@ -111,9 +128,10 @@ Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
 — `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
-`e1f portfolio --help`, `e1f performance --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f correlation --help`, `e1f rebalance --help`,
-`e1f scenario --help`, `e1f validate --help`.
+`e1f portfolio --help`, `e1f performance --help`, `e1f correlation --help`,
+`e1f rebalance --help`, `e1f scenario --help`, `e1f validate --help`, and for the
+experimental tier `e1f lookthrough --help`, `e1f concentration --help`,
+`e1f overlap --help`, `e1f backtest --help`.
 
 ## Price sources
 
@@ -210,11 +228,11 @@ Reading the metrics (formulas in ADR-0011 §5):
   percentage gain in a tiny position contributes less than a modest gain in a
   large one.
 
-Concentration: `ADR/ADR-0012_concentration_command.md` (output in
-`src/e1f/concentration.py`). `e1f concentration` reports each held fund's
-*within-fund* concentration — by security, sector, and asset class — against an
-explicit coverage denominator, reading the look-through snapshots a bulk
-`e1f fetch` caches from yfinance `funds_data` (so it runs offline). Because that
+Concentration (experimental tier, ADR-0024): `ADR/ADR-0012_concentration_command.md`
+(output in `src/e1f/experimental/concentration.py`). `e1f concentration` reports
+each held fund's *within-fund* concentration — by security, sector, and asset
+class — against an explicit coverage denominator, reading the look-through
+snapshots `e1f lookthrough` caches from yfinance `funds_data` (so it runs offline). Because that
 source names only the top-10 holdings, the security dimension is reported as an
 **observed** figure plus **rank-constrained bounds** on the unobserved tail
 (`HHI_max = HHI_observed + R·w₁₀`), never a false-precise point value; sector and
@@ -279,6 +297,70 @@ correlated is the book I'd hold *after* this rebalance?". A basket fund need not
 held yet (it needs only price history); an infeasible implied rebalance is reported
 UNAVAILABLE. This is why the buy-only plan core graduated into `common`, so
 `correlation` can run the plan without importing `rebalance` (ADR-0003).
+
+Backtest (experimental tier, ADR-0024): `ADR/ADR-0019_backtest_command.md`
+(`src/e1f/experimental/backtest.py`; the pure simulation core in
+`src/e1f/experimental/common.py`, the shared XIRR solver in `src/e1f/common.py`).
+`e1f backtest --isin X`
+runs contribution-timing strategies over one ETF's real EUR daily-close history and
+asks whether shifting a fixed monthly budget toward dips beats a constant DCA. It uses
+a **dip-reserve** model: each month a base fraction β of the contribution buys shares
+immediately and the rest accrues to a reserve that a rule `f = clamp(a·(D−D0)^b, 0, 1)`
+deploys on drawdowns (D measured vs a rolling high on the EUR series). Because the reserve
+can never go negative, ∑ contributions is identical across strategies — the test measures
+*timing*, not size (invariance by construction). Idle reserve earns 0% by default
+(`--cash-rate` to sensitivity-test) and any leftover cash is counted in terminal wealth,
+so cash drag is charged honestly; the headline metrics are terminal wealth and XIRR versus
+always-shown lump-sum / constant-DCA / cash-drag benchmarks. `--window N` sweeps every
+rolling N-month start and summarises the excess-vs-DCA distribution. Every run separates the
+**data span** from the effective **test span** (first contribution → valuation, honouring
+`--from` and the warm-up burn), reports which known crashes fall inside the *test* span and
+which fixed horizons (10/15/20y) it reaches; `--window` instead reports, per crash, how many
+rolling windows were exposed to it — so the dataset's coverage limits are impossible to miss.
+It is an **evaluator, not an optimizer** — strategies are pre-specified and only tabulated,
+never fitted or ranked on
+the same history; walk-forward selection and long proxy-index history are deferred to v2.
+
+Blind-deployment controls (`ADR/ADR-0020_blind_deployment_control.md`) isolate *why* a dip
+wins or loses. Alongside `cash-drag(β)` (a reserve that never deploys), every single run adds
+`blind-even(β)` — a reserve that reinvests on a drawdown-**blind** schedule, emptying by the
+horizon — for each distinct β among the dips, and prints a decomposition per dip at matched β:
+**reserve cost** (`DCA − cash-drag`), **deployment benefit** (`blind-even − cash-drag`),
+**timing benefit** (`dip − blind-even`, i.e. vs full neutral reinvestment), and **total**
+(`dip − DCA`). `blind-even` is the deterministic headline; `--blind-seeds N` (default 500,
+`0` disables) adds a supplementary `blind-random` distribution over fixed seeds and reports the
+dip's percentile within it — is the signal distinguishable from equally-blind deployment? A
+bounded fraction of the current reserve keeps ADR-0019's invariance intact for every mode.
+`--strategy` also accepts `deploy=even|delayed|random`, `delay=`, and `seed=` to place a blind
+strategy in the table directly.
+
+A **daily dip-slice** strategy (`ADR/ADR-0021_daily_dip_slice_strategy.md`) probes *within-month*
+timing instead: `--strategy "deploy=daily-dip,n=N"` (or `--slices N`, default 20) cuts each
+month's contribution into N equal slices and spends one on every **down day** (close below the
+prior close), with a catch-up rule and a last-day dump that deploy the whole month's `C` before
+the month ends. It holds **no cross-month reserve** — a true sibling of constant-DCA differing
+only in *which days of the month* the euros land on — so its invariance is unconditional
+(`reserve_cash` is exactly zero, no `--cash-rate` caveat) and it gets no β-matched controls.
+Sweep several N in one table (`--strategy "deploy=daily-dip,n=10" --strategy "deploy=daily-dip,n=40"`);
+a run with no signal dip skips the drawdown warm-up and starts at the series start.
+
+A **carry-forward** variant (`deploy=daily-dip-carry`, `ADR/ADR-0023_daily_dip_carry_strategy.md`)
+accrues one slice per trading day and, on each **down day**, spends *every* accrued-but-unspent
+slice — the day's own plus every earlier day a buy has not yet consumed — instead of a single
+slice, so it holds cash through up-runs and dumps the built-up pool onto the next dip (the last
+trading day still flushes any remainder). It shares daily-dip's `--slices N` knob and its
+unconditional invariance and no β-matched controls.
+
+The **MaxDD** column is the peak-to-trough of a **daily**-sampled value curve for every
+strategy (`ADR/ADR-0022_daily_drawdown_sampling.md`) — crash bottoms fall mid-month, so a
+once-a-month sample both undercounts the loss and is incomparable across strategies. Daily
+sampling reports the drawdown actually lived through (~34% for a fully-invested all-world book
+over 2011–2026, not the ~22% a monthly sample showed) and makes the reserve's drawdown cushion
+visible: cash-drag / blind-even / dip sit several points below the fully-invested rows because
+idle cash does not fall in a crash. Shares and the reserve still move only at the monthly fills;
+the daily walk only revalues the holding, so wealth and XIRR are unchanged.
+`--isin` is required (no default): a missing or unknown ISIN prints the candidate series
+with their spans, and a series with no EUR/FX rate is refused rather than mis-valued.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`

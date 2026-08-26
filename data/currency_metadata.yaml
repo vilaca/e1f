@@ -90,3 +90,7 @@ LU1829221024:
   currency: EUR
   symbol: UST:PAR:EUR
   xid: '278183'
+fx_pairs:
+  EURUSD:
+    symbol: EURUSD
+    xid: '617254'

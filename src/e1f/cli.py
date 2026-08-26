@@ -16,11 +16,9 @@ from collections.abc import Callable
 
 from e1f import (
     autocomplete,
-    concentration,
     config,
     correlation,
     fetch,
-    overlap,
     performance,
     portfolio,
     rebalance,
@@ -29,9 +27,16 @@ from e1f import (
     validate,
 )
 
+# Experimental tier (ADR-0024): isolated behind a one-way import boundary — no
+# stable module imports ``e1f.experimental``. The CLI router is the sole exception,
+# so it can register these commands; nothing else may reach experimental code.
+from e1f.experimental import backtest, concentration, lookthrough, overlap
+
 Command = Callable[[list[str]], int]
 
-PARSER_FACTORIES = {
+# Stable commands and the isolated experimental tier are registered separately so
+# the split has one home (ADR-0024); ``COMMANDS`` merges them for dispatch.
+STABLE_PARSER_FACTORIES = {
     "autocomplete": autocomplete._build_parser,
     "config": config._build_parser,
     "fetch": fetch._build_parser,
@@ -39,18 +44,23 @@ PARSER_FACTORIES = {
     "transactions": transactions._build_parser,
     "portfolio": portfolio._build_parser,
     "performance": performance._build_parser,
-    "concentration": concentration._build_parser,
-    "overlap": overlap._build_parser,
     "correlation": correlation._build_parser,
     "rebalance": rebalance._build_parser,
     "scenario": scenario._build_parser,
 }
+EXPERIMENTAL_PARSER_FACTORIES = {
+    "concentration": concentration._build_parser,
+    "overlap": overlap._build_parser,
+    "backtest": backtest._build_parser,
+    "lookthrough": lookthrough._build_parser,
+}
+PARSER_FACTORIES = {**STABLE_PARSER_FACTORIES, **EXPERIMENTAL_PARSER_FACTORIES}
 
 
 def _autocomplete_main(argv: list[str]) -> int:
     return autocomplete.main(argv, PARSER_FACTORIES)
 
-COMMANDS: dict[str, Command] = {
+STABLE_COMMANDS: dict[str, Command] = {
     "autocomplete": _autocomplete_main,
     "config": config.main,
     "fetch": fetch.main,
@@ -58,12 +68,17 @@ COMMANDS: dict[str, Command] = {
     "transactions": transactions.main,
     "portfolio": portfolio.main,
     "performance": performance.main,
-    "concentration": concentration.main,
-    "overlap": overlap.main,
     "correlation": correlation.main,
     "rebalance": rebalance.main,
     "scenario": scenario.main,
 }
+EXPERIMENTAL_COMMANDS: dict[str, Command] = {
+    "concentration": concentration.main,
+    "overlap": overlap.main,
+    "backtest": backtest.main,
+    "lookthrough": lookthrough.main,
+}
+COMMANDS: dict[str, Command] = {**STABLE_COMMANDS, **EXPERIMENTAL_COMMANDS}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -80,11 +95,15 @@ Commands:
   transactions  Ingest and list broker ETF trades in SQLite
   portfolio     Show ETF holdings and average cost from transactions
   performance   Report market value, P&L, and return metrics per holding
-  concentration Within-fund concentration (security/sector/asset-class), coverage-aware
-  overlap       Cross-fund single-name exposure floor via reviewed canonical identity
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
   scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)
+
+Experimental (ADR-0024 — isolated tier; may change or give wrong results):
+  lookthrough   Refresh cached yfinance look-through snapshots for held funds
+  concentration Within-fund concentration (security/sector/asset-class), coverage-aware
+  overlap       Cross-fund single-name exposure floor via reviewed canonical identity
+  backtest      Contribution-timing backtest: dip-reserve vs constant-DCA over one ETF's history
 
 Run 'e1f <command> --help' for command-specific options.
         """,

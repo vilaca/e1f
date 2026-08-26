@@ -12,7 +12,7 @@ position-type weightings are whole-fund (they sum to 100%). A whole-fund sector
 HHI is therefore not "observed-only" — its denominator is the fund, not the
 observed top-10.
 
-Reads the immutable look-through snapshots cached by ``fetch`` (yfinance
+Reads the immutable look-through snapshots cached by ``lookthrough`` (yfinance
 ``funds_data``), so it runs offline. Cross-fund single-name overlap is *not*
 asserted here — matching names surface only as an unresolved candidate signal
 that points at where the deferred ``overlap`` command (v1b) would pay off.
@@ -32,18 +32,20 @@ from typing import Any
 from e1f.common import (
     DEFAULT_CONFIG,
     DEFAULT_DB,
-    DIMENSION_ASSET_CLASS,
-    DIMENSION_SECTOR,
-    DIMENSION_SECURITY,
     ConfigManager,
-    LookthroughSnapshot,
     MetricContract,
     Status,
     _explain_metric,
+    portfolio_isins,
+)
+from e1f.experimental.common import (
+    DIMENSION_ASSET_CLASS,
+    DIMENSION_SECTOR,
+    DIMENSION_SECURITY,
+    LookthroughSnapshot,
     _snapshot_provenance,
     latest_lookthrough_snapshot,
     overlap_candidates,
-    portfolio_isins,
 )
 
 # Cumulative-curve rungs (ADR-0012 decision 3). Rungs deeper than the observed
@@ -433,7 +435,7 @@ def render_fund(fund: FundConcentration) -> list[str]:
     lines = [_fund_header(fund)]
     if not fund.has_lookthrough:
         lines.append(
-            "  look-through unavailable — run `e1f fetch` to cache it, "
+            "  look-through unavailable — run `e1f lookthrough` to cache it, "
             "or yfinance could not resolve this fund"
         )
         lines.append(_region_line())
@@ -454,7 +456,7 @@ def render_fund_explain(fund: FundConcentration) -> list[str]:
     """
     lines = [_fund_header(fund)]
     if not fund.has_lookthrough:
-        lines.append("  look-through unavailable — run `e1f fetch` to cache it")
+        lines.append("  look-through unavailable — run `e1f lookthrough` to cache it")
         return lines
     assert fund.snapshot is not None
     provenance = _snapshot_provenance(fund.snapshot)
@@ -624,7 +626,7 @@ Coverage is the observed NAV fraction; deeper curve rungs and the tail are
 bounded, never fabricated. Names shared across funds surface only as an
 unresolved overlap signal — never summed into an exposure figure.
 
-Look-through is cached by `e1f fetch` (yfinance funds_data); this command runs
+Look-through is cached by `e1f lookthrough` (yfinance funds_data); this command runs
 offline against that cache.
 
 Examples:

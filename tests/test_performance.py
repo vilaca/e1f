@@ -13,65 +13,14 @@ from e1f.performance import (
     annualize,
     risk_metrics,
     sort_rows,
-    xirr,
 )
 
 EUR_ISIN = "IE00EUR000001"
 USD_ISIN = "IE00USD000001"
 
 
-# ---------------------------------------------------------------------------
-# Pure XIRR solver (Newton + bisection)
-# ---------------------------------------------------------------------------
-
-def test_xirr_lump_sum_known_10_percent():
-    # -1000 today, +1100 one year later => exactly 10% annualized.
-    assert xirr([("2024-01-01", -1000.0), ("2024-12-31", 1100.0)]) == pytest.approx(0.10)
-
-
-def test_xirr_doubling_over_two_years_is_root_two_minus_one():
-    rate = xirr([("2020-01-01", -1000.0), ("2021-12-31", 2000.0)])
-    assert rate == pytest.approx(2 ** 0.5 - 1, rel=1e-4)  # ~41.42%
-
-
-def test_xirr_multiple_contributions():
-    rate = xirr([
-        ("2024-01-01", -1000.0),
-        ("2024-07-01", -1000.0),
-        ("2024-12-31", 2100.0),
-    ])
-    assert rate is not None and rate > 0.0
-
-
-def test_xirr_requires_two_flows():
-    assert xirr([("2024-01-01", -1000.0)]) is None
-
-
-def test_xirr_requires_sign_change():
-    assert xirr([("2024-01-01", -1.0), ("2024-06-01", -2.0)]) is None
-    assert xirr([("2024-01-01", 1.0), ("2024-06-01", 2.0)]) is None
-
-
-def test_xirr_falls_back_to_bisection(monkeypatch):
-    # When Newton yields nothing, xirr still returns the bisection root.
-    monkeypatch.setattr(perf, "_newton", lambda flows: None)
-    assert xirr([("2024-01-01", -1000.0), ("2024-12-31", 1100.0)]) == pytest.approx(0.10)
-
-
-def test_newton_returns_none_on_divergence():
-    flows = [(0.0, -1000.0), (1.0, 1100.0)]
-    assert perf._newton(flows, guess=50.0) is None
-
-
-def test_newton_returns_none_on_zero_derivative():
-    # Same-date opposite flows: NPV is constant in rate, derivative is 0.
-    assert perf._newton([(0.0, -100.0), (0.0, 100.0)]) is None
-
-
-def test_bisect_finds_root_and_reports_no_sign_change():
-    flows = [(0.0, -1000.0), (1.0, 1100.0)]
-    assert perf._bisect(flows) == pytest.approx(0.10, rel=1e-4)
-    assert perf._bisect([(0.0, 100.0), (1.0, 100.0)]) is None  # both endpoints positive
+# The pure XIRR solver graduated to ``common`` (ADR-0019); its unit tests live in
+# tests/test_common.py now. ``performance`` re-exports ``xirr`` unchanged.
 
 
 # ---------------------------------------------------------------------------

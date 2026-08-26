@@ -28,17 +28,19 @@ from datetime import UTC, date, datetime
 from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
-    DIMENSION_SECURITY,
-    LookthroughSnapshot,
     MetricContract,
     Status,
     _explain_metric,
     fund_eur_value,
+    portfolio_isins,
+)
+from e1f.experimental.common import (
+    DIMENSION_SECURITY,
+    LookthroughSnapshot,
     latest_lookthrough_snapshot,
     load_security_aliases,
     normalize_security_name,
     overlap_candidates,
-    portfolio_isins,
     upsert_security_alias,
 )
 

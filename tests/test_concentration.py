@@ -6,13 +6,13 @@ from contextlib import closing
 import pytest
 import yaml
 
-from e1f import concentration as conc
-from e1f.common import (
+from e1f.common import _limited_by
+from e1f.experimental import concentration as conc
+from e1f.experimental.common import (
     DIMENSION_ASSET_CLASS,
     DIMENSION_SECTOR,
     DIMENSION_SECURITY,
     HoldingRow,
-    _limited_by,
     init_lookthrough_schema,
     insert_lookthrough_snapshot,
     latest_lookthrough_snapshot,

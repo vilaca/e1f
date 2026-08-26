@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 
 from e1f.cli import COMMANDS
+from e1f.experimental.common import init_lookthrough_schema
 from e1f.fetch import DataExtractor
 from e1f.transactions import TradeRepublicImporter
 
@@ -31,11 +32,13 @@ def test_cli_commands_surface():
         "transactions",
         "portfolio",
         "performance",
-        "concentration",
-        "overlap",
         "correlation",
         "rebalance",
         "scenario",
+        "concentration",
+        "overlap",
+        "backtest",
+        "lookthrough",
     }
 
 
@@ -106,15 +109,13 @@ def test_fx_rates_schema_contract(tmp_path: Path) -> None:
 
 
 def _lookthrough_schema(tmp_path: Path) -> sqlite3.Connection:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(yaml.dump({"etfs": {}}))
+    # Look-through schema now belongs to the experimental tier (ADR-0024); stable
+    # `fetch` no longer creates it, so build it directly for the contract check.
     db = tmp_path / "lookthrough.db"
-    DataExtractor(
-        config_path=str(cfg),
-        db_path=str(db),
-        currency_meta_path=str(tmp_path / "meta.yaml"),
-    )
-    return sqlite3.connect(str(db))
+    conn = sqlite3.connect(str(db))
+    init_lookthrough_schema(conn)
+    conn.commit()
+    return conn
 
 
 def test_holdings_snapshot_schema_contract(tmp_path: Path) -> None:
