@@ -6,7 +6,7 @@ from email.utils import format_datetime
 import pytest
 import requests
 
-from e1f.common import _retry_after_seconds, call_with_retry
+from e1f.common.retry import _retry_after_seconds, call_with_retry
 
 
 class FakeResponse:
@@ -37,7 +37,7 @@ def test_retry_after_seconds_missing_or_invalid():
 
 def test_honors_retry_after_header(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
     calls = {'n': 0}
 
     def flaky():
@@ -52,7 +52,7 @@ def test_honors_retry_after_header(monkeypatch):
 
 def test_exponential_backoff_without_header(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
 
     def always_429():
         raise http_error(500)
@@ -64,7 +64,7 @@ def test_exponential_backoff_without_header(monkeypatch):
 
 def test_backoff_capped_at_max_delay(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
 
     def always_429():
         raise http_error(429)
@@ -76,7 +76,7 @@ def test_backoff_capped_at_max_delay(monkeypatch):
 
 def test_non_retryable_error_raises_immediately(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
 
     def bad_request():
         raise http_error(400)
@@ -88,7 +88,7 @@ def test_non_retryable_error_raises_immediately(monkeypatch):
 
 def test_connection_error_is_retried(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
     calls = {'n': 0}
 
     def flaky():
@@ -102,7 +102,7 @@ def test_connection_error_is_retried(monkeypatch):
 
 
 def test_is_retryable_extends_to_non_requests_errors(monkeypatch):
-    monkeypatch.setattr('e1f.common.time.sleep', lambda s: None)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', lambda s: None)
     calls = {'n': 0}
 
     def flaky():
@@ -118,7 +118,7 @@ def test_is_retryable_extends_to_non_requests_errors(monkeypatch):
 
 def test_is_retryable_does_not_catch_other_errors(monkeypatch):
     sleeps = []
-    monkeypatch.setattr('e1f.common.time.sleep', sleeps.append)
+    monkeypatch.setattr('e1f.common.retry.time.sleep', sleeps.append)
 
     def other_error():
         raise RuntimeError('some other error')

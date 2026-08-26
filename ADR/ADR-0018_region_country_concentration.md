@@ -162,6 +162,9 @@ already accepts a new `dimension` value with zero DDL.
 
 ## Consequences
 
+- **Not yet implemented** — `REGION_CONTRACT` is still `region_unavailable_v1`
+  in `src/e1f/experimental/concentration.py`; `data/region_metadata.yaml` is
+  not in the tree. The bullets below are the design when it lands.
 - New reviewed sidecar `data/region_metadata.yaml` (country vectors + optional
   region-mapping overrides); a fixed default country→region table ships in code.
 - `REGION_CONTRACT` graduates `region_unavailable_v1` → `country_hhi_v1`; the row

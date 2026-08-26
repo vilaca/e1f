@@ -112,8 +112,9 @@ experimental behaviour is now an explicit, user-invoked step.
   longer creates the look-through schema — `insert_lookthrough_snapshot` creates
   it on first write (it always did), so `lookthrough` is self-sufficient.
 - Graduating an experimental command to stable = move its module to
-  `src/e1f/`, move any now-shared primitives from `experimental/common.py` to
-  `common.py`, and drop it from the forbidden contract's sources.
+  `src/e1f/`, move any now-shared primitives from `experimental/common.py` into
+  the matching `src/e1f/common/` module (ADR-0025), and drop it from the
+  forbidden contract's sources.
 - The three import-linter contracts are the enforcement; `./scripts/check.sh
   layers` fails if any stable module (or `common`) grows an
   `e1f.experimental` import.

@@ -47,7 +47,7 @@ Experimental tier (ADR-0024):
 14. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
 
 ```bash
-# 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common.py)
+# 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
 e1f config add IE00BM67HK77
 e1f config add IE00BM67HK77 IE00BDBRDM35 IE00BKM4GZ66
 e1f config list
@@ -123,7 +123,7 @@ e1f backtest --isin IE00B3YLTY66 --blind-seeds 0       # skip the blind-random r
 e1f backtest --isin IE00B3YLTY66 --explain             # + assumptions/provenance block
 ```
 
-Defaults (from `src/e1f/common.py`): config `data/etf_universe.yaml`, database
+Defaults (from `src/e1f/common/defaults.py`): config `data/etf_universe.yaml`, database
 `data/e1f.db`, fetch start date `2000-01-01` (earlier than any ETF inception, so
 the first fetch returns each ETF's full history). Paths resolve against the
 project root, so commands work from any directory. Flag overrides are per command
@@ -235,18 +235,18 @@ class — against an explicit coverage denominator, reading the look-through
 snapshots `e1f lookthrough` caches from yfinance `funds_data` (so it runs offline). Because that
 source names only the top-10 holdings, the security dimension is reported as an
 **observed** figure plus **rank-constrained bounds** on the unobserved tail
-(`HHI_max = HHI_observed + R·w₁₀`), never a false-precise point value; sector and
-asset-class weightings are complete and reported as point values. Each metric
-carries a four-state status — CALCULATED / BOUNDED / UNAVAILABLE / UNRESOLVED —
-and `--explain` reconstructs each figure's provenance (Result / Inputs / Method /
-limited-by) from the immutable snapshot rather than a logged audit trail. Region
-is UNAVAILABLE (no reliable free source; never inferred from swap collateral).
-This is deliberately **not** portfolio diversification analysis: cross-fund
-single-name overlap is not asserted — matching names surface only as an
-*unresolved candidate* signal, never summed into an exposure figure (that is the
-deferred `overlap` command). Look-through is stored in `holdings_snapshot`,
-`holding`, and `security_alias` tables (immutable, append-only; schema in
-`src/e1f/common.py`).
+(math in `src/e1f/experimental/concentration.py`), never a false-precise point
+value; sector and asset-class weightings are complete and reported as point
+values. Each metric carries a four-state status — CALCULATED / BOUNDED /
+UNAVAILABLE / UNRESOLVED — and `--explain` reconstructs each figure's provenance
+(Result / Inputs / Method / limited-by) from the immutable snapshot rather than
+a logged audit trail. Region is UNAVAILABLE (no reliable free source; never
+inferred from swap collateral). This is deliberately **not** portfolio
+diversification analysis: cross-fund single-name overlap is not asserted here —
+matching names surface only as an *unresolved candidate* signal; summing a
+reviewed identity across funds is `e1f overlap` (`ADR/ADR-0013_overlap_command.md`).
+Look-through is stored in `holdings_snapshot`, `holding`, and `security_alias`
+tables (immutable, append-only; schema in `src/e1f/experimental/common.py`).
 
 Correlation: `ADR/ADR-0015_correlation_command.md` (output in
 `src/e1f/correlation.py`). `e1f correlation` measures return **co-movement** — the
@@ -255,14 +255,15 @@ asks what the funds *hold* in common, `correlation` asks how they *move* in comm
 the two stay separate commands so statistical co-movement is never mistaken for
 established shared holdings. Each fund pair is correlated over its own shared window
 (an exact-date inner join of the two funds' EUR daily returns), so a young fund
-neither drops out nor truncates every other pair; a pair below the minimum overlap
-(default 60 aligned observations), or with a degenerate sample, is reported
-UNAVAILABLE with an explicit reason and its window and `n`, never as a point
-estimate. It reports (a) redundant pairs — correlation `≥ 0.90` *and* combined EUR
-weight `≥ 20%` (both tunable), sorted by `ρ × weight` — and (b) a hierarchical
-clustering (average linkage, cut at `ρ ≈ 0.80`) run only over funds with a valid
-distance to *every* peer, so no fabricated distance ever reaches the linkage and one
-sparse fund can shrink the clustered set. `--explain` reconstructs each flagged pair
+neither drops out nor truncates every other pair; a pair below the minimum
+overlap, or with a degenerate sample, is reported UNAVAILABLE with an explicit
+reason and its window and `n`, never as a point estimate. Thresholds
+(`--rho-flag`, `--weight-flag`, `--min-overlap`, `--cluster-rho`) live in
+`src/e1f/correlation.py`. It reports (a) redundant pairs — high correlation
+*and* real combined EUR weight (both tunable), sorted by `ρ × weight` — and
+(b) a hierarchical clustering (average linkage) run only over funds with a
+valid distance to *every* peer, so no fabricated distance ever reaches the
+linkage and one sparse fund can shrink the clustered set. `--explain` reconstructs each flagged pair
 from source data (a bounded preview of the aligned return vectors plus a digest),
 never a persisted result; naming two held ISINs (`--explain ISIN_A ISIN_B`)
 reconstructs just that pair on demand, at any status and regardless of the flag
@@ -285,8 +286,9 @@ targets are reported UNAVAILABLE with the reason and fix (never an approximate p
 that hides a sale), exit code `0`. Provenance is opt-in per ADR-0014
 (`--show-status` / `--explain`).
 
-Scenarios: `ADR/ADR-0017_scenarios.md` (`src/e1f/scenario.py`; shared I/O and the
-rebalance plan core in `src/e1f/common.py`). `e1f scenario` saves named ISIN:pct
+Scenarios: `ADR/ADR-0017_scenarios.md` (`src/e1f/scenario.py`; shared I/O in
+`src/e1f/common/scenarios.py` and the rebalance plan core in
+`src/e1f/common/rebalance.py`). `e1f scenario` saves named ISIN:pct
 baskets in one gitignored `data/scenarios.yaml` — CRUD only (`save` / `list` /
 `show` / `delete`); it never runs an analysis. The two consumers recall a basket
 with `--scenario NAME`: `rebalance` loads its targets and stored `months` (a
@@ -299,68 +301,26 @@ UNAVAILABLE. This is why the buy-only plan core graduated into `common`, so
 `correlation` can run the plan without importing `rebalance` (ADR-0003).
 
 Backtest (experimental tier, ADR-0024): `ADR/ADR-0019_backtest_command.md`
-(`src/e1f/experimental/backtest.py`; the pure simulation core in
-`src/e1f/experimental/common.py`, the shared XIRR solver in `src/e1f/common.py`).
-`e1f backtest --isin X`
-runs contribution-timing strategies over one ETF's real EUR daily-close history and
-asks whether shifting a fixed monthly budget toward dips beats a constant DCA. It uses
-a **dip-reserve** model: each month a base fraction β of the contribution buys shares
-immediately and the rest accrues to a reserve that a rule `f = clamp(a·(D−D0)^b, 0, 1)`
-deploys on drawdowns (D measured vs a rolling high on the EUR series). Because the reserve
-can never go negative, ∑ contributions is identical across strategies — the test measures
-*timing*, not size (invariance by construction). Idle reserve earns 0% by default
-(`--cash-rate` to sensitivity-test) and any leftover cash is counted in terminal wealth,
-so cash drag is charged honestly; the headline metrics are terminal wealth and XIRR versus
-always-shown lump-sum / constant-DCA / cash-drag benchmarks. `--window N` sweeps every
-rolling N-month start and summarises the excess-vs-DCA distribution. Every run separates the
-**data span** from the effective **test span** (first contribution → valuation, honouring
-`--from` and the warm-up burn), reports which known crashes fall inside the *test* span and
-which fixed horizons (10/15/20y) it reaches; `--window` instead reports, per crash, how many
-rolling windows were exposed to it — so the dataset's coverage limits are impossible to miss.
-It is an **evaluator, not an optimizer** — strategies are pre-specified and only tabulated,
-never fitted or ranked on
-the same history; walk-forward selection and long proxy-index history are deferred to v2.
+(`src/e1f/experimental/backtest.py`; sim core in
+`src/e1f/experimental/common.py`; XIRR in `src/e1f/common/metrics.py`).
+`e1f backtest --isin X` runs contribution-timing strategies over one ETF's real
+EUR daily-close history and asks whether shifting a fixed monthly budget toward
+dips beats a constant DCA. A dip-reserve keeps ∑ contributions equal across
+strategies (invariance by construction). Headline metrics are terminal wealth
+and XIRR versus lump-sum / constant-DCA / cash-drag. It is an evaluator, not an
+optimizer — strategies are tabulated, never fitted on the same history. Flags
+and defaults: `e1f backtest --help`.
 
-Blind-deployment controls (`ADR/ADR-0020_blind_deployment_control.md`) isolate *why* a dip
-wins or loses. Alongside `cash-drag(β)` (a reserve that never deploys), every single run adds
-`blind-even(β)` — a reserve that reinvests on a drawdown-**blind** schedule, emptying by the
-horizon — for each distinct β among the dips, and prints a decomposition per dip at matched β:
-**reserve cost** (`DCA − cash-drag`), **deployment benefit** (`blind-even − cash-drag`),
-**timing benefit** (`dip − blind-even`, i.e. vs full neutral reinvestment), and **total**
-(`dip − DCA`). `blind-even` is the deterministic headline; `--blind-seeds N` (default 500,
-`0` disables) adds a supplementary `blind-random` distribution over fixed seeds and reports the
-dip's percentile within it — is the signal distinguishable from equally-blind deployment? A
-bounded fraction of the current reserve keeps ADR-0019's invariance intact for every mode.
-`--strategy` also accepts `deploy=even|delayed|random`, `delay=`, and `seed=` to place a blind
-strategy in the table directly.
+Blind-deployment controls (`ADR/ADR-0020_blind_deployment_control.md`) isolate
+*why* a dip wins or loses (reserve cost / deployment benefit / timing benefit /
+total) and can add a `blind-random` distribution.
 
-A **daily dip-slice** strategy (`ADR/ADR-0021_daily_dip_slice_strategy.md`) probes *within-month*
-timing instead: `--strategy "deploy=daily-dip,n=N"` (or `--slices N`, default 20) cuts each
-month's contribution into N equal slices and spends one on every **down day** (close below the
-prior close), with a catch-up rule and a last-day dump that deploy the whole month's `C` before
-the month ends. It holds **no cross-month reserve** — a true sibling of constant-DCA differing
-only in *which days of the month* the euros land on — so its invariance is unconditional
-(`reserve_cash` is exactly zero, no `--cash-rate` caveat) and it gets no β-matched controls.
-Sweep several N in one table (`--strategy "deploy=daily-dip,n=10" --strategy "deploy=daily-dip,n=40"`);
-a run with no signal dip skips the drawdown warm-up and starts at the series start.
-
-A **carry-forward** variant (`deploy=daily-dip-carry`, `ADR/ADR-0023_daily_dip_carry_strategy.md`)
-accrues one slice per trading day and, on each **down day**, spends *every* accrued-but-unspent
-slice — the day's own plus every earlier day a buy has not yet consumed — instead of a single
-slice, so it holds cash through up-runs and dumps the built-up pool onto the next dip (the last
-trading day still flushes any remainder). It shares daily-dip's `--slices N` knob and its
-unconditional invariance and no β-matched controls.
-
-The **MaxDD** column is the peak-to-trough of a **daily**-sampled value curve for every
-strategy (`ADR/ADR-0022_daily_drawdown_sampling.md`) — crash bottoms fall mid-month, so a
-once-a-month sample both undercounts the loss and is incomparable across strategies. Daily
-sampling reports the drawdown actually lived through (~34% for a fully-invested all-world book
-over 2011–2026, not the ~22% a monthly sample showed) and makes the reserve's drawdown cushion
-visible: cash-drag / blind-even / dip sit several points below the fully-invested rows because
-idle cash does not fall in a crash. Shares and the reserve still move only at the monthly fills;
-the daily walk only revalues the holding, so wealth and XIRR are unchanged.
-`--isin` is required (no default): a missing or unknown ISIN prints the candidate series
-with their spans, and a series with no EUR/FX rate is refused rather than mis-valued.
+A **daily dip-slice** strategy (`ADR/ADR-0021_daily_dip_slice_strategy.md`) and a
+**carry-forward** variant (`ADR/ADR-0023_daily_dip_carry_strategy.md`) probe
+within-month timing with no cross-month reserve. **MaxDD** is sampled daily
+(`ADR/ADR-0022_daily_drawdown_sampling.md`). `--isin` is required: a missing or
+unknown ISIN prints the candidate series with their spans, and a series with no
+EUR/FX rate is refused rather than mis-valued.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`
