@@ -86,6 +86,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0028` — `seasonality --evaluate`: frozen August/November contribution skip/shift vs DCA (sit-out secondary); in-sample or labelled holdout; months are constants, not re-selected
 - `ADR-0029` — `performance --diff N`: signed change table over N calendar days (reading-A, money columns only, union of held ISINs, held-but-unpriceable → unavailable); composes with `--as-of`; `portfolio --diff` deferred
 - `ADR-0030` — `performance --series N`: one portfolio-TOTAL row per trading day over the last N calendar days; cumulative-since-inception metrics (each row == `--as-of` that day, by reusing `_snapshot`/`_snapshot_total`); trading days come from the price data (weekends/holidays drop out, no hardcoded calendar); `P&Lctr` dropped; composes with `--as-of`, `--reverse` newest-first, mutually exclusive with `--diff`
+- `ADR-0031` — `performance --series` gains two trailing columns: market-value-weighted TER (`WTER`) and estimated annual fee (`Fee€/yr`) at that day's MktVal; value-weighted (not `portfolio`'s cost-basis), missing-TER dilutes; shared columns untouched; no cross-command import (fee formula inline)
 
 ## Skills
 

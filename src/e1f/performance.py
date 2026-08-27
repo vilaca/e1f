@@ -850,23 +850,77 @@ def _cmd_performance(
 
 _SERIES_HEADER = (
     f"\n{'Date':<12} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Vol':>8} {'MaxDD':>8} {'CAGR':>8}"
+    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Vol':>8} {'MaxDD':>8} {'CAGR':>8} "
+    f"{'WTER':>8} {'Fee€/yr':>10}"
 )
 _SERIES_RULE_WIDTH = len(_SERIES_HEADER.lstrip("\n"))
 
 
-def _format_series_row(day: str, row: PerformanceRow) -> str:
+@dataclass
+class SeriesPoint:
+    """One trading day's portfolio TOTAL plus its cost-of-ownership columns (ADR-0031)."""
+
+    day: str
+    total: PerformanceRow
+    weighted_ter: float | None  # market-value-weighted TER, in percent
+    annual_cost: float | None  # estimated EUR/yr in fees at that day's MktVal
+
+
+def _ter_by_isin(config_path: str, isins: list[str]) -> dict[str, float | None]:
+    """TER (percent) per ISIN from config metadata; None where unset (ADR-0007)."""
+    config = ConfigManager(config_path)
+    result: dict[str, float | None] = {}
+    for isin in isins:
+        ter = (config.get(isin) or {}).get("ter")
+        result[isin] = float(ter) if isinstance(ter, (int, float)) else None
+    return result
+
+
+def _weighted_ter_cost(
+    rows: list[PerformanceRow], ter_by_isin: dict[str, float | None]
+) -> tuple[float | None, float | None]:
+    """Market-value-weighted TER (%) and estimated EUR/yr fee over the day's holdings.
+
+    TER is levied on AUM, so both weight by each holding's EUR market value, not
+    cost basis (ADR-0031). A holding with no TER metadata contributes 0 to the fee
+    but still counts in the denominator (dilutes, matching ``portfolio``). Returns
+    ``(None, None)`` when no held ISIN has a TER or nothing is valuable.
+    """
+    total_value = 0.0
+    annual = 0.0
+    covered = False
+    for row in rows:
+        if not row.valuable or row.market_value is None:
+            continue
+        total_value += row.market_value
+        ter = ter_by_isin.get(row.isin)
+        if ter is not None:
+            covered = True
+            annual += ter / 100.0 * row.market_value
+    if not covered or total_value <= 0.0:
+        return None, None
+    return 100.0 * annual / total_value, annual
+
+
+def _format_series_row(point: SeriesPoint) -> str:
     """One dated TOTAL row; ~ flags a carried-forward close, * a short history."""
+    row = point.total
     flag = row.short_history
     return (
-        f"{day:<12} "
+        f"{point.day:<12} "
         f"{_fmt_money(row.market_value, flag=row.estimated):>13} "
         f"{_fmt_money(row.cost):>13} {_fmt_money(row.pnl):>13} "
         f"{_fmt_pct(row.pnl_pct, scaled=True):>8} "
         f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.twr):>8} "
         f"{_fmt_pct(row.volatility, flag=flag):>8} {_fmt_pct(row.max_drawdown):>8} "
-        f"{_fmt_pct(row.cagr, flag=flag):>8}"
+        f"{_fmt_pct(row.cagr, flag=flag):>8} "
+        f"{_fmt_ter(point.weighted_ter):>8} {_fmt_money(point.annual_cost):>10}"
     )
+
+
+def _fmt_ter(ter: float | None) -> str:
+    """Weighted TER as ``x.xxx%``; n/a when no held holding has TER metadata."""
+    return "n/a" if ter is None else f"{ter:.3f}%"
 
 
 def _trading_days(
@@ -885,6 +939,29 @@ def _trading_days(
     return sorted(days)
 
 
+def _series_point(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    ter_by_isin: dict[str, float | None],
+    day: str,
+) -> SeriesPoint | None:
+    """The day's TOTAL + weighted-TER columns, or None when nothing is valuable.
+
+    The TOTAL comes from the same ``_snapshot`` + ``_total_row`` path as
+    ``_snapshot_total`` (and thus ``performance --as-of <day>``), so the shared
+    columns stay identical; the TER columns are computed from the same per-ISIN
+    rows in one snapshot pass.
+    """
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
+    if not any(row.valuable for row in rows):
+        return None
+    total = _total_row(rows, holdings, day, db_path)
+    weighted_ter, annual_cost = _weighted_ter_cost(rows, ter_by_isin)
+    return SeriesPoint(day=day, total=total, weighted_ter=weighted_ter, annual_cost=annual_cost)
+
+
 def _series_rows(
     db_path: str,
     config_path: str,
@@ -893,17 +970,20 @@ def _series_rows(
     *,
     start: str,
     end: str,
-) -> list[tuple[str, PerformanceRow]]:
-    """``(day, TOTAL)`` for each trading day in the window, cumulative since inception.
+) -> list[SeriesPoint]:
+    """One ``SeriesPoint`` per trading day in the window, cumulative since inception.
 
-    Each TOTAL is the same row ``performance --as-of <day>`` prints (both go
-    through ``_snapshot_total``). Days with nothing valuable are skipped.
+    Each point's TOTAL is the same row ``performance --as-of <day>`` prints. Days
+    with nothing valuable are skipped.
     """
-    result: list[tuple[str, PerformanceRow]] = []
+    ter_by_isin = _ter_by_isin(config_path, list(timeline))
+    result: list[SeriesPoint] = []
     for day in _trading_days(db_path, timeline, start, end):
-        total = _snapshot_total(db_path, config_path, currency_meta_path, timeline, day)
-        if total is not None:
-            result.append((day, total))
+        point = _series_point(
+            db_path, config_path, currency_meta_path, timeline, ter_by_isin, day
+        )
+        if point is not None:
+            result.append(point)
     return result
 
 
@@ -933,15 +1013,20 @@ def _cmd_performance_series(
     print(f"\nPortfolio performance series {start} → {as_of} (EUR, cumulative since inception)")
     print(_SERIES_HEADER)
     print("-" * _SERIES_RULE_WIDTH)
-    for day, row in rows:
-        print(_format_series_row(day, row))
+    for point in rows:
+        print(_format_series_row(point))
 
-    if any(row.short_history for _day, row in rows):
+    if any(point.total.short_history for point in rows):
         print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
-    if any(row.estimated for _day, row in rows):
+    if any(point.total.estimated for point in rows):
         print(
             "\n~ MktVal carried forward from an earlier close on flagged days "
             "(no close on the day itself — fetch to refresh)."
+        )
+    if any(point.weighted_ter is not None for point in rows):
+        print(
+            "\nWTER = market-value-weighted TER; Fee€/yr = WTER × MktVal. "
+            "Holdings without TER metadata contribute 0 (dilutes)."
         )
     return 0
 
@@ -974,7 +1059,9 @@ provenance blocks and implies --show-status.
 last N calendar days — one row per day, cumulative-since-inception metrics,
 identical to running --as-of on each of those days. Trading days come from the
 price data (weekends/holidays with no close drop out); --reverse shows newest
-first. Mutually exclusive with --diff.
+first. Mutually exclusive with --diff. Two trailing columns (ADR-0031) add the
+market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
+(Fee€/yr); holdings without TER metadata contribute 0 (dilutes).
 
 Examples:
   e1f performance
