@@ -14,7 +14,7 @@ import argparse
 import statistics
 import sys
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from e1f.common import (
     DEFAULT_CONFIG,
@@ -242,6 +242,27 @@ class PerformanceRow:
         return 100.0 * (self.market_value - self.cost) / self.cost
 
 
+@dataclass
+class DiffRow:
+    """Per-ISIN signed delta row for ``--diff`` mode (ADR-0029)."""
+
+    isin: str
+    name: str
+    delta_market_value: float | None  # None = held but unpriceable at either endpoint
+    delta_cost: float
+    estimated: bool  # at least one endpoint's price was carried forward
+
+    @property
+    def valuable(self) -> bool:
+        return self.delta_market_value is not None
+
+    @property
+    def delta_pnl(self) -> float | None:
+        if self.delta_market_value is None:
+            return None
+        return self.delta_market_value - self.delta_cost
+
+
 def _contribution_cash_flows(
     events: list[PositionEvent], terminal_value: float | None, as_of: str
 ) -> list[tuple[str, float]]:
@@ -342,6 +363,71 @@ def _total_row(
         short_history=any(row.short_history for row in included),
         estimated=any(row.estimated for row in included),
     )
+
+
+# ---------------------------------------------------------------------------
+# Diff-mode merge (pure, no DB — the primary test seam for --diff).
+# ---------------------------------------------------------------------------
+
+
+def _build_endpoint_rows(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    as_of: str,
+) -> dict[str, PerformanceRow]:
+    """Return {isin: PerformanceRow} for all ISINs held at *as_of* (including unvaluable)."""
+    rows: dict[str, PerformanceRow] = {}
+    for isin, events in timeline.items():
+        capped = [e for e in events if e.date <= as_of]
+        if not capped:
+            continue
+        series = _build_series(db_path, isin, capped, as_of, currency_meta_path)
+        row = _build_row(isin, series, as_of, config_path, db_path)
+        if row is not None:
+            rows[isin] = row
+    return rows
+
+
+def _diff_rows(
+    start_rows: dict[str, PerformanceRow],
+    end_rows: dict[str, PerformanceRow],
+) -> list[DiffRow]:
+    """Merge two endpoint dicts into signed delta rows over their ISIN union.
+
+    An absent key means the ISIN was not held at that endpoint (contributes 0).
+    A row present with ``valuable=False`` means held-but-unpriceable — the whole
+    delta is marked unavailable for that ISIN (never collapsed to zero).
+    """
+    result: list[DiffRow] = []
+    for isin in sorted(set(start_rows) | set(end_rows)):
+        s = start_rows.get(isin)
+        e = end_rows.get(isin)
+
+        if (s is not None and not s.valuable) or (e is not None and not e.valuable):
+            delta_mv: float | None = None
+        else:
+            # In this branch s.valuable=True (s.market_value is float) when s is not None;
+            # same for e. The or-0.0 fallbacks are unreachable but satisfy the type checker.
+            s_mv = 0.0 if s is None else (s.market_value if s.market_value is not None else 0.0)
+            e_mv = 0.0 if e is None else (e.market_value if e.market_value is not None else 0.0)
+            delta_mv = e_mv - s_mv
+
+        delta_cost = (e.cost if e is not None else 0.0) - (s.cost if s is not None else 0.0)
+        estimated = (s is not None and s.estimated) or (e is not None and e.estimated)
+        name = e.name if e is not None else (s.name if s is not None else "")
+
+        result.append(
+            DiffRow(
+                isin=isin,
+                name=name,
+                delta_market_value=delta_mv,
+                delta_cost=delta_cost,
+                estimated=estimated,
+            )
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +575,142 @@ def render_row_explain(row: PerformanceRow) -> list[str]:
         RETURN_CONTRACT,
     ))
     return lines
+
+
+def diff_row_status(row: DiffRow) -> Status:
+    """Diff row gate: CALCULATED when the delta is known, UNAVAILABLE otherwise."""
+    return Status.CALCULATED if row.valuable else Status.UNAVAILABLE
+
+
+def _diff_sort_key(row: DiffRow, sort_by: str) -> str | float:
+    if sort_by == "isin":
+        return row.isin
+    if sort_by == "name":
+        return row.name.lower()
+    # Fields absent in diff output (xirr) fall back to delta_market_value (value).
+    value = {
+        "value": row.delta_market_value,
+        "cost": row.delta_cost,
+        "pnl": row.delta_pnl,
+    }.get(sort_by, row.delta_market_value)
+    return float("-inf") if value is None else value
+
+
+def sort_diff_rows(
+    rows: list[DiffRow], *, sort_by: str = "isin", reverse: bool = False
+) -> list[DiffRow]:
+    return sorted(rows, key=lambda row: _diff_sort_key(row, sort_by), reverse=reverse)
+
+
+def _fmt_signed_money(value: float | None, *, flag: bool = False) -> str:
+    if value is None:
+        return "—"  # em dash — unavailable
+    prefix = "+" if value > 0 else ""
+    return f"{prefix}{value:,.2f}" + ("~" if flag else "")
+
+
+_DIFF_HEADER = (
+    f"\n{'ISIN':<14} {'Name':<28} {'ΔMktVal€':>12} {'ΔCost€':>12} {'ΔP&L€':>12}"
+)
+_DIFF_RULE_WIDTH = 14 + 1 + 28 + 1 + 12 + 1 + 12 + 1 + 12  # = 82
+_DIFF_STATUS_COL = 11
+
+
+def _diff_header(show_status: bool) -> str:
+    return _DIFF_HEADER + (f" {'Status':>{_DIFF_STATUS_COL}}" if show_status else "")
+
+
+def _diff_rule_width(show_status: bool) -> int:
+    return _DIFF_RULE_WIDTH + (_DIFF_STATUS_COL + 1 if show_status else 0)
+
+
+def _format_diff_row(row: DiffRow, *, show_status: bool = False) -> str:
+    if row.valuable:
+        mv = _fmt_signed_money(row.delta_market_value, flag=row.estimated)
+        cost = _fmt_signed_money(row.delta_cost)
+        pnl = _fmt_signed_money(row.delta_pnl)
+    else:
+        mv = cost = pnl = "—"  # em dash for all three when unpriceable
+    base = (
+        f"{row.isin:<14} {row.name:<28} "
+        f"{mv:>12} {cost:>12} {pnl:>12}"
+    )
+    if show_status:
+        base += f" {diff_row_status(row).value:>{_DIFF_STATUS_COL}}"
+    return base
+
+
+def _cmd_performance_diff(
+    db_path: str,
+    config_path: str,
+    *,
+    end: str,
+    start: str,
+    sort_by: str = "isin",
+    reverse: bool = False,
+    show_status: bool = False,
+    explain: bool = False,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> int:
+    show_status = show_status or explain
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    start_rows = _build_endpoint_rows(db_path, config_path, currency_meta_path, timeline, start)
+    end_rows = _build_endpoint_rows(db_path, config_path, currency_meta_path, timeline, end)
+
+    rows = _diff_rows(start_rows, end_rows)
+    if not rows:
+        print(f"No holdings in window {start} → {end}")
+        return 0
+
+    rows = sort_diff_rows(rows, sort_by=sort_by, reverse=reverse)
+
+    valuable = [r for r in rows if r.valuable]
+    total_mv: float | None = (
+        sum(r.delta_market_value for r in valuable if r.delta_market_value is not None)
+        if valuable
+        else None
+    )
+    total_cost = sum(r.delta_cost for r in valuable)
+    total_row = DiffRow(
+        isin="TOTAL",
+        name="",
+        delta_market_value=total_mv,
+        delta_cost=total_cost,
+        estimated=any(r.estimated for r in valuable),
+    )
+
+    excluded = [r.isin for r in rows if not r.valuable]
+
+    print(f"\nPerformance change {start} → {end} (EUR)")
+    print(_diff_header(show_status))
+    print("-" * _diff_rule_width(show_status))
+    for row in rows:
+        print(_format_diff_row(row, show_status=show_status))
+    print("-" * _diff_rule_width(show_status))
+    print(_format_diff_row(total_row, show_status=show_status))
+
+    estimated = [r for r in rows if r.estimated and r.valuable]
+    if estimated:
+        print(
+            "\n~ ΔMktVal estimated: at least one window endpoint used a "
+            "carried-forward close (fetch to refresh)."
+        )
+    if excluded:
+        print(
+            "\n⚠ excluded from TOTAL (held but unpriceable at an endpoint): "
+            + ", ".join(sorted(excluded))
+        )
+    if explain:
+        print(
+            "\nProvenance (--explain): reading-A — each endpoint valued at its own prices"
+            " (shares × close × FX; carry-forward if no close on the day)."
+        )
+    return 0
 
 
 def _cmd_performance(
@@ -653,6 +875,13 @@ Examples:
         action="store_true",
         help="Per-holding provenance blocks (Status/contract/limited-by; implies --show-status)",
     )
+    parser.add_argument(
+        "--diff",
+        metavar="N",
+        default=None,
+        help="Show signed change over the last N calendar days instead of a snapshot "
+        "(composes with --as-of: window is [as_of − N, as_of]). N ≥ 1.",
+    )
     return parser
 
 
@@ -663,10 +892,37 @@ def _validate_as_of(as_of: str) -> None:
         raise ValueError(f"--as-of must be YYYY-MM-DD: {as_of}") from exc
 
 
+def _validate_diff(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"--diff must be a positive integer, got: {raw!r}") from exc
+    if n < 1:
+        raise ValueError(f"--diff must be ≥ 1, got: {n}")
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         _validate_as_of(args.as_of)
+        diff_n = _validate_diff(args.diff)
+        if diff_n is not None:
+            end = args.as_of
+            start = (date.fromisoformat(end) - timedelta(days=diff_n)).isoformat()
+            return _cmd_performance_diff(
+                args.db,
+                args.config,
+                end=end,
+                start=start,
+                sort_by=args.sort,
+                reverse=args.reverse,
+                show_status=args.show_status,
+                explain=args.explain,
+                currency_meta_path=args.currency_meta,
+            )
         return _cmd_performance(
             args.db,
             args.config,
