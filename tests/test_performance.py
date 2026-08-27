@@ -1462,9 +1462,95 @@ def test_main_metrics_no_priceable_holdings(tmp_path, capsys):
     assert "No priceable holdings as of 2024-12-31" in out
 
 
-def test_main_metrics_mutually_exclusive_with_series(tmp_path, capsys):
+def test_main_metrics_diff_does_not_compose(tmp_path, capsys):
     db, config, meta = _seed(tmp_path)
-    code = perf.main(_args(db, config, meta, "--metrics", "--series", "10"))
+    code = perf.main(_args(db, config, meta, "--metrics", "--diff", "7"))
     out = capsys.readouterr().out
     assert code == 1
-    assert "mutually exclusive" in out
+    assert "does not compose with --diff" in out
+
+
+def test_main_metrics_series_composes(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-01-02", 12.0),
+            (EUR_ISIN, "2024-01-03", 9.0),
+            (EUR_ISIN, "2024-01-04", 13.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(
+        _args(db, config, meta, "--as-of", "2024-01-04", "--metrics", "--series", "10")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Portfolio metrics series" in out
+    assert "MaxDD" in out and "DDdur" in out and "RecFac" in out
+    for day in ("2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"):
+        assert day in out
+    assert "-25.0%" in out  # last day's cumulative MaxDD (the 12 → 9 trough)
+
+
+def test_main_metrics_series_reverse_newest_first(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-01-02", 11.0),
+            (EUR_ISIN, "2024-01-03", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-01-03", "--metrics", "--series", "10", "-r")
+    )
+    out = capsys.readouterr().out
+    dated = [ln for ln in out.splitlines() if ln.startswith("2024-01-")]
+    assert dated[0].startswith("2024-01-03") and dated[-1].startswith("2024-01-01")
+
+
+def test_main_metrics_series_estimated_note(tmp_path, capsys):
+    # USD leg priced only on 01-01 → carried forward on 01-02/03 → estimated days.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", USD_ISIN, 10.0, 90.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-01-02", 11.0),
+            (EUR_ISIN, "2024-01-03", 12.0),
+            (USD_ISIN, "2024-01-01", 100.0),
+        ],
+        fx=[("EUR", "USD", "2024-01-01", 1.0)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-01-03", "--metrics", "--series", "10")
+    )
+    out = capsys.readouterr().out
+    assert "~ some days' MktVal is carried forward" in out
+
+
+def test_main_metrics_series_no_priced_days(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2020-01-01", 10.0)],  # only price predates the window
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(
+        _args(db, config, meta, "--as-of", "2024-01-10", "--metrics", "--series", "3")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No priced trading days" in out
