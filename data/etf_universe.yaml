@@ -531,3 +531,29 @@ etfs:
     distribution: Accumulating
     ter: 0.35
     asset_class: Equity
+  IE00B4L5Y983:
+    name: ISHARES CORE MSCI WORLD
+    tickers:
+    - IWDA
+    - SWDA
+    - EUNL
+    - IRRRF
+    exchange: NA
+    figi: BBG000P71QK5
+    listings:
+    - ticker: IWDA
+      exchange: NA
+    - ticker: SWDA
+      exchange: LN
+    - ticker: IWDA
+      exchange: LN
+    - ticker: EUNL
+      exchange: GR
+    - ticker: IRRRF
+      exchange: US
+    resolved_at: '2026-08-27T21:15:22.894985+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.2
+    asset_class: Equity

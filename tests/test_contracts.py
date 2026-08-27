@@ -32,6 +32,7 @@ def test_cli_commands_surface():
         "transactions",
         "portfolio",
         "performance",
+        "benchmark",
         "correlation",
         "rebalance",
         "scenario",

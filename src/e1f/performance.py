@@ -26,13 +26,16 @@ from e1f.common import (
     PositionEvent,
     Status,
     _explain_metric,
+    aggregate_value_series as _aggregate_series,
     build_series as _build_series,
+    contribution_on as _contribution_on,
     load_price_series,
     load_trades,
     position_asof as _position_asof,
     position_timeline,
     price_date_asof as _price_date_asof,
     value_on as _value_on,
+    wealth_and_returns as _wealth_and_returns,
     xirr,
 )
 
@@ -184,31 +187,6 @@ class ExtendedMetrics:
     gain_loss_ratio: float | None
 
 
-def _wealth_and_returns(
-    points: list[tuple[str, float, float]],
-) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
-    """Dated wealth index and dated sub-period returns from a value/contribution series.
-
-    The recurrence is identical to ``risk_metrics`` — ``r_t = V_t/(V_prev+CF_t) − 1``
-    with the contribution treated as start-of-day, chain-linked into a wealth index
-    seeded at 1.0 — so the two never disagree. Returns ``(wealth_path, returns)``,
-    each a list of ``(date, value)`` over the days where a return is defined.
-    """
-    returns: list[tuple[str, float]] = []
-    wealth_path: list[tuple[str, float]] = []
-    previous_value = 0.0
-    wealth = 1.0
-    for day, value, contribution in points:
-        denominator = previous_value + contribution
-        if denominator > 0.0:
-            period_return = value / denominator - 1.0
-            returns.append((day, period_return))
-            wealth *= 1.0 + period_return
-            wealth_path.append((day, wealth))
-        previous_value = value
-    return wealth_path, returns
-
-
 def _drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[_DrawdownEpisode]:
     """Peak-to-recovery drawdown episodes of the wealth index, in chronological order.
 
@@ -311,10 +289,6 @@ def extended_metrics(
 # ---------------------------------------------------------------------------
 
 
-def _contribution_on(events: list[PositionEvent], day: str) -> float:
-    return sum(event.cash_flow for event in events if event.date == day)
-
-
 def _breakpoint_days(series: HoldingSeries, first_day: str, as_of: str) -> list[str]:
     """Trading days plus contribution days within ``[first_day, as_of]``, sorted."""
     days = {d for d in series.price_dates if first_day <= d <= as_of}
@@ -332,41 +306,6 @@ def _isin_series_points(
         if value is None:
             continue
         points.append((day, value, _contribution_on(series.events, day)))
-    return points
-
-
-def _aggregate_series(
-    holdings: list[HoldingSeries], first_day: str, as_of: str, db_path: str
-) -> list[tuple[str, float, float]]:
-    """Portfolio value/contribution series: sum per-ISIN values on shared days.
-
-    A day is dropped when a currently-held ISIN cannot be valued on it (missing
-    prior price/FX), rather than treating the gap as zero — which would spike the
-    aggregate return when the price later appears. Held ISINs' short-history rows
-    still carry their own flag.
-    """
-    days: set[str] = {as_of}
-    for series in holdings:
-        days.update(d for d in series.price_dates if first_day <= d <= as_of)
-        days.update(e.date for e in series.events if first_day <= e.date <= as_of)
-
-    points: list[tuple[str, float, float]] = []
-    for day in sorted(days):
-        total_value = 0.0
-        total_contribution = 0.0
-        valuable = True
-        for series in holdings:
-            shares, _cost = _position_asof(series.events, day)
-            if shares <= _SHARE_EPSILON:
-                continue
-            value = _value_on(series, day, db_path)
-            if value is None:
-                valuable = False
-                break
-            total_value += value
-            total_contribution += _contribution_on(series.events, day)
-        if valuable:
-            points.append((day, total_value, total_contribution))
     return points
 
 

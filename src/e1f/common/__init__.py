@@ -46,6 +46,13 @@ from .rebalance import (
     compute_rebalance,
     post_rebalance_weights,
 )
+from .returns import (
+    aggregate_value_series,
+    contribution_on,
+    eur_return_series,
+    portfolio_return_series,
+    wealth_and_returns,
+)
 from .retry import call_with_retry
 from .scenarios import (
     Scenario,
@@ -86,15 +93,18 @@ __all__ = [
     "Status",
     "_explain_metric",
     "_limited_by",
+    "aggregate_value_series",
     "assemble_rebalance_valuations",
     "build_series",
     "call_with_retry",
     "close_asof",
     "compute_rebalance",
+    "contribution_on",
     "convert_to_eur",
     "delete_scenario",
     "distribution_from_name",
     "enrich_fund_metadata",
+    "eur_return_series",
     "fund_currency_from_name",
     "fund_eur_value",
     "fx_rate_asof",
@@ -104,11 +114,13 @@ __all__ = [
     "load_trades",
     "pinned_quote_currency",
     "portfolio_isins",
+    "portfolio_return_series",
     "position_asof",
     "position_timeline",
     "post_rebalance_weights",
     "price_date_asof",
     "save_scenario",
     "value_on",
+    "wealth_and_returns",
     "xirr",
 ]
