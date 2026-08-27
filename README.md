@@ -33,7 +33,7 @@ walled off so no stable command depends on them:
 3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
-6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
+6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; `--diff N` shows the signed change over the last N calendar days (ADR-0029); `--series N` lists the portfolio TOTAL for each trading day over the last N days, cumulative since inception, with market-value-weighted TER and estimated annual fee columns (ADR-0030, ADR-0031).
 8. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 9. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
@@ -191,8 +191,10 @@ same file is idempotent (duplicate `(broker, transaction_id)` rows are skipped).
 Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
-(output in `src/e1f/portfolio.py`). `--show-status` / `--explain` add opt-in
-provenance disclosure (ADR-0014; see below).
+(output in `src/e1f/portfolio.py`). `--show-cost-basis` adds an FX-converted EUR
+market value and market-value-weighted fee / TER (`ADR/ADR-0032_portfolio_fx_market_value.md`);
+holdings with no price or FX are excluded from those totals with a warning.
+`--show-status` / `--explain` add opt-in provenance disclosure (ADR-0014; see below).
 
 Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
 `src/e1f/performance.py`). `e1f performance` values holdings in EUR

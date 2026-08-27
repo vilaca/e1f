@@ -22,7 +22,7 @@ src/e1f/
   fetch.py     — fetch subcommand: ftgo/yfinance price + FX fetching, SQLite
   validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
-  portfolio.py   — portfolio subcommand: holdings from transactions
+  portfolio.py   — portfolio subcommand: holdings from transactions; FX-converted EUR market value + market-value-weighted fee/TER (ADR-0032)
   performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics; --diff N signed change over N calendar days (ADR-0029); --series N daily cumulative TOTAL over N days (ADR-0030)
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
@@ -87,6 +87,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0029` — `performance --diff N`: signed change table over N calendar days (reading-A, money columns only, union of held ISINs, held-but-unpriceable → unavailable); composes with `--as-of`; `portfolio --diff` deferred
 - `ADR-0030` — `performance --series N`: one portfolio-TOTAL row per trading day over the last N calendar days; cumulative-since-inception metrics (each row == `--as-of` that day, by reusing `_snapshot`/`_snapshot_total`); trading days come from the price data (weekends/holidays drop out, no hardcoded calendar); `P&Lctr` dropped; composes with `--as-of`, `--reverse` newest-first, mutually exclusive with `--diff`
 - `ADR-0031` — `performance --series` gains two trailing columns: market-value-weighted TER (`WTER`) and estimated annual fee (`Fee€/yr`) at that day's MktVal; value-weighted (not `portfolio`'s cost-basis), missing-TER dilutes; shared columns untouched; no cross-command import (fee formula inline)
+- `ADR-0032` — `portfolio` FX-converts its market value (`Value€` via shared `convert_to_eur`, FX as of the close's date) and moves the estimated annual fee + weighted avg TER onto market value (was cost basis); missing price/FX → `—` and excluded (with a warning); `Weight` stays cost-basis; supersedes ADR-0029's no-FX portfolio-value note (`portfolio --diff` still deferred)
 
 ## Skills
 
