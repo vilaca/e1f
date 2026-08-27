@@ -41,6 +41,7 @@ src/e1f/
     concentration.py — concentration command: coverage-aware within-fund concentration
     overlap.py     — overlap command: cross-fund single-name exposure floor via canonical identity
     backtest.py    — backtest command: contribution-timing (dip-reserve vs constant-DCA + blind-deployment controls, plus within-month daily dip-slice strategies — one-slice-per-dip and a carry-forward variant) over one ETF's real history
+    seasonality.py — seasonality command: twelve-month calendar analysis + permutation omnibus; `--portfolio` consensus + equal-weight book (ADR-0027); `--evaluate` frozen August/November vs DCA (ADR-0028); optional pre-specified / frozen-OOS rules (ADR-0026)
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
   currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs (ADR-0002, ADR-0010)
@@ -80,6 +81,9 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0023` — **carry-forward** daily dip-slice strategy in `backtest` (`deploy=daily-dip-carry`): a sibling of ADR-0021 that accrues one slice per trading day and, on each **down day**, spends *every* accrued-but-unspent slice (day's own + all earlier unspent) rather than one, with the same last-day flush; holds cash through up-runs and dumps the pool onto the next dip; no cross-month reserve, so invariance is unconditional (`reserve_cash == 0`, `--cash-rate` inert) and it gets no β-matched controls; own core `_simulate_daily_dip_carry` in `experimental/common`, sharing the result-assembly helper `_daily_dip_result` with ADR-0021's core
 - `ADR-0024` — **experimental tier isolation**: `concentration`, `overlap`, `backtest` (the least-settled commands) move to `src/e1f/experimental/` with their own `experimental/common.py` for experimental-only primitives; a **one-way import boundary** (import-linter `forbidden` contract) bars every stable module and `common` from importing `e1f.experimental` — only `cli` (the router) may. Look-through *fetching* leaves stable `fetch` for a new experimental `lookthrough` command (run it after `fetch`). Shared primitives (`xirr`, valuation, `Status`/`MetricContract`) stay in `common`; experimental code consumes them freely
 - `ADR-0025` — **`e1f.common` is a package**: the old single `common.py` splits into `defaults` / `retry` / `universe` / `holdings` / `metrics` / `scenarios` / `rebalance`; command modules still `from e1f.common import …`
+- `ADR-0026` — experimental `seasonality` command: all-twelve-month calendar analysis (descriptive + permutation omnibus + extreme-month placebo); no September privilege; total-return default (accumulating NAV only); pre-specified / frozen-OOS rules only, never an auto-traded weakest month; separate from dip `backtest`
+- `ADR-0027` — `seasonality --portfolio`: inferential vs DESCRIPTIVE cohorts; consensus table of fund-level monthly means; cross-sectional permutation of strongest/weakest-month concentration; correlated-universe caveat; balanced equal-weight book; `--rule` stays single-ISIN only
+- `ADR-0028` — `seasonality --evaluate`: frozen August/November contribution skip/shift vs DCA (sit-out secondary); in-sample or labelled holdout; months are constants, not re-selected
 
 ## Skills
 

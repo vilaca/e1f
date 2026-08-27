@@ -24,8 +24,8 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 
 ## Workflow
 
-The tool exposes fourteen commands around a shared config/DB. Ten are stable; the
-last four are an isolated **experimental** tier (ADR-0024) — still rough, and
+The tool exposes fifteen commands around a shared config/DB. Ten are stable; the
+last five are an isolated **experimental** tier (ADR-0024) — still rough, and
 walled off so no stable command depends on them:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
@@ -45,6 +45,7 @@ Experimental tier (ADR-0024):
 12. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
 13. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 14. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
+15. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -121,6 +122,12 @@ e1f backtest --isin IE00B3YLTY66 --strategy "deploy=daily-dip,n=20"   # within-m
 e1f backtest --isin IE00B3YLTY66 --strategy "deploy=daily-dip-carry,n=20"  # carry unspent slices onto the next dip (ADR-0023)
 e1f backtest --isin IE00B3YLTY66 --blind-seeds 0       # skip the blind-random robustness block
 e1f backtest --isin IE00B3YLTY66 --explain             # + assumptions/provenance block
+
+# 11. Calendar seasonality of one ETF (experimental; not a dip-strategy knob)
+e1f seasonality --isin IE00B3YLTY66
+e1f seasonality --isin IE00B3YLTY66 --explain
+e1f seasonality --portfolio            # consensus + cross-sectional permutation (ADR-0027)
+e1f seasonality --isin IE00B3YLTY66 --evaluate   # frozen Aug/Nov vs DCA (ADR-0028)
 ```
 
 Defaults (from `src/e1f/common/defaults.py`): config `data/etf_universe.yaml`, database
@@ -131,7 +138,7 @@ project root, so commands work from any directory. Flag overrides are per comman
 `e1f portfolio --help`, `e1f performance --help`, `e1f correlation --help`,
 `e1f rebalance --help`, `e1f scenario --help`, `e1f validate --help`, and for the
 experimental tier `e1f lookthrough --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f backtest --help`.
+`e1f overlap --help`, `e1f backtest --help`, `e1f seasonality --help`.
 
 ## Price sources
 
@@ -321,6 +328,17 @@ within-month timing with no cross-month reserve. **MaxDD** is sampled daily
 (`ADR/ADR-0022_daily_drawdown_sampling.md`). `--isin` is required: a missing or
 unknown ISIN prints the candidate series with their spans, and a series with no
 EUR/FX rate is refused rather than mis-valued.
+
+Seasonality (experimental tier, ADR-0024): `ADR/ADR-0026_calendar_seasonality.md`
+(`src/e1f/experimental/seasonality.py`). `e1f seasonality --isin X` describes all
+twelve calendar months of one ETF's EUR month-end returns, tests whether those
+differences exceed a label-shuffling null, and only evaluates a seasonal rule when
+one is pre-specified (or frozen on a training window and scored on a later one).
+`e1f seasonality --portfolio` asks whether a common month pattern appears across
+the configured universe (inferential cohort only) and prints a balanced
+equal-weight book. `e1f seasonality --isin X --evaluate` scores the frozen
+August/November contribution rules against DCA. It does not modify the dip
+strategies. Flags: `e1f seasonality --help`.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`

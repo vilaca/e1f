@@ -86,8 +86,8 @@ Three contracts in `pyproject.toml` replace ADR-0003's single one:
 
 ### 5. CLI surface — grouped, not hidden
 
-All four experimental commands (`lookthrough`, `concentration`, `overlap`,
-`backtest`) remain first-class `e1f <command>`s. `cli.py` splits its registries
+All experimental commands (`lookthrough`, `concentration`, `overlap`,
+`backtest`, `seasonality`) remain first-class `e1f <command>`s. `cli.py` splits its registries
 into `STABLE_*` and `EXPERIMENTAL_*` maps (merged for dispatch) so the split has
 one home, and the top-level `--help` lists them under an **"Experimental
 (ADR-0024 — isolated tier; may change or give wrong results)"** heading.

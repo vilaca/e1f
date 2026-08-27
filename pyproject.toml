@@ -97,7 +97,7 @@ forbidden_modules = ["e1f.experimental"]
 name = "Experimental layers: commands -> experimental.common (ADR-0024)"
 type = "layers"
 layers = [
-    "e1f.experimental.backtest | e1f.experimental.concentration | e1f.experimental.overlap | e1f.experimental.lookthrough",
+    "e1f.experimental.backtest | e1f.experimental.concentration | e1f.experimental.overlap | e1f.experimental.lookthrough | e1f.experimental.seasonality",
     "e1f.experimental.common",
 ]
 
