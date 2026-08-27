@@ -1,5 +1,6 @@
 """Performance: XIRR/TWR/risk math, EUR valuation, and the table command (ADR-0011)."""
 
+import re
 import sqlite3
 from contextlib import closing
 
@@ -977,3 +978,209 @@ def test_diff_main_invariance_diff_equals_end_minus_start(tmp_path, capsys):
     diff_mv = _total_market_value(capsys.readouterr().out)
 
     assert diff_mv == pytest.approx(end_mv - start_mv, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# --series mode: daily cumulative totals — ADR-0030
+# ---------------------------------------------------------------------------
+
+# A held EUR fund priced across a Christmas week: a market holiday (2024-12-25)
+# and a weekend (12-28/29) have no close, so they are not trading days.
+_SERIES_PRICES = [
+    (EUR_ISIN, "2024-12-24", 11.0),  # Tue
+    (EUR_ISIN, "2024-12-26", 11.5),  # Thu (25th is a holiday — no close)
+    (EUR_ISIN, "2024-12-27", 11.8),  # Fri
+    (EUR_ISIN, "2024-12-30", 12.0),  # Mon (weekend 28/29 — no close)
+    (EUR_ISIN, "2024-12-31", 12.2),  # Tue
+]
+_SERIES_TRADING_DAYS = ["2024-12-24", "2024-12-26", "2024-12-27", "2024-12-30", "2024-12-31"]
+
+
+def _seed_series(tmp_path, *, prices=None, transactions=None, **kw):
+    return _seed(
+        tmp_path,
+        transactions=transactions or [_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=_SERIES_PRICES if prices is None else prices,
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+        **kw,
+    )
+
+
+def _series_dates(out):
+    """Dates on the data rows (lines that begin with a YYYY-MM-DD)."""
+    return [ln.split()[0] for ln in out.splitlines() if re.match(r"^\d{4}-\d{2}-\d{2}\s", ln)]
+
+
+def _row_numbers(line, *, drop_index=None):
+    """Numeric tokens after the leading label, flags/commas/percent stripped."""
+    parts = line.split()[1:]
+    if drop_index is not None:
+        parts = parts[:drop_index] + parts[drop_index + 1 :]
+    values = []
+    for tok in parts:
+        cleaned = re.sub(r"[,+~*]", "", tok).rstrip("%")
+        try:
+            values.append(float(cleaned))
+        except ValueError:
+            values.append(cleaned)
+    return values
+
+
+def test_series_main_lists_trading_days_only(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Portfolio performance series 2024-12-21 → 2024-12-31" in out
+    assert _series_dates(out) == _SERIES_TRADING_DAYS
+    # holiday + weekend never appear
+    assert "2024-12-25" not in out and "2024-12-28" not in out and "2024-12-29" not in out
+
+
+def test_series_main_drops_pnlctr_keeps_rate_columns(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    out = capsys.readouterr().out
+    # Unlike --diff, the rate columns are present; P&Lctr (always 100% for the book) is gone.
+    assert "XIRR" in out and "TWR" in out and "CAGR" in out and "MaxDD" in out
+    assert "P&Lctr" not in out
+    # rows are dates, not ISINs
+    assert EUR_ISIN not in out
+
+
+def test_series_main_reverse_shows_newest_first(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--reverse"))
+    dates = _series_dates(capsys.readouterr().out)
+    assert dates[0] == "2024-12-31" and dates[-1] == "2024-12-24"
+
+
+def test_series_main_composes_with_as_of(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-27", "--series", "10"))
+    dates = _series_dates(capsys.readouterr().out)
+    # end is 2024-12-27 → later trading days excluded
+    assert dates == ["2024-12-24", "2024-12-26", "2024-12-27"]
+
+
+def test_series_main_invariance_row_equals_as_of_total(tmp_path, capsys):
+    """Each series row's TOTAL must equal performance --as-of <that day>'s TOTAL."""
+    db, config, meta = _seed_series(tmp_path)
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    series_out = capsys.readouterr().out
+    series_line = next(ln for ln in series_out.splitlines() if ln.startswith("2024-12-27"))
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-27"))
+    total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
+
+    # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops.
+    series_vals = _row_numbers(series_line)
+    total_vals = _row_numbers(total_line, drop_index=4)
+    assert len(series_vals) == len(total_vals)
+    for got, want in zip(series_vals, total_vals, strict=True):
+        if isinstance(want, float):
+            assert got == pytest.approx(want, abs=0.01)
+        else:
+            assert got == want
+
+
+def test_series_main_carry_forward_flagged(tmp_path, capsys):
+    second = "IE00EUR000002"
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", second, 50.0, 20.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-30", 12.0),
+            (EUR_ISIN, "2024-12-31", 12.2),
+            (second, "2024-12-30", 21.0),  # no close on 12-31 → carried forward
+        ],
+        currencies={EUR_ISIN: "EUR", second: "EUR"},
+        names={EUR_ISIN: "Euro Fund", second: "Second Fund"},
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "5"))
+    out = capsys.readouterr().out
+    assert "~" in out
+    assert "carried forward" in out
+
+
+def test_series_main_short_history_flagged(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)  # prices start long after the 2024-01-01 buy
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    out = capsys.readouterr().out
+    assert "*" in out
+    assert "short history" in out
+
+
+def test_series_and_diff_mutually_exclusive(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    args = _args(db, config, meta, "--as-of", "2024-12-31", "--series", "5", "--diff", "5")
+    code = perf.main(args)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "mutually exclusive" in out
+
+
+def test_series_invalid_n_rejected(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    for bad in ("0", "-3", "abc"):
+        code = perf.main(_args(db, config, meta, "--series", bad))
+        assert code != 0, f"expected non-zero exit for --series {bad!r}"
+
+
+def test_series_no_transactions_message(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    code = perf.main(_args(db, config, meta, "--series", "30"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No ETF holdings in database" in out
+
+
+def test_series_empty_window_message(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    # window ends before any close/holding exists
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-06-01", "--series", "10"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No priced trading days in window" in out
+
+
+def test_series_day_before_first_holding_is_skipped(tmp_path, capsys):
+    # A close exists on 2024-11-15, before the 2024-11-20 buy → that day has nothing
+    # valuable and gets no row.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-11-20", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-11-15", 9.0), (EUR_ISIN, "2024-11-21", 10.5)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-11-21", "--series", "10"))
+    dates = _series_dates(capsys.readouterr().out)
+    assert dates == ["2024-11-21"]
+
+
+# --series unit seams (no full command) --------------------------------------
+
+
+def test_trading_days_excludes_days_without_close(tmp_path):
+    db, _config, _meta = _seed_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    days = perf._trading_days(db, timeline, "2024-12-21", "2024-12-31")
+    assert days == _SERIES_TRADING_DAYS
+
+
+def test_series_rows_totals_match_snapshot_total(tmp_path):
+    db, config, meta = _seed_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    rows = perf._series_rows(db, config, meta, timeline, start="2024-12-21", end="2024-12-31")
+    assert [d for d, _ in rows] == _SERIES_TRADING_DAYS
+    for day, total in rows:
+        assert total.isin == "TOTAL"
+        assert total.market_value == pytest.approx(
+            perf._snapshot_total(db, config, meta, timeline, day).market_value
+        )
