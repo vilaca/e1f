@@ -83,6 +83,7 @@ e1f performance --diff 7             # signed change over the last 7 calendar da
 e1f performance --as-of 2025-12-31 --diff 7  # change in the week ending Dec 31
 e1f performance --series 90          # portfolio TOTAL for each trading day, last 90 days (ADR-0030)
 e1f performance --metrics            # portfolio-level extended risk report (ADR-0033)
+e1f performance --metrics --series 14 # that report tabulated per trading day, last 14 days
 e1f performance --sort value --reverse
 e1f performance --show-status        # + per-holding provenance Status column (ADR-0014)
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)

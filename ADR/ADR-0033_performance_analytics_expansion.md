@@ -46,7 +46,10 @@ data-backed today, and defer the rest **on the record** rather than approximatin
   MaxDD Duration, Underwater period, Recovery Factor, Best Day, Worst Day,
   Max-Gain/Max-Loss ratio. Reuses the existing daily return series and wealth
   index; MaxDD, Vol, TWR, CAGR, XIRR are reused, not re-derived. Surfaced via a
-  new `performance --metrics` view. Ships first.
+  new `performance --metrics` view, which composes with `--series N` to tabulate
+  the same figures one row per trading day (cumulative since inception, the same
+  contract as the plain `--series`; the trailing-window reading is the deferred
+  rolling family below, not this). Ships first.
 
 - **Phase B — benchmark comparison (needs the MSCI World fund):** Beta, R²,
   Tracking Error, Information Ratio, Relative Strength, against one or more

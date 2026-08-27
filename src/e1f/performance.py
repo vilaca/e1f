@@ -1267,6 +1267,31 @@ def _render_metrics(as_of: str, total: PerformanceRow, ext: ExtendedMetrics) -> 
     ]
 
 
+def _metrics_snapshot(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    day: str,
+) -> tuple[list[PerformanceRow], PerformanceRow, ExtendedMetrics] | None:
+    """The day's per-ISIN rows, portfolio TOTAL, and extended metrics — or None.
+
+    None when no held ISIN is priceable on ``day`` (so a series skips it). The
+    extended metrics measure exactly the value/contribution series ``total.twr``
+    comes from — the same valuable set, first_day, and ``_aggregate_series`` call
+    ``_total_row`` uses.
+    """
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
+    if not any(row.valuable for row in rows):
+        return None
+    total = _total_row(rows, holdings, day, db_path)
+    valuable = [series for series in holdings if _value_on(series, day, db_path) is not None]
+    first_day = min((series.events[0].date for series in valuable), default=day)
+    points = _aggregate_series(valuable, first_day, day, db_path)
+    ext = extended_metrics(points, total.twr)
+    return rows, total, ext
+
+
 def _cmd_performance_metrics(
     db_path: str,
     config_path: str,
@@ -1280,19 +1305,11 @@ def _cmd_performance_metrics(
         print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
         return 0
 
-    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
-    if not any(row.valuable for row in rows):
+    snapshot = _metrics_snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
+    if snapshot is None:
         print(f"No priceable holdings as of {as_of}")
         return 0
-
-    total = _total_row(rows, holdings, as_of, db_path)
-    # Re-derive the TOTAL's own value/contribution series (the same valuable set,
-    # first_day, and _aggregate_series call _total_row uses) so extended_metrics
-    # measures exactly the series total.twr came from.
-    valuable = [series for series in holdings if _value_on(series, as_of, db_path) is not None]
-    first_day = min((series.events[0].date for series in valuable), default=as_of)
-    points = _aggregate_series(valuable, first_day, as_of, db_path)
-    ext = extended_metrics(points, total.twr)
+    rows, total, ext = snapshot
 
     for line in _render_metrics(as_of, total, ext):
         print(line)
@@ -1313,6 +1330,75 @@ def _cmd_performance_metrics(
         "\nDurations are calendar days (peak → recovery); MaxDD Duration is the deepest "
         "drawdown's. Best/Worst Day are single time-weighted return periods on the "
         "gap-bridged daily series."
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Metrics series (ADR-0033): --metrics + --series N — one extended-metrics row
+# per trading day, cumulative since inception (each row == --metrics that day).
+# ---------------------------------------------------------------------------
+
+
+_METRICS_SERIES_HEADER = (
+    f"\n{'Date':<12} {'TWR':>7} {'MaxDD':>7} {'DDdur':>7} {'Underwtr':>9} "
+    f"{'RecFac':>7} {'Best':>8} {'Worst':>8} {'G/L':>6}"
+)
+_METRICS_SERIES_RULE_WIDTH = len(_METRICS_SERIES_HEADER.lstrip("\n"))
+
+
+def _format_metrics_series_row(day: str, total: PerformanceRow, ext: ExtendedMetrics) -> str:
+    return (
+        f"{day:<12} {_fmt_pct(total.twr):>7} {_fmt_pct(ext.max_drawdown):>7} "
+        f"{_fmt_duration(ext.max_dd_duration_days):>7} "
+        f"{_fmt_duration(ext.underwater_days):>9} {_fmt_ratio(ext.recovery_factor):>7} "
+        f"{_fmt_signed_pct(ext.best_day):>8} {_fmt_signed_pct(ext.worst_day):>8} "
+        f"{_fmt_ratio(ext.gain_loss_ratio):>6}"
+    )
+
+
+def _cmd_performance_metrics_series(
+    db_path: str,
+    config_path: str,
+    *,
+    as_of: str,
+    n: int,
+    reverse: bool = False,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> int:
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    start = (date.fromisoformat(as_of) - timedelta(days=n)).isoformat()
+    points: list[tuple[str, PerformanceRow, ExtendedMetrics]] = []
+    for day in _trading_days(db_path, timeline, start, as_of):
+        snapshot = _metrics_snapshot(db_path, config_path, currency_meta_path, timeline, day)
+        if snapshot is not None:
+            _rows, total, ext = snapshot
+            points.append((day, total, ext))
+    if not points:
+        print(f"No priced trading days in window {start} → {as_of}")
+        return 0
+    if reverse:
+        points = list(reversed(points))
+
+    print(f"\nPortfolio metrics series {start} → {as_of} (EUR, cumulative since inception)")
+    print(_METRICS_SERIES_HEADER)
+    print("-" * _METRICS_SERIES_RULE_WIDTH)
+    for day, total, ext in points:
+        print(_format_metrics_series_row(day, total, ext))
+
+    if any(total.estimated for _day, total, _ext in points):
+        print(
+            "\n~ some days' MktVal is carried forward from an earlier close "
+            "(no price on the day itself — fetch to refresh)."
+        )
+    print(
+        "\nDDdur/Underwtr are calendar days; a still-open drawdown's duration is measured "
+        "to that day. RecFac = TWR/|MaxDD|. Best/Worst are single time-weighted returns."
     )
     return 0
 
@@ -1352,8 +1438,9 @@ market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
 --metrics (ADR-0033) replaces the per-holding table with a portfolio-level
 extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, total
 underwater time, recovery factor, and the best/worst single-period returns.
-Durations are calendar days. Composes with --as-of; mutually exclusive with
---diff / --series.
+Durations are calendar days. Composes with --as-of; add --series N for one
+metrics row per trading day over the window (--reverse newest first); does not
+compose with --diff.
 
 Examples:
   e1f performance
@@ -1364,6 +1451,7 @@ Examples:
   e1f performance --series 90
   e1f performance --as-of 2025-12-31 --series 30 --reverse
   e1f performance --metrics
+  e1f performance --metrics --series 14
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -1423,7 +1511,8 @@ Examples:
         action="store_true",
         help="Portfolio-level extended risk report (MaxDD duration, underwater time, "
         "recovery factor, best/worst day) instead of the per-holding table. Composes "
-        "with --as-of; mutually exclusive with --diff / --series.",
+        "with --as-of, and with --series N for one metrics row per trading day; not "
+        "with --diff.",
     )
     return parser
 
@@ -1456,8 +1545,17 @@ def main(argv: list[str] | None = None) -> int:
         series_n = _validate_positive_int(args.series, "--series")
         if diff_n is not None and series_n is not None:
             raise ValueError("--diff and --series are mutually exclusive")
-        if args.metrics and (diff_n is not None or series_n is not None):
-            raise ValueError("--metrics is mutually exclusive with --diff / --series")
+        if args.metrics and diff_n is not None:
+            raise ValueError("--metrics does not compose with --diff")
+        if args.metrics and series_n is not None:
+            return _cmd_performance_metrics_series(
+                args.db,
+                args.config,
+                as_of=args.as_of,
+                n=series_n,
+                reverse=args.reverse,
+                currency_meta_path=args.currency_meta,
+            )
         if args.metrics:
             return _cmd_performance_metrics(
                 args.db,
