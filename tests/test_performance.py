@@ -156,7 +156,7 @@ def test_value_on_none_when_unpriced_or_no_currency_or_no_fx(tmp_path):
 # DB fixture + row building
 # ---------------------------------------------------------------------------
 
-def _seed(tmp_path, *, transactions=(), prices=(), fx=(), currencies=None, names=None):
+def _seed(tmp_path, *, transactions=(), prices=(), fx=(), currencies=None, names=None, ters=None):
     db = tmp_path / "e1f.db"
     with closing(sqlite3.connect(str(db))) as conn:
         conn.execute(
@@ -178,7 +178,16 @@ def _seed(tmp_path, *, transactions=(), prices=(), fx=(), currencies=None, names
         conn.executemany("INSERT INTO fx_rates VALUES (?, ?, ?, ?)", fx)
         conn.commit()
     config = tmp_path / "config.yaml"
-    config.write_text(yaml.dump({"etfs": {isin: {"name": n} for isin, n in (names or {}).items()}}))
+    names, ters = names or {}, ters or {}
+    etfs = {}
+    for isin in set(names) | set(ters):
+        entry = {}
+        if isin in names:
+            entry["name"] = names[isin]
+        if isin in ters:
+            entry["ter"] = ters[isin]
+        etfs[isin] = entry
+    config.write_text(yaml.dump({"etfs": etfs}))
     meta = tmp_path / "meta.yaml"
     meta.write_text(
         yaml.dump({isin: {"currency": c, "symbol": f"{isin}:X:{c}", "xid": "1"}
@@ -1075,8 +1084,10 @@ def test_series_main_invariance_row_equals_as_of_total(tmp_path, capsys):
     perf.main(_args(db, config, meta, "--as-of", "2024-12-27"))
     total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
 
-    # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops.
-    series_vals = _row_numbers(series_line)
+    # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops;
+    # the series adds WTER + Fee€/yr trailing columns the snapshot lacks. Compare
+    # the nine shared columns (MktVal … CAGR).
+    series_vals = _row_numbers(series_line)[:9]
     total_vals = _row_numbers(total_line, drop_index=4)
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
@@ -1178,9 +1189,82 @@ def test_series_rows_totals_match_snapshot_total(tmp_path):
     db, config, meta = _seed_series(tmp_path)
     timeline = position_timeline(load_trades(db))
     rows = perf._series_rows(db, config, meta, timeline, start="2024-12-21", end="2024-12-31")
-    assert [d for d, _ in rows] == _SERIES_TRADING_DAYS
-    for day, total in rows:
-        assert total.isin == "TOTAL"
-        assert total.market_value == pytest.approx(
-            perf._snapshot_total(db, config, meta, timeline, day).market_value
+    assert [p.day for p in rows] == _SERIES_TRADING_DAYS
+    for point in rows:
+        assert point.total.isin == "TOTAL"
+        assert point.total.market_value == pytest.approx(
+            perf._snapshot_total(db, config, meta, timeline, point.day).market_value
         )
+
+
+# --series weighted TER + estimated annual cost columns — ADR-0031
+
+_TER_SECOND = "IE00EUR000002"
+
+
+def _seed_ter(tmp_path, *, ters, second_close):
+    """Two EUR funds, both bought at cost 1000; EUR_ISIN appreciates to MktVal 3000."""
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", _TER_SECOND, 100.0, 10.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-31", 30.0),          # MktVal 3000 (cost 1000)
+            (_TER_SECOND, "2024-12-31", second_close),
+        ],
+        currencies={EUR_ISIN: "EUR", _TER_SECOND: "EUR"},
+        names={EUR_ISIN: "Euro Fund", _TER_SECOND: "Second Fund"},
+        ters=ters,
+    )
+
+
+def _last_series_values(out):
+    line = [ln for ln in out.splitlines() if re.match(r"^\d{4}-\d{2}-\d{2}\s", ln)][-1]
+    return _row_numbers(line)
+
+
+def test_series_ter_columns_are_market_value_weighted(tmp_path, capsys):
+    # cost-weighted TER would be (0.5+0.1)/2 = 0.300%; value-weighted is
+    # (0.5*3000 + 0.1*1000)/4000 = 0.400%. The table must show the value-weighted one.
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "1"))
+    out = capsys.readouterr().out
+    vals = _last_series_values(out)
+    assert vals[9] == pytest.approx(0.400)   # WTER %
+    assert vals[10] == pytest.approx(16.0)   # Fee€/yr = 0.5%*3000 + 0.1%*1000
+    assert "0.300%" not in out               # not cost-weighted
+    assert "market-value-weighted TER" in out
+
+
+def test_series_ter_missing_metadata_dilutes(tmp_path, capsys):
+    # Second fund has no TER: it contributes 0 fee but still sits in the denominator.
+    db, config, meta = _seed_ter(tmp_path, ters={EUR_ISIN: 0.5}, second_close=10.0)
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "1"))
+    vals = _last_series_values(capsys.readouterr().out)
+    assert vals[10] == pytest.approx(15.0)   # 0.5%*3000 only
+    assert vals[9] == pytest.approx(0.375)   # 100*15/4000, diluted below 0.5%
+
+
+def test_series_ter_na_when_no_metadata(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)  # names only, no TER
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    out = capsys.readouterr().out
+    assert "WTER" in out  # header still present
+    vals = _last_series_values(out)
+    assert vals[9] == "n/a" and vals[10] == "n/a"
+    assert "market-value-weighted TER" not in out  # footnote suppressed
+
+
+def test_weighted_ter_cost_value_weighted_and_dilution():
+    rows = [_perf_row("A", 3000.0), _perf_row("B", 1000.0), _perf_row("C", None)]
+    wter, fee = perf._weighted_ter_cost(rows, {"A": 0.5, "B": 0.1, "C": 0.9})
+    assert wter == pytest.approx(0.4) and fee == pytest.approx(16.0)  # C unvaluable, ignored
+
+    wter2, fee2 = perf._weighted_ter_cost(rows, {"A": 0.5, "B": None, "C": None})
+    assert fee2 == pytest.approx(15.0) and wter2 == pytest.approx(0.375)  # B dilutes
+
+    assert perf._weighted_ter_cost(rows, {"A": None, "B": None, "C": None}) == (None, None)
