@@ -332,12 +332,15 @@ def _cmd_portfolio(
     print("-" * rule)
     total_fee_est = 0.0
     has_any_fee = False
+    weighted_ter_sum = 0.0
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         asset_class, fund_currency, distribution, ter, ter_float = _fund_meta(
             config_path, holding.symbol, currency_meta_path
         )
         weight = holding_weight_pct(holding, total_invested)
+        if ter_float is not None:
+            weighted_ter_sum += ter_float * weight / 100.0
         row = ""
         if show_broker:
             row += f"{_broker_label(holding.broker):<{_BROKER_COL}} "
@@ -372,6 +375,8 @@ def _cmd_portfolio(
         total += f", {total_invested:.2f} total paid"
         if has_any_fee:
             total += f", ~€{total_fee_est:.2f}/yr in fees"
+    if weighted_ter_sum > 0:
+        total += f", {weighted_ter_sum:.3f}% weighted avg TER"
     print(total)
     if explain:
         for line in render_holdings_explain(holdings, config_path, total_invested):
