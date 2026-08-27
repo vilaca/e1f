@@ -227,9 +227,9 @@ data/scenarios.yaml
 .claude/settings.local.json
 
 # Local broker exports (personal account data — never commit)
-/*.xlsx
-/transactions_*.csv
+*.xlsx
+transactions_*.csv
 
 # Working handoff notes (local scaffolding, not part of the repo)
-/handoff-*.md
+handoff-*.md
 .claude/projects/
