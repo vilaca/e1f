@@ -17,6 +17,15 @@ from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, Config
 MAX_MISSING_BUSINESS_DAYS = 5
 MAX_ABS_RETURN = 0.5
 TRADING_YEAR = 252
+# Interior single-day gap detection, voted **within an exchange** (venue): a day is
+# a "consensus trading day" when at least this share of same-venue funds spanning it
+# have a close; a fund that spans the day but lacks it has an interior gap (a fetch
+# that skipped a day — invisible to the ≤5-business-day gap check). Voting per venue
+# means a real venue holiday (all its funds closed) is never flagged; MIN_COVERING is
+# both the per-venue fund floor and the per-day covering floor (a thin venue or a
+# series' own edges can't vote).
+GAP_CONSENSUS = 0.8
+MIN_COVERING_ISINS = 3
 
 
 class QualityReport(TypedDict):
@@ -97,6 +106,60 @@ def quality_report(prices: pd.DataFrame) -> QualityReport:
     }
 
 
+def consensus_gaps(
+    prices: pd.DataFrame,
+    venue_by_isin: dict[str, str],
+    *,
+    threshold: float = GAP_CONSENSUS,
+) -> dict[str, list[str]]:
+    """Per-ISIN interior gaps: days the ISIN lacks but its same-exchange peers have.
+
+    A single skipped trading day is invisible to the business-day-gap check when the
+    gap is under its limit, yet it distorts short-window return metrics. The vote is
+    held **within an exchange** (from ``venue_by_isin``, e.g. LSE / GER) so a genuine
+    venue holiday — when every fund on that exchange is closed — is never mistaken for
+    a gap. Within a venue, a day is a *consensus trading day* when at least
+    ``threshold`` of the funds whose history spans it have a close; a covering fund
+    missing such a day has an interior gap (repair with ``e1f fetch <isin> --force``).
+    A venue with fewer than ``MIN_COVERING_ISINS`` funds can't establish consensus and
+    is skipped (under-reporting beats crying wolf). ``{isin: [YYYY-MM-DD, …]}``.
+    """
+    checked = prices.copy()
+    checked["date"] = pd.to_datetime(checked["date"], format="mixed", errors="coerce")
+    checked = checked.dropna(subset=["date"]).drop_duplicates(
+        subset=["isin", "date"], keep="last"
+    )
+    if checked.empty:
+        return {}
+    present = checked.pivot(index="date", columns="isin", values="close").sort_index().notna()
+
+    venues: dict[str, list[str]] = {}
+    for isin in present.columns:
+        venue = venue_by_isin.get(str(isin))
+        if venue:
+            venues.setdefault(venue, []).append(str(isin))
+
+    gaps: dict[str, list[str]] = {}
+    for isins in venues.values():
+        if len(isins) < MIN_COVERING_ISINS:
+            continue  # too few peers on this exchange to vote
+        sub = present[isins]
+        covering = pd.DataFrame(False, index=sub.index, columns=sub.columns)
+        for isin in isins:
+            valid = sub.index[sub[isin].to_numpy()]
+            if len(valid):
+                covering[isin] = (sub.index >= valid.min()) & (sub.index <= valid.max())
+        covering_count = covering.sum(axis=1)
+        ratio = sub.sum(axis=1).where(covering_count > 0).div(covering_count)
+        consensus = (ratio >= threshold) & (covering_count >= MIN_COVERING_ISINS)
+        for isin in isins:
+            missing = (consensus & covering[isin] & ~sub[isin]).to_numpy()
+            dates = sub.index[missing]
+            if len(dates):
+                gaps[isin] = [d.strftime("%Y-%m-%d") for d in dates]
+    return gaps
+
+
 def _affected(isins: list[str]) -> str:
     return f" [{', '.join(isins)}]" if isins else ""
 
@@ -114,8 +177,10 @@ Exit codes:
 Errors (exit 1)   — duplicate keys, null closes, non-positive closes, weekend
                     rows, invalid dates, malformed pinned currency metadata, or
                     config/DB desync (missing or orphan ISINs).
-Warnings (exit 0) — missing-business-day gaps over the limit, large price moves,
-                    short/sparse/cash-like history. Surfaced, never fatal.
+Warnings (exit 0) — missing-business-day gaps over the limit, interior single-day
+                    gaps (a day most funds have but one ETF lacks — a skipped
+                    fetch; repair with 'e1f fetch <isin> --force'), large price
+                    moves, short/sparse/cash-like history. Surfaced, never fatal.
         """,
     )
     parser.add_argument("--config", "-c", default=DEFAULT_CONFIG, help="Config file path")
@@ -186,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     quality = quality_report(price_df)
+    venue_by_isin = {
+        isin: str(pinned.get("symbol", "")).split(":")[1]
+        for isin, pinned in currency_meta.items()
+        if isinstance(pinned, dict) and len(str(pinned.get("symbol", "")).split(":")) >= 3
+    }
+    consensus_gap_map = consensus_gaps(price_df, venue_by_isin)
     gap_breakdown = sorted(
         (
             (isin, days)
@@ -209,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     integrity_warnings = (
         quality["max_missing_business_days"] > MAX_MISSING_BUSINESS_DAYS
         or quality["max_abs_return"] >= MAX_ABS_RETURN
+        or bool(consensus_gap_map)
     )
     print("=== Data Integrity ===")
     print(f"  Rows: {quality['rows']}")
@@ -247,6 +319,19 @@ def main(argv: list[str] | None = None) -> int:
         f"    Largest price change: {quality['max_abs_return']:.1%} "
         f"(limit: {MAX_ABS_RETURN:.0%}){_affected(return_isins)}"
     )
+    if consensus_gap_map:
+        total_gaps = sum(len(days) for days in consensus_gap_map.values())
+        print(
+            f"    Interior gaps (a trading day most funds have but this ETF lacks): "
+            f"{total_gaps} across {len(consensus_gap_map)} ETF(s) "
+            "— repair with 'e1f fetch <isin> --force'"
+        )
+        for isin, dates in sorted(consensus_gap_map.items()):
+            name = config_meta.get(isin, {}).get("name", "Unknown")
+            sample = ", ".join(dates[:5]) + (" …" if len(dates) > 5 else "")
+            print(f"      {isin}  {name}  {len(dates)} day(s): {sample}")
+    else:
+        print("    Interior gaps: none")
 
     only_config = sorted(config_isin_set - db_isins)
     only_db = sorted(db_isins - config_isin_set)

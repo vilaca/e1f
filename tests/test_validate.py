@@ -315,3 +315,85 @@ def test_validate_without_db(paths, capsys):
     rc = validate_cmd.main(["--config", paths["config"], "--db", paths["db"]])
     assert rc == 1
     assert "run 'e1f fetch' first" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Interior single-day gaps (consensus_gaps), voted within an exchange venue
+# ---------------------------------------------------------------------------
+
+def _long_prices(rows):
+    return pd.DataFrame(rows, columns=["isin", "date", "close"])
+
+
+def test_consensus_gaps_flags_within_venue_hole():
+    # 5 LSE funds over 5 days; E1 misses day 3 that its peers have → flagged.
+    days = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+    rows = [
+        (isin, d, 100.0)
+        for isin in ["E1", "E2", "E3", "E4", "E5"]
+        for d in days
+        if not (isin == "E1" and d == "2024-01-03")
+    ]
+    venues = {i: "LSE" for i in ["E1", "E2", "E3", "E4", "E5"]}
+    assert validate_cmd.consensus_gaps(_long_prices(rows), venues) == {"E1": ["2024-01-03"]}
+
+
+def test_consensus_gaps_cross_venue_holiday_not_flagged():
+    # GER funds trade 2024-01-03; every LSE fund is closed that day (a UK holiday).
+    # Voting per venue, no LSE fund is flagged — this is the false-positive guard.
+    all_days = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+    lse_days = ["2024-01-01", "2024-01-02", "2024-01-04"]  # LSE misses 01-03
+    rows = [(i, d, 100.0) for i in ["G1", "G2", "G3"] for d in all_days]
+    rows += [(i, d, 100.0) for i in ["L1", "L2", "L3"] for d in lse_days]
+    venues = {**{i: "GER" for i in ["G1", "G2", "G3"]},
+              **{i: "LSE" for i in ["L1", "L2", "L3"]}}
+    assert validate_cmd.consensus_gaps(_long_prices(rows), venues) == {}
+
+
+def test_consensus_gaps_thin_venue_cannot_vote():
+    # Only two funds on the venue → below MIN_COVERING → no gap established.
+    rows = [("A", d, 100.0) for d in ["2024-01-01", "2024-01-02", "2024-01-03"]]
+    rows += [("B", "2024-01-01", 100.0), ("B", "2024-01-03", 100.0)]  # B misses 01-02
+    assert validate_cmd.consensus_gaps(_long_prices(rows), {"A": "PAR", "B": "PAR"}) == {}
+
+
+def test_consensus_gaps_no_venue_metadata_flags_nothing():
+    rows = [
+        (isin, d, 100.0)
+        for isin in ["E1", "E2", "E3", "E4", "E5"]
+        for d in ["2024-01-01", "2024-01-02", "2024-01-03"]
+        if not (isin == "E1" and d == "2024-01-02")
+    ]
+    assert validate_cmd.consensus_gaps(_long_prices(rows), {}) == {}  # no venues → skip
+
+
+def test_consensus_gaps_empty_frame():
+    assert validate_cmd.consensus_gaps(
+        pd.DataFrame(columns=["isin", "date", "close"]), {}
+    ) == {}
+
+
+def test_validate_reports_interior_gap_warning(paths, capsys, monkeypatch):
+    isins = [f"II000000000{i}" for i in range(5)]
+    write_config(paths["config"], isins)
+    write_meta(paths["meta"], isins)  # all pinned on LSE (T:LSE:USD)
+    monkeypatch.setattr(validate_cmd, "DEFAULT_CURRENCY_META", paths["meta"])
+    days = pd.bdate_range(end="2026-08-12", periods=8).strftime("%Y-%m-%d").tolist()
+    with closing(sqlite3.connect(paths["db"])) as conn:
+        conn.execute(
+            "CREATE TABLE prices (isin TEXT, date TEXT, close REAL, PRIMARY KEY (isin, date))"
+        )
+        for isin in isins:
+            for j, d in enumerate(days):
+                if isin == isins[0] and j == 4:
+                    continue  # the interior hole
+                conn.execute("INSERT INTO prices VALUES (?, ?, ?)", (isin, d, 100.0 + j))
+        conn.commit()
+
+    rc = validate_cmd.main(
+        ["--config", paths["config"], "--db", paths["db"], "--currency-meta", paths["meta"]]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0  # a warning, never fatal
+    assert "Interior gaps" in out
+    assert isins[0] in out and days[4] in out
