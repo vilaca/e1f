@@ -21,6 +21,7 @@ from e1f.common import (
     MetricContract,
     Status,
     _explain_metric,
+    convert_to_eur,
     pinned_quote_currency,
 )
 
@@ -76,18 +77,45 @@ def _load_trade_rows(
         ).fetchall()
 
 
-def _last_known_price(db_path: str, isin: str) -> float | None:
+def _latest_close(db_path: str, isin: str) -> tuple[str, float] | None:
+    """``(date, close)`` of the most recent priced day for ``isin`` (native currency)."""
     with closing(sqlite3.connect(db_path)) as conn:
         if conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
         ).fetchone() is None:
             return None
         row = conn.execute(
-            "SELECT close FROM prices"
+            "SELECT date, close FROM prices"
             " WHERE isin = ? AND close IS NOT NULL ORDER BY date DESC LIMIT 1",
             (isin,),
         ).fetchone()
-    return float(row[0]) if row else None
+    return (str(row[0])[:10], float(row[1])) if row else None
+
+
+def _last_known_price(db_path: str, isin: str) -> float | None:
+    """Latest close in native currency (the ``Last px`` column); None if unpriced."""
+    latest = _latest_close(db_path, isin)
+    return latest[1] if latest else None
+
+
+def _eur_value(db_path: str, currency_meta_path: str, isin: str, shares: float) -> float | None:
+    """EUR market value ``shares × latest close × FX``; None when it can't be valued.
+
+    FX uses the rate as of the close's own date (ADR-0010). None when there is no
+    price, no pinned trade currency, or no FX rate — never a silent mis-conversion,
+    matching ``common.value_on`` and the ``performance`` valuation contract.
+    """
+    latest = _latest_close(db_path, isin)
+    if latest is None:
+        return None
+    price_date, close = latest
+    quote = pinned_quote_currency(isin, currency_meta_path)
+    if quote is None:
+        return None
+    try:
+        return convert_to_eur(close * shares, quote, price_date, db_path)
+    except ValueError:
+        return None
 
 
 def compute_holdings(
@@ -163,11 +191,15 @@ def _fund_meta(
     return asset_class, ccy, distribution, ter_text, ter_float
 
 
-def yearly_fee_est(ter_float: float | None, total_paid: float) -> float | None:
-    """Estimated annual fee in EUR: TER% × cost basis."""
-    if ter_float is None or total_paid <= 0:
+def yearly_fee_est(ter_float: float | None, market_value: float | None) -> float | None:
+    """Estimated annual fee in EUR: TER% × EUR market value (ADR-0032).
+
+    TER is levied on AUM, so the fee weights by the holding's current market value,
+    not its cost basis. None when the TER or the value is unavailable.
+    """
+    if ter_float is None or market_value is None or market_value <= 0:
         return None
-    return ter_float / 100.0 * total_paid
+    return ter_float / 100.0 * market_value
 
 
 def _distribution_label(distribution: str) -> str:
@@ -198,6 +230,7 @@ def _sort_key(
     *,
     config_path: str,
     total_invested: float,
+    eur_values: dict[tuple[str, str], float | None],
 ) -> tuple[Any, ...] | str | float:
     if sort_by == "broker":
         return (holding.broker, holding.symbol)
@@ -219,7 +252,7 @@ def _sort_key(
     if sort_by == "fee_yr":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
         ter_float = float(ter) if isinstance(ter, (int, float)) else None
-        fee = yearly_fee_est(ter_float, holding.total_paid)
+        fee = yearly_fee_est(ter_float, eur_values.get((holding.broker, holding.symbol)))
         return fee if fee is not None else -1.0
     raise ValueError(f"unsupported sort field: {sort_by}")
 
@@ -231,6 +264,7 @@ def sort_holdings(
     reverse: bool = False,
     config_path: str,
     total_invested: float,
+    eur_values: dict[tuple[str, str], float | None],
 ) -> list[Holding]:
     """Return holdings ordered by the requested column."""
     return sorted(
@@ -240,6 +274,7 @@ def sort_holdings(
             sort_by,
             config_path=config_path,
             total_invested=total_invested,
+            eur_values=eur_values,
         ),
         reverse=reverse,
     )
@@ -299,12 +334,20 @@ def _cmd_portfolio(
         return 0
 
     total_invested = sum(holding.total_paid for holding in holdings)
+    eur_values = {
+        (holding.broker, holding.symbol): _eur_value(
+            db_path, currency_meta_path, holding.symbol, holding.shares
+        )
+        for holding in holdings
+    }
+    total_market_value = sum(v for v in eur_values.values() if v is not None)
     holdings = sort_holdings(
         holdings,
         sort_by=sort_by,
         reverse=reverse,
         config_path=config_path,
         total_invested=total_invested,
+        eur_values=eur_values,
     )
 
     header = "\n"
@@ -317,7 +360,7 @@ def _cmd_portfolio(
     if show_cost_basis:
         header += (
             f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
-            f" {'Last px':>8} {'Total':>8} {'Value':>9}"
+            f" {'Last px':>8} {'Total':>8} {'Value€':>9}"
         )
     else:
         header += f" {'Weight':>7}"
@@ -332,15 +375,20 @@ def _cmd_portfolio(
     print("-" * rule)
     total_fee_est = 0.0
     has_any_fee = False
-    weighted_ter_sum = 0.0
+    excluded: list[str] = []
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
         asset_class, fund_currency, distribution, ter, ter_float = _fund_meta(
             config_path, holding.symbol, currency_meta_path
         )
         weight = holding_weight_pct(holding, total_invested)
-        if ter_float is not None:
-            weighted_ter_sum += ter_float * weight / 100.0
+        value = eur_values[(holding.broker, holding.symbol)]
+        if value is None:
+            excluded.append(holding.symbol)
+        fee = yearly_fee_est(ter_float, value)
+        if fee is not None:
+            total_fee_est += fee
+            has_any_fee = True
         row = ""
         if show_broker:
             row += f"{_broker_label(holding.broker):<{_BROKER_COL}} "
@@ -350,34 +398,39 @@ def _cmd_portfolio(
             f"{_distribution_label(distribution):<4} {ter:>6}"
         )
         if show_cost_basis:
-            fee = yearly_fee_est(ter_float, holding.total_paid)
             fee_str = f"€{fee:.2f}" if fee is not None else "—"
-            if fee is not None:
-                total_fee_est += fee
-                has_any_fee = True
             last_px = _last_known_price(db_path, holding.symbol)
             last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
-            total_value = (last_px * holding.shares) if last_px is not None else None
-            total_value_str = (
-                f"{total_value:>9.2f}" if total_value is not None else f"{'—':>9}"
-            )
+            value_str = f"{value:>9.2f}" if value is not None else f"{'—':>9}"
             row += (
                 f" {fee_str:>8} {weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
-                f" {last_px_str} {holding.total_paid:>8.2f} {total_value_str}"
+                f" {last_px_str} {holding.total_paid:>8.2f} {value_str}"
             )
         else:
             row += f" {weight:>6.1f}%"
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
+    weighted_ter = (
+        100.0 * total_fee_est / total_market_value
+        if has_any_fee and total_market_value > 0
+        else None
+    )
     total = f"\nTotal: {len(holdings)} holdings"
     if show_cost_basis:
         total += f", {total_invested:.2f} total paid"
+        if total_market_value > 0:
+            total += f", €{total_market_value:.2f} market value"
         if has_any_fee:
             total += f", ~€{total_fee_est:.2f}/yr in fees"
-    if weighted_ter_sum > 0:
-        total += f", {weighted_ter_sum:.3f}% weighted avg TER"
+    if weighted_ter is not None:
+        total += f", {weighted_ter:.3f}% weighted avg TER"
     print(total)
+    if excluded:
+        print(
+            "\n⚠ excluded from market value / fee / weighted TER (no price or FX): "
+            + ", ".join(sorted(set(excluded)))
+        )
     if explain:
         for line in render_holdings_explain(holdings, config_path, total_invested):
             print(line)
