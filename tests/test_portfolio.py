@@ -13,6 +13,7 @@ from e1f.portfolio import (
     yearly_fee_est,
     _broker_label,
     _distribution_label,
+    _last_known_price,
 )
 from e1f.transactions import BROKER_TRADE_REPUBLIC
 
@@ -168,6 +169,130 @@ def test_sort_holdings_by_weight_desc():
         total_invested=500.0,
     )
     assert [h.symbol for h in sorted_holdings] == ["BBB", "AAA", "CCC"]
+
+
+def test_last_known_price_reads_latest_close(tmp_path):
+    from contextlib import closing
+    import sqlite3
+
+    db = tmp_path / "t.db"
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "CREATE TABLE prices (isin TEXT, date TEXT, close REAL, "
+            "PRIMARY KEY (isin, date))"
+        )
+        conn.executemany(
+            "INSERT INTO prices VALUES (?, ?, ?)",
+            [
+                (ISIN_ETF, "2024-01-01", 100.0),
+                (ISIN_ETF, "2024-01-03", 105.0),  # latest date
+                (ISIN_ETF, "2024-01-02", None),   # NULL close ignored
+            ],
+        )
+        conn.commit()
+
+    assert _last_known_price(str(db), ISIN_ETF) == pytest.approx(105.0)
+    assert _last_known_price(str(db), "ZZ0000000000") is None
+
+
+def test_last_known_price_no_prices_table(tmp_path):
+    from contextlib import closing
+    import sqlite3
+
+    db = tmp_path / "t.db"
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("CREATE TABLE other (x INTEGER)")
+        conn.commit()
+    assert _last_known_price(str(db), ISIN_ETF) is None
+
+
+def test_main_portfolio_corrupt_db_returns_error(tmp_path, capsys):
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"this is not a sqlite database")
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "✗ Error:" in out
+
+
+@pytest.mark.parametrize("sort_by", ["broker", "isin", "units", "avg", "total"])
+def test_sort_holdings_config_free_fields(sort_by):
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "CCC", 3.0, 30.0, 90.0),
+        Holding(BROKER_OTHER, "AAA", 1.0, 10.0, 10.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 2.0, 20.0, 40.0),
+    ]
+    result = sort_holdings(
+        holdings,
+        sort_by=sort_by,
+        reverse=False,
+        config_path="unused",
+        total_invested=140.0,
+    )
+    # These fields all sort AAA < BBB < CCC for this fixture.
+    assert [h.symbol for h in result] == ["AAA", "BBB", "CCC"]
+
+
+def test_sort_holdings_by_name_ter_and_fee(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.dump(
+            {
+                "etfs": {
+                    "AAA": {"name": "Zeta Fund", "ter": 0.05},
+                    "BBB": {"name": "Alpha Fund", "ter": 0.30},
+                }
+            }
+        )
+    )
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 1.0, 10.0, 100.0),
+    ]
+
+    by_name = sort_holdings(
+        holdings, sort_by="name", reverse=False,
+        config_path=str(config), total_invested=200.0,
+    )
+    assert [h.symbol for h in by_name] == ["BBB", "AAA"]  # Alpha before Zeta
+
+    by_ter = sort_holdings(
+        holdings, sort_by="ter", reverse=False,
+        config_path=str(config), total_invested=200.0,
+    )
+    assert [h.symbol for h in by_ter] == ["AAA", "BBB"]  # 0.05 before 0.30
+
+    by_fee = sort_holdings(
+        holdings, sort_by="fee_yr", reverse=False,
+        config_path=str(config), total_invested=200.0,
+    )
+    assert [h.symbol for h in by_fee] == ["AAA", "BBB"]
+
+
+def test_sort_holdings_missing_ter_sorts_last_ascending(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {"AAA": {"name": "Has TER", "ter": 0.10}}}))
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 1.0, 10.0, 100.0),  # no config entry → -1.0
+    ]
+    by_ter = sort_holdings(
+        holdings, sort_by="ter", reverse=False,
+        config_path=str(config), total_invested=200.0,
+    )
+    assert [h.symbol for h in by_ter] == ["BBB", "AAA"]  # -1.0 sentinel sorts first
+
+
+def test_sort_holdings_unsupported_field_raises():
+    holdings = [Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0)]
+    with pytest.raises(ValueError, match="unsupported sort field"):
+        sort_holdings(
+            holdings, sort_by="bogus", reverse=False,
+            config_path="unused", total_invested=100.0,
+        )
 
 
 def test_main_portfolio_sort_by_total(tmp_path, capsys):

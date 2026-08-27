@@ -35,7 +35,9 @@ from e1f.common.universe import (
     _fetch_justetf_html,
     _ftgo_fund_name,
     _ftgo_listing_names,
+    _ftgo_load,
     _justetf_field,
+    _names_from_ftgo_matches,
     _parse_percent_value,
     _short_lookup_error,
 )
@@ -254,6 +256,55 @@ def _mock_ftgo_enrichment(monkeypatch, *, names=None, error=None, ter=None, just
         )
         monkeypatch.setattr("e1f.common.universe._ftgo_ter", lambda matches, hint: ter)
     monkeypatch.setattr("e1f.common.universe._fetch_justetf_html", lambda isin: justetf_html)
+
+
+def test_short_lookup_error_classifies_common_failures():
+    assert _short_lookup_error(Exception("HTTP 404 Not Found")) == "quote not found"
+    assert _short_lookup_error(Exception("resource not found")) == "quote not found"
+    assert _short_lookup_error(Exception("HTTP 429")) == "rate limited"
+    assert _short_lookup_error(Exception("Rate limit exceeded")) == "rate limited"
+    # Otherwise the first line is returned, truncated at 100 chars.
+    assert _short_lookup_error(Exception("weird failure\nsecond line")) == "weird failure"
+    long = "x" * 250
+    assert _short_lookup_error(Exception(long)) == "x" * 100
+
+
+def test_best_ftgo_name_currency_fallback_and_default():
+    # No distribution hint match, but a currency hint match wins.
+    names = ["Some Fund EUR Acc", "Some Fund USD Acc"]
+    assert _best_ftgo_name(names, "TICKER USD") == "Some Fund USD Acc"
+    # No hint at all → first name.
+    assert _best_ftgo_name(names, "") == "Some Fund EUR Acc"
+
+
+def test_names_from_ftgo_matches_dedups_and_skips_blanks():
+    import pandas as pd
+
+    matches = pd.DataFrame(
+        {"name": ["Fund A", "  Fund A  ", "", "Fund B"]}
+    )
+    assert _names_from_ftgo_matches(matches) == ["Fund A", "Fund B"]
+
+
+def test_ftgo_load_no_data_and_error(monkeypatch):
+    import pandas as pd
+
+    monkeypatch.setattr(
+        "e1f.common.universe.get_xid", lambda isin, display_mode: pd.DataFrame()
+    )
+    assert _ftgo_load("X") == (None, "no FT Markets listing")
+
+    def _raise_no_data(isin, display_mode):
+        raise ValueError("No data found for ISIN")
+
+    monkeypatch.setattr("e1f.common.universe.get_xid", _raise_no_data)
+    assert _ftgo_load("X") == (None, "no FT Markets listing")
+
+    def _raise_other(isin, display_mode):
+        raise RuntimeError("HTTP 429")
+
+    monkeypatch.setattr("e1f.common.universe.get_xid", _raise_other)
+    assert _ftgo_load("X") == (None, "rate limited")
 
 
 def test_parse_percent_value():
