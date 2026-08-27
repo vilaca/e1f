@@ -268,7 +268,7 @@ def test_main_portfolio_shows_name_from_config(tmp_path, capsys):
     ) == 0
 
     code = portfolio_mod.main(
-        ["--db", str(db), "--config", str(config), "--show-cost-basis"]
+        ["--db", str(db), "--config", str(config), "--show-cost-basis", "--show-broker"]
     )
     out = capsys.readouterr().out
     assert code == 0
