@@ -33,6 +33,7 @@ def test_cli_commands_surface():
         "portfolio",
         "performance",
         "benchmark",
+        "deposits",
         "correlation",
         "rebalance",
         "scenario",

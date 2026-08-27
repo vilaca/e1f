@@ -77,7 +77,15 @@ data-backed today, and defer the rest **on the record** rather than approximatin
 
 - **Phase C — deposit/organic analysis:** ROIC, organic-vs-reported value split,
   per-deposit impact on total return. Deposit-adjusted XIRR and ex-deposit TWR are
-  **relabels of existing columns**, not new computation.
+  **relabels of existing columns**, not new computation. **Landed** as a new
+  `deposits` command: a summary header (invested / reported / organic gain / ROIC =
+  gain÷invested) plus a per-deposit table valuing each buy's shares to the as-of
+  date (amount, value, gain, own return, share of total P&L). It reuses the same
+  EUR valuation as `performance` (FX at the as-of day), so the totals reconcile with
+  the `performance` TOTAL to the cent. The book is buy-and-hold (contributions only,
+  ADR-0011), so per-deposit values sum to the portfolio market value; a SELL would
+  break that reconciliation and is disclosed. A deposit whose fund has no price/FX is
+  excluded (never zero-valued) and warned.
 
 **Benchmarks are investable funds, net of TER — disclosed, not hidden.** A
 benchmark price is the fund's, carrying its 7–20 bps TER and tracking error, so a
@@ -131,8 +139,9 @@ snapshot/`--diff`/`--series` output is untouched. Phase B landed as a separate
 `benchmark` command — the first time this work adds an ISIN to the universe
 (iShares Core MSCI World `IE00B4L5Y983`, resolved via `e1f config add` and fetched
 with `e1f fetch … --fallback`; the config + pinned currency are committed, the
-price rows stay in the gitignored DB). Phase C (deposit/organic analysis) remains
-planned, not landed. The deferral
-list above is the authoritative record of what was intentionally left out and
-why — a future "let's add Sharpe" starts by fetching €STR, and a future "add
+price rows stay in the gitignored DB). Phase C landed as a separate `deposits`
+command, reusing the same EUR valuation so its totals reconcile with the
+`performance` TOTAL to the cent. All three clean-scope phases are now shipped; the
+deferral list above is the authoritative record of what was intentionally left out
+and why — a future "let's add Sharpe" starts by fetching €STR, and a future "add
 Calmar" starts by picking a window, each already framed here.
