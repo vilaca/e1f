@@ -181,7 +181,7 @@ def _distribution_label(distribution: str) -> str:
 _BROKER_LABELS = {"trade_republic": "tr"}
 _ASSET_CLASS_LABELS = {"Real Estate": "REITs", "Equity": "Eqty"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 144  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 153  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -287,6 +287,7 @@ def _cmd_portfolio(
     show_cost_basis: bool = False,
     show_status: bool = False,
     explain: bool = False,
+    show_broker: bool = False,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     rows = _load_trade_rows(db_path)
@@ -306,18 +307,28 @@ def _cmd_portfolio(
         total_invested=total_invested,
     )
 
-    header = (
-        f"\n{'Brkr':<{_BROKER_COL}} {'ISIN':<14} {'Name':<32} {'Class':<6} "
-        f"{'CCY':<8} {'Dist':<4} {'TER':>6} {'Weight':>7}"
+    header = "\n"
+    if show_broker:
+        header += f"{'Brkr':<{_BROKER_COL}} "
+    header += (
+        f"{'ISIN':<14} {'Name':<32} {'Class':<6} "
+        f"{'CCY':<8} {'Dist':<4} {'TER':>6}"
     )
     if show_cost_basis:
-        header += f" {'Units':>10} {'Avg paid':>10} {'Last px':>8} {'Total':>8} {'Fee/yr':>8}"
+        header += (
+            f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
+            f" {'Last px':>8} {'Total':>8} {'Value':>9}"
+        )
+    else:
+        header += f" {'Weight':>7}"
     if show_status:
         header += f" {'Status':>{_STATUS_COL}}"
     print(header)
     rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 58
     if show_status:
         rule += _STATUS_COL + 1
+    if not show_broker:
+        rule -= _BROKER_COL + 1
     print("-" * rule)
     total_fee_est = 0.0
     has_any_fee = False
@@ -327,10 +338,13 @@ def _cmd_portfolio(
             config_path, holding.symbol, currency_meta_path
         )
         weight = holding_weight_pct(holding, total_invested)
-        row = (
-            f"{_broker_label(holding.broker):<{_BROKER_COL}} {holding.symbol:<14} {name:<32} "
+        row = ""
+        if show_broker:
+            row += f"{_broker_label(holding.broker):<{_BROKER_COL}} "
+        row += (
+            f"{holding.symbol:<14} {name:<32} "
             f"{_asset_class_label(asset_class):<6} {fund_currency:<8} "
-            f"{_distribution_label(distribution):<4} {ter:>6} {weight:>6.1f}%"
+            f"{_distribution_label(distribution):<4} {ter:>6}"
         )
         if show_cost_basis:
             fee = yearly_fee_est(ter_float, holding.total_paid)
@@ -340,10 +354,16 @@ def _cmd_portfolio(
                 has_any_fee = True
             last_px = _last_known_price(db_path, holding.symbol)
             last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
-            row += (
-                f" {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
-                f" {last_px_str} {holding.total_paid:>8.2f} {fee_str:>8}"
+            total_value = (last_px * holding.shares) if last_px is not None else None
+            total_value_str = (
+                f"{total_value:>9.2f}" if total_value is not None else f"{'—':>9}"
             )
+            row += (
+                f" {fee_str:>8} {weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
+                f" {last_px_str} {holding.total_paid:>8.2f} {total_value_str}"
+            )
+        else:
+            row += f" {weight:>6.1f}%"
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
@@ -417,6 +437,11 @@ Examples:
         action="store_true",
         help="Add a provenance block (Status/contract/limited-by; implies --show-status)",
     )
+    parser.add_argument(
+        "--show-broker",
+        action="store_true",
+        help="Show broker column",
+    )
 
     return parser
 
@@ -434,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
             show_cost_basis=args.show_cost_basis,
             show_status=args.show_status,
             explain=args.explain,
+            show_broker=args.show_broker,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
