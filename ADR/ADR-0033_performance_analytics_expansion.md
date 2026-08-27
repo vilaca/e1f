@@ -1,0 +1,123 @@
+# ADR-0033 — `performance` analytics expansion: clean-only scope, phasing, and deferrals
+
+**Scope:** expand `performance` with a battery of additional return/risk metrics
+and a benchmark-comparison mode, but admit **only metrics that are computable from
+data already in the DB with no convention choice and no risk-free rate** ("clean"
+metrics). Everything requiring €STR, a debatable definition, or a rolling series is
+recorded here as **deliberately deferred**, so a future session returns to a
+decision, not a blank page. Delivered in phases (A → B → C), each of which may take
+its own follow-on ADR as it lands. This ADR is the roadmap and the deferral log;
+it does not itself add a metric.
+
+## Context
+
+A request came in for ~40 metrics and six benchmarks (MSCI World, MSCI Europe,
+WEBN, S&P 500, MSCI ACWI, FTSE All-World) plus €STR. Auditing them against the
+codebase showed three things:
+
+1. **The backbone already exists.** `risk_metrics` (ADR-0011) already builds the
+   portfolio's daily time-weighted return series, wealth index, TWR, annualized
+   Vol, MaxDD, and CAGR; `xirr` gives the money-weighted return.
+   `eur_return_series` (currently in `correlation.py`, ADR-0015) already produces
+   any fund's EUR daily returns — the exact vector a benchmark comparison needs.
+   So most requested metrics are statistics over series the code already computes,
+   and two asks are **already shipped, only unlabelled**: "deposit-adjusted XIRR"
+   is the existing `XIRR` column, and "performance excluding cash deposits" is the
+   existing `TWR`/`CAGR` (time-weighting neutralizes contribution timing).
+
+2. **Two data gaps.** There is no MSCI World fund in the universe (only World
+   *sector* / *ex-USA* / *small-cap*), and there is **no rate data at all** — the
+   `fx_rates` table holds EUR/USD only; €STR lives in the ECB data portal, not
+   ftgo/yfinance.
+
+3. **Many of the requested metrics carry a convention choice** (Calmar's window,
+   Average Drawdown's definition, capture-ratio frequency, trade-level vs per-day
+   win/profit stats) where reasonable practitioners differ.
+
+Per the project's rigor stance (no synthetic data, no silent convention picks,
+disclose coverage), we scope this to the metrics that are unambiguous and
+data-backed today, and defer the rest **on the record** rather than approximating.
+
+## Decisions
+
+**Clean-only scope, in three phases.**
+
+- **Phase A — own-return-series metrics (no benchmark, no rate, no new data):**
+  MaxDD Duration, Underwater period, Recovery Factor, Best Day, Worst Day,
+  Max-Gain/Max-Loss ratio. Reuses the existing daily return series and wealth
+  index; MaxDD, Vol, TWR, CAGR, XIRR are reused, not re-derived. Surfaced via a
+  new `performance --metrics` view. Ships first.
+
+- **Phase B — benchmark comparison (needs the MSCI World fund):** Beta, R²,
+  Tracking Error, Information Ratio, Relative Strength, against one or more
+  benchmark ISINs. Delivered as a **new `benchmark` command**
+  (`e1f benchmark --against ISIN[,ISIN…]`), not a `performance` flag — the
+  one-command-per-module norm, and `performance` is already large. Because a peer
+  command may not import `performance` (ADR-0003), both `eur_return_series` (from
+  `correlation`) and the portfolio daily-return-series builder **graduate into
+  `common`** as the shared primitives the new command consumes. MSCI World enters
+  the universe **directly** as
+  iShares Core MSCI World USD (Acc), **IE00B4L5Y983** — the investable fund itself,
+  not a stand-in; USD-accumulating (total return), EUR/USD FX already present,
+  history from 2009 (the longest clean overlap with the book). The other five
+  benchmarks are already priced (VWCE, SPYY/iShares S&P 500, iShares Core MSCI
+  Europe, ACWI, WEBN), all Accumulating and thus total-return.
+
+- **Phase C — deposit/organic analysis:** ROIC, organic-vs-reported value split,
+  per-deposit impact on total return. Deposit-adjusted XIRR and ex-deposit TWR are
+  **relabels of existing columns**, not new computation.
+
+**Benchmarks are investable funds, net of TER — disclosed, not hidden.** A
+benchmark price is the fund's, carrying its 7–20 bps TER and tracking error, so a
+comparison is net-of-cost vs net-of-cost (the fair comparison for an investor),
+not against the raw index level. Phase B output labels this.
+
+**Pervasive caveats travel with the numbers as output labels** (accepted, not
+deferred): the daily return series bridges missing closes, so a "daily" return can
+span >1 calendar day while every `×√252` annualization (Vol, Tracking Error, Info
+Ratio) treats it as uniform; each benchmark comparison covers only the overlap of
+the two histories (window + n printed per benchmark); a whole-book beta/R² against
+all-equity MSCI World mixes asset classes (EM, small-cap, bonds, REIT, sectors).
+
+## Deferred / not implemented (with the reason — this is the return-to list)
+
+**Needs €STR (a risk-free rate; deliberately not faked — no rate data exists, and
+a flat assumption was rejected):**
+- Sharpe Ratio
+- Rolling Sharpe Ratio
+- Treynor Ratio — `(Rp − rf)/β`
+- Jensen's Alpha — `(Rp − rf) − β(Rm − rf)`; the `(1−β)·rf` term does not cancel,
+  so it genuinely needs `rf` (there is no rf-free "alpha" that means the same thing)
+
+Unblocking these is its own decision: fetch daily €STR from the ECB into a new
+rate series, then a `--rf` source. Until then they are out of scope.
+
+**Convention choice (deferred to avoid a silent pick; revisit with a chosen
+definition):**
+- Sortino Ratio — MAR=0 vs MAR=rf. MAR=0 needs no rate but is a real convention
+  choice; postponed with the rest. When €STR lands, MAR=rf is the standard form.
+- Calmar Ratio — textbook 3-year window vs since-inception; most holdings have <3y
+  history, so neither is clean today.
+- Average Drawdown — mean of drawdown *episodes* vs mean of the daily *underwater*
+  series (different numbers).
+- Up/Down Capture and Capture Ratio — standard on **monthly** returns; on the
+  daily gappy series they are noisy and non-standard. Revisit if/when a
+  monthly-resampled return basis exists.
+- Win Rate / Profit Factor / Average Win / Average Loss — trade-level metrics by
+  origin; on a buy-and-hold book they become per-day stats, a reinterpretation we
+  chose not to ship silently.
+
+**Rolling series (deprioritized; not in the clean scalar scope):**
+- Rolling 5-day return, Rolling Volatility, Rolling outperformance vs benchmark
+  (Rolling Sharpe additionally needs €STR). A `performance --rolling N` view is a
+  clean later increment once the scalar batteries are in.
+
+## Consequences
+
+`performance` grows a `--metrics` view (Phase A); the default
+snapshot/`--diff`/`--series` output is untouched. Phase B lands as a separate
+`benchmark` command and is the first time this work adds an ISIN to the universe
+and depends on a benchmark fund being fetched (`e1f fetch IE00B4L5Y983 --fallback`). The deferral
+list above is the authoritative record of what was intentionally left out and
+why — a future "let's add Sharpe" starts by fetching €STR, and a future "add
+Calmar" starts by picking a window, each already framed here.
