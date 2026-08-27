@@ -257,6 +257,98 @@ def test_trim_refuses_without_db(paths, capsys):
     assert read_config_isins(paths["config"]) == {ISIN_A}
 
 
+def _add_snapshot_tables(db_path, *, snapshot_fund, alias_raw_name, fx_pairs):
+    """Seed the trim-cleanup satellite tables (holdings_snapshot/holding,
+    security_alias, fx_rates) so trim's cascade paths are exercised."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute(
+            "CREATE TABLE holdings_snapshot (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "fund_id TEXT, as_of TEXT, source TEXT, tier TEXT, retrieved_at TEXT, "
+            "reported_holding_count INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE holding (snapshot_id INTEGER, dimension TEXT, raw_name TEXT, "
+            "normalized_name TEXT, weight REAL, rank INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE security_alias (raw_name TEXT PRIMARY KEY, canonical_name TEXT, "
+            "canonical_key TEXT, reviewed_at TEXT)"
+        )
+        conn.execute("CREATE TABLE fx_rates (base TEXT, quote TEXT, date TEXT, rate REAL)")
+        cur = conn.execute(
+            "INSERT INTO holdings_snapshot (fund_id, as_of, source, tier, retrieved_at) "
+            "VALUES (?, 'x', 's', 't', 'r')",
+            (snapshot_fund,),
+        )
+        conn.execute(
+            "INSERT INTO holding VALUES (?, 'security', ?, NULL, 1.0, 1)",
+            (cur.lastrowid, "KeptName"),
+        )
+        # An alias that no surviving holding references — orphaned once trim runs.
+        conn.execute(
+            "INSERT INTO security_alias VALUES (?, NULL, NULL, NULL)", (alias_raw_name,)
+        )
+        conn.executemany(
+            "INSERT INTO fx_rates VALUES (?, ?, '2024-01-01', 1.0)", fx_pairs
+        )
+        conn.commit()
+
+
+def test_trim_cascades_snapshot_alias_and_fx(paths, capsys):
+    # config={A}, db={A,B}, meta={A}: B is trimmed from the DB, dragging its
+    # snapshot/holding rows, the orphaned alias, and the stale GBP fx pair.
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100], ISIN_B: [100]})
+    write_meta(paths["meta"], [ISIN_A])  # A gets currency USD
+    _add_snapshot_tables(
+        paths["db"],
+        snapshot_fund=ISIN_B,
+        alias_raw_name="OrphanCorp",
+        fx_pairs=[("EUR", "USD"), ("EUR", "GBP")],
+    )
+
+    rc = config_cmd.main(
+        ["--config", paths["config"], "trim",
+         "--db", paths["db"], "--currency-meta", paths["meta"]]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Removing from holdings_snapshot" in out
+    assert "orphaned alias" in out
+    assert "Removing from fx_rates" in out and "EURGBP" in out
+
+    with closing(sqlite3.connect(paths["db"])) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM holdings_snapshot").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM holding").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM security_alias").fetchone()[0] == 0
+        fx = {(r[0], r[1]) for r in conn.execute("SELECT base, quote FROM fx_rates")}
+        assert fx == {("EUR", "USD")}  # USD kept (A holds it), GBP pruned
+
+
+def test_trim_without_currency_meta_file(paths, capsys):
+    # No currency-meta file: trim treats it as empty rather than crashing.
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    rc = config_cmd.main(
+        ["--config", paths["config"], "trim",
+         "--db", paths["db"], "--currency-meta", paths["meta"]]
+    )
+    assert rc == 0
+    # A is in config+db but absent from the (empty) meta → trimmed out entirely.
+    assert read_config_isins(paths["config"]) == set()
+
+
+def test_remove_without_currency_meta_file(paths, capsys):
+    # remove tolerates a missing currency-meta file (FileNotFoundError fallback).
+    write_config(paths["config"], [ISIN_A])
+    rc = config_cmd.main(
+        ["--config", paths["config"], "remove", ISIN_A,
+         "--db", paths["db"], "--currency-meta", paths["meta"]]
+    )
+    assert rc == 0
+    assert read_config_isins(paths["config"]) == set()
+
+
 def test_no_subcommand_prints_help(paths, capsys):
     write_config(paths["config"], [])
     assert config_cmd.main(["--config", paths["config"]]) == 1

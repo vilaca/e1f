@@ -398,3 +398,74 @@ def test_main_xtb_success(tmp_path, capsys):
     assert code == 0
     assert "2 inserted" in out
     assert "1 filtered" in out
+
+
+# ---------------------------------------------------------------------------
+# Field parsers — malformed / edge-case broker-export values
+# ---------------------------------------------------------------------------
+
+
+def test_parse_float_handles_blank_and_non_numeric():
+    assert transactions_mod._parse_float("12.5") == pytest.approx(12.5)
+    assert transactions_mod._parse_float("") is None
+    assert transactions_mod._parse_float(None) is None
+    assert transactions_mod._parse_float("n/a") is None
+
+
+def test_format_datetime_timestamp_and_plain_string():
+    ts = pd.Timestamp("2024-01-02 09:30:00")
+    assert transactions_mod._format_datetime(ts) == "2024-01-02 09:30:00"
+    # Non-Timestamp values fall through to _parse_str (trimmed).
+    assert transactions_mod._format_datetime("  2024-01-02  ") == "2024-01-02"
+
+
+def test_parse_xtb_id_variants():
+    assert transactions_mod._parse_xtb_id(None) == ""
+    assert transactions_mod._parse_xtb_id(float("nan")) == ""
+    assert transactions_mod._parse_xtb_id(42.0) == "42"
+    assert transactions_mod._parse_xtb_id("") == ""
+    assert transactions_mod._parse_xtb_id("100.0") == "100"
+    # Non-numeric text is preserved verbatim.
+    assert transactions_mod._parse_xtb_id("ORDER-7") == "ORDER-7"
+
+
+def test_normalize_tr_type_uppercases_and_underscores():
+    assert transactions_mod._normalize_tr_type("savings plan") == "SAVINGS_PLAN"
+
+
+def test_resolve_xtb_ticker_paths():
+    mapping = {"WEBN": ISIN_WEBN}
+    assert transactions_mod.resolve_xtb_ticker("", mapping) == ""
+    # A bare ISIN is passed through untouched.
+    assert transactions_mod.resolve_xtb_ticker(ISIN_WEBN, mapping) == ISIN_WEBN
+    # Direct hit, then the TICKER.EXCHANGE base-split fallback.
+    assert transactions_mod.resolve_xtb_ticker("WEBN", mapping) == ISIN_WEBN
+    assert transactions_mod.resolve_xtb_ticker("WEBN.DE", mapping) == ISIN_WEBN
+    assert transactions_mod.resolve_xtb_ticker("UNKNOWN", mapping) == ""
+
+
+def test_parse_xtb_trade_comment_no_match_returns_none():
+    assert transactions_mod.parse_xtb_trade_comment("dividend payout") is None
+
+
+def test_xtb_shares_and_price_without_amount_uses_comment_price():
+    row = pd.Series({"comment": "OPEN BUY 2/2 @ 10.0", "amount": ""})
+    shares, price = transactions_mod.xtb_shares_and_price(row)
+    assert shares == pytest.approx(2.0)
+    assert price == pytest.approx(10.0)
+
+
+def test_xtb_shares_and_price_rejects_non_positive_shares():
+    row = pd.Series({"comment": "OPEN BUY 0/0 @ 10.0", "amount": "-5"})
+    assert transactions_mod.xtb_shares_and_price(row) is None
+
+
+def test_xtb_shares_and_price_no_comment_returns_none():
+    row = pd.Series({"comment": "not a trade", "amount": "-5"})
+    assert transactions_mod.xtb_shares_and_price(row) is None
+
+
+def test_normalize_xtb_side_buy_sell_and_unknown():
+    assert transactions_mod.normalize_xtb_side("Stock purchase") == "BUY"
+    assert transactions_mod.normalize_xtb_side("Stock sale") == "SELL"
+    assert transactions_mod.normalize_xtb_side("dividend") == ""
