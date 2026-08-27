@@ -35,17 +35,18 @@ walled off so no stable command depends on them:
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; `--diff N` shows the signed change over the last N calendar days (ADR-0029); `--series N` lists the portfolio TOTAL for each trading day over the last N days, cumulative since inception, with market-value-weighted TER and estimated annual fee columns (ADR-0030, ADR-0031); `--metrics` prints a portfolio-level extended risk report — MaxDD duration, total underwater time, recovery factor, and best/worst single-period return (ADR-0033).
-8. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
-9. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
-10. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
+8. **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs (beta, R², tracking error, information ratio, relative strength, and window outperformance); defaults to six broad benchmarks (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, FTSE All-World), shown by index name with `*` for any you also hold; no minimum-overlap floor by default — raise `--min-overlap` for rigor (ADR-0033).
+9. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
+10. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
+11. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
 
 Experimental tier (ADR-0024):
 
-11. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
-12. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
-13. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
-14. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
-15. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
+12. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
+13. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
+14. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
+15. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
+16. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -87,6 +88,12 @@ e1f performance --metrics --series 14 # that report tabulated per trading day, l
 e1f performance --sort value --reverse
 e1f performance --show-status        # + per-holding provenance Status column (ADR-0014)
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)
+
+# Benchmark the book against broad indices (EUR, time-weighted; ADR-0033)
+e1f benchmark                        # vs the six defaults (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, FTSE All-World)
+e1f benchmark --against IE00B5BMR087,IE00B4K48X80  # a custom benchmark set by ISIN
+e1f benchmark --min-overlap 60       # demand ~a quarter-year of shared history
+e1f benchmark --explain              # + provenance block
 
 # 5. Inspect within-fund concentration (experimental; look-through cached by `e1f lookthrough`)
 e1f lookthrough                      # refresh yfinance look-through snapshots first

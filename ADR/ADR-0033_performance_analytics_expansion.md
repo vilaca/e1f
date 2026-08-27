@@ -65,6 +65,15 @@ data-backed today, and defer the rest **on the record** rather than approximatin
   history from 2009 (the longest clean overlap with the book). The other five
   benchmarks are already priced (VWCE, SPYY/iShares S&P 500, iShares Core MSCI
   Europe, ACWI, WEBN), all Accumulating and thus total-return.
+  **Landed** (this session): the graduated primitives live in `common/returns.py`;
+  `--against` **defaults to all six** broad benchmarks, shown by friendly index
+  name (not the cryptic config names) with a `*` marking any that are also a
+  current holding; there is **no minimum-overlap floor by default** (only the
+  mathematical floor of two shared returns) because the book may be young — the
+  sample `n` is always shown, and `--min-overlap` raises the bar for rigor. The
+  reported figures are Beta, R², Tracking Error, Information Ratio, Relative
+  Strength, and window outperformance (Out%); risk-free-dependent metrics stay
+  deferred.
 
 - **Phase C — deposit/organic analysis:** ROIC, organic-vs-reported value split,
   per-deposit impact on total return. Deposit-adjusted XIRR and ex-deposit TWR are
@@ -118,9 +127,12 @@ definition):**
 ## Consequences
 
 `performance` grows a `--metrics` view (Phase A); the default
-snapshot/`--diff`/`--series` output is untouched. Phase B lands as a separate
-`benchmark` command and is the first time this work adds an ISIN to the universe
-and depends on a benchmark fund being fetched (`e1f fetch IE00B4L5Y983 --fallback`). The deferral
+snapshot/`--diff`/`--series` output is untouched. Phase B landed as a separate
+`benchmark` command — the first time this work adds an ISIN to the universe
+(iShares Core MSCI World `IE00B4L5Y983`, resolved via `e1f config add` and fetched
+with `e1f fetch … --fallback`; the config + pinned currency are committed, the
+price rows stay in the gitignored DB). Phase C (deposit/organic analysis) remains
+planned, not landed. The deferral
 list above is the authoritative record of what was intentionally left out and
 why — a future "let's add Sharpe" starts by fetching €STR, and a future "add
 Calmar" starts by picking a window, each already framed here.

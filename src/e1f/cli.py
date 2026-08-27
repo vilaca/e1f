@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from e1f import (
     autocomplete,
+    benchmark,
     config,
     correlation,
     fetch,
@@ -44,6 +45,7 @@ STABLE_PARSER_FACTORIES = {
     "transactions": transactions._build_parser,
     "portfolio": portfolio._build_parser,
     "performance": performance._build_parser,
+    "benchmark": benchmark._build_parser,
     "correlation": correlation._build_parser,
     "rebalance": rebalance._build_parser,
     "scenario": scenario._build_parser,
@@ -69,6 +71,7 @@ STABLE_COMMANDS: dict[str, Command] = {
     "transactions": transactions.main,
     "portfolio": portfolio.main,
     "performance": performance.main,
+    "benchmark": benchmark.main,
     "correlation": correlation.main,
     "rebalance": rebalance.main,
     "scenario": scenario.main,
@@ -97,6 +100,7 @@ Commands:
   transactions  Ingest and list broker ETF trades in SQLite
   portfolio     Show ETF holdings and average cost from transactions
   performance   Report market value, P&L, and return metrics per holding
+  benchmark     Compare the portfolio's returns against benchmark ETFs (beta, R², TE, IR)
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
   scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)

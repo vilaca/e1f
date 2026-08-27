@@ -38,6 +38,10 @@ IE00B4K48X80:
   currency: EUR
   symbol: IMAE:AEX:EUR
   xid: '21213176'
+IE00B4L5Y983:
+  currency: USD
+  symbol: IWDA:LSE:USD
+  xid: '21061415'
 IE00B53SZB19:
   currency: USD
   symbol: CNDX:LSE:USD

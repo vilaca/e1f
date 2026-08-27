@@ -31,7 +31,6 @@ Usage:
 
 import argparse
 import hashlib
-import itertools
 import math
 import sys
 from collections.abc import Callable
@@ -51,14 +50,11 @@ from e1f.common import (
     MetricContract,
     Status,
     _explain_metric,
-    UNSUPPORTED_FX_CURRENCIES,
     assemble_rebalance_valuations,
     compute_rebalance,
-    convert_to_eur,
+    eur_return_series,
     fund_eur_value,
     get_scenario,
-    load_price_series,
-    pinned_quote_currency,
     portfolio_isins,
     post_rebalance_weights,
 )
@@ -102,46 +98,10 @@ CORRELATION_CONTRACT = MetricContract(
 
 
 # ---------------------------------------------------------------------------
-# EUR return basis (decision 4). Returns are between consecutive *available* EUR
-# closes; a missing day is bridged, never forward/zero-filled. A EUR close exists
-# only when both a local price and an FX rate exist for the day.
+# EUR return basis (decision 4). ``eur_return_series`` graduated to ``e1f.common``
+# (ADR-0033) so ``benchmark`` can share it; imported above, semantics unchanged:
+# returns between consecutive *available* EUR closes, a missing day bridged.
 # ---------------------------------------------------------------------------
-
-
-def eur_return_series(
-    db_path: str, isin: str, as_of: str, currency_meta_path: str
-) -> list[tuple[str, float]]:
-    """A fund's EUR returns as ``(date, return)`` between consecutive *available* EUR
-    closes, date-sorted, ``<= as_of``.
-
-    These are **not** necessarily calendar-daily: each return is
-    ``close_t / close_prev − 1`` between consecutive *available* EUR closes and is
-    dated at the later date ``t``, so a return may span more than one calendar day
-    when a close in between is missing. A day with a local price but no FX rate on
-    or before it has no EUR close; it is skipped and the adjacent return spans it
-    (bridged, not filled). An ISIN with no pinned currency — or a currency with no
-    EUR FX rule at all (GBX pence, ADR-0010) — has no EUR closes → ``[]``.
-
-    ``load_price_series`` guarantees the ``(date, close)`` inputs are date-sorted and
-    one-per-day, so the emitted returns are date-sorted with unique dates too.
-    """
-    currency = pinned_quote_currency(isin, currency_meta_path)
-    if currency is None or currency in UNSUPPORTED_FX_CURRENCIES:
-        # No pinned currency, or a currency convert_to_eur permanently refuses (pence):
-        # no EUR close ever exists, so there is no return series. Handling this up front
-        # narrows the except below to the ONE transient case it is meant for.
-        return []
-    dates, closes = load_price_series(db_path, isin, as_of)
-    eur_closes: list[tuple[str, float]] = []
-    for day, close in zip(dates, closes, strict=True):
-        try:
-            eur_closes.append((day, convert_to_eur(close, currency, day, db_path)))
-        except ValueError:
-            continue  # the sole remaining ValueError: no FX rate on/before this day
-    return [
-        (day, cur / prev - 1.0)
-        for (_prev_day, prev), (day, cur) in itertools.pairwise(eur_closes)
-    ]
 
 
 # ---------------------------------------------------------------------------
