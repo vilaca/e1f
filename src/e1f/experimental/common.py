@@ -1,7 +1,7 @@
 """Experimental-only shared primitives for the e1f experimental tier (ADR-0024).
 
 Holds the pieces used only by the experimental commands (``backtest``,
-``concentration``, ``overlap``, ``lookthrough``): the look-through snapshot
+``concentration``, ``overlap``, ``lookthrough``, ``seasonality``): the look-through snapshot
 model + ingest, the unresolved overlap-candidate signal, and the
 contribution-timing backtest simulator. Stable commands never import from here
 (enforced by the import-linter ``forbidden`` contract); this module may freely

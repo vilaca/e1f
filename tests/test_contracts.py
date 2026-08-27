@@ -39,6 +39,7 @@ def test_cli_commands_surface():
         "overlap",
         "backtest",
         "lookthrough",
+        "seasonality",
     }
 
 

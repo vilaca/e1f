@@ -30,7 +30,7 @@ from e1f import (
 # Experimental tier (ADR-0024): isolated behind a one-way import boundary — no
 # stable module imports ``e1f.experimental``. The CLI router is the sole exception,
 # so it can register these commands; nothing else may reach experimental code.
-from e1f.experimental import backtest, concentration, lookthrough, overlap
+from e1f.experimental import backtest, concentration, lookthrough, overlap, seasonality
 
 Command = Callable[[list[str]], int]
 
@@ -53,6 +53,7 @@ EXPERIMENTAL_PARSER_FACTORIES = {
     "overlap": overlap._build_parser,
     "backtest": backtest._build_parser,
     "lookthrough": lookthrough._build_parser,
+    "seasonality": seasonality._build_parser,
 }
 PARSER_FACTORIES = {**STABLE_PARSER_FACTORIES, **EXPERIMENTAL_PARSER_FACTORIES}
 
@@ -77,6 +78,7 @@ EXPERIMENTAL_COMMANDS: dict[str, Command] = {
     "overlap": overlap.main,
     "backtest": backtest.main,
     "lookthrough": lookthrough.main,
+    "seasonality": seasonality.main,
 }
 COMMANDS: dict[str, Command] = {**STABLE_COMMANDS, **EXPERIMENTAL_COMMANDS}
 
@@ -104,6 +106,7 @@ Experimental (ADR-0024 — isolated tier; may change or give wrong results):
   concentration Within-fund concentration (security/sector/asset-class), coverage-aware
   overlap       Cross-fund single-name exposure floor via reviewed canonical identity
   backtest      Contribution-timing backtest: dip-reserve vs constant-DCA over one ETF's history
+  seasonality   Calendar-month seasonality: --isin, --portfolio consensus, or --evaluate
 
 Run 'e1f <command> --help' for command-specific options.
         """,

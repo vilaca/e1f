@@ -85,13 +85,13 @@ and verify each still matches the code:
   `tests/test_contracts.py`): stable `autocomplete`, `config`, `fetch`,
   `validate`, `transactions`, `portfolio`, `performance`, `correlation`,
   `rebalance`, `scenario`; experimental `lookthrough`, `concentration`,
-  `overlap`, `backtest`. Nested: `config`: `add`, `list`, `update`, `remove`,
+  `overlap`, `backtest`, `seasonality`. Nested: `config`: `add`, `list`, `update`, `remove`,
   `trim` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
   `xtb` (in `transactions.py`); `scenario`: `save`, `list`, `show`, `delete`
   (in `scenario.py`); `overlap`: default report, `candidates`, `resolve`
   (in `src/e1f/experimental/overlap.py`). `autocomplete`, `validate`,
   `portfolio`, `performance`, `correlation`, `rebalance`, `lookthrough`,
-  `concentration`, and `backtest` have no nested subcommands.
+  `concentration`, `backtest`, and `seasonality` have no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
