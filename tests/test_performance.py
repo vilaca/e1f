@@ -12,6 +12,7 @@ from e1f.common import PositionEvent, close_asof, load_trades, position_timeline
 from e1f.performance import (
     HoldingSeries,
     annualize,
+    extended_metrics,
     risk_metrics,
     sort_rows,
 )
@@ -72,6 +73,108 @@ def test_annualize_guards_undefined_inputs():
     assert annualize(None, 365) is None
     assert annualize(0.2, 0) is None
     assert annualize(-1.5, 365) is None  # total loss beyond -100%
+
+
+# ---------------------------------------------------------------------------
+# Extended metrics (ADR-0033): drawdown shape + daily extremes
+# ---------------------------------------------------------------------------
+
+# A clean peak(1.2)→trough(0.9, -25%)→recovery(1.32) wealth path from one buy.
+_DD_POINTS = [
+    ("2024-01-01", 100.0, 100.0),  # r=0    wealth=1.00
+    ("2024-01-02", 120.0, 0.0),    # r=+0.20 wealth=1.20 (peak)
+    ("2024-01-03", 90.0, 0.0),     # r=-0.25 wealth=0.90 (-25% drawdown)
+    ("2024-01-04", 132.0, 0.0),    # r=+0.4667 wealth=1.32 (recovers past the peak)
+]
+
+
+def test_extended_metrics_drawdown_recovery_and_extremes():
+    twr = risk_metrics(_DD_POINTS).twr
+    ext = extended_metrics(_DD_POINTS, twr)
+
+    assert ext.max_drawdown == pytest.approx(-0.25)
+    assert ext.max_dd_peak_date == "2024-01-02"
+    assert ext.max_dd_recovery_date == "2024-01-04"
+    assert ext.max_dd_ongoing is False
+    assert ext.max_dd_duration_days == 2  # 01-02 → 01-04, calendar days
+    assert ext.underwater_days == 2       # single episode
+    # Recovery factor = TWR / |MaxDD| = 0.32 / 0.25.
+    assert ext.recovery_factor == pytest.approx(0.32 / 0.25)
+    assert ext.best_day == pytest.approx(132.0 / 90.0 - 1.0)
+    assert ext.best_day_date == "2024-01-04"
+    assert ext.worst_day == pytest.approx(-0.25)
+    assert ext.worst_day_date == "2024-01-03"
+    assert ext.gain_loss_ratio == pytest.approx((132.0 / 90.0 - 1.0) / 0.25)
+
+
+def test_extended_metrics_maxdd_agrees_with_risk_metrics():
+    # The two must never disagree — same time-weighted return recurrence.
+    risk = risk_metrics(_DD_POINTS)
+    ext = extended_metrics(_DD_POINTS, risk.twr)
+    assert ext.max_drawdown == pytest.approx(risk.max_drawdown)
+
+
+def test_extended_metrics_ongoing_drawdown_measured_to_last_day():
+    points = [
+        ("2024-01-01", 100.0, 100.0),  # wealth 1.00
+        ("2024-01-02", 120.0, 0.0),    # wealth 1.20 (peak)
+        ("2024-01-05", 90.0, 0.0),     # wealth 0.90 (-25%), never recovers
+    ]
+    twr = risk_metrics(points).twr
+    ext = extended_metrics(points, twr)
+    assert ext.max_dd_ongoing is True
+    assert ext.max_dd_peak_date == "2024-01-02"
+    assert ext.max_dd_recovery_date == "2024-01-05"  # last day, not a real recovery
+    assert ext.max_dd_duration_days == 3
+    assert ext.underwater_days == 3
+    # TWR = -0.10 while still down 25% → a negative recovery factor.
+    assert ext.recovery_factor == pytest.approx(-0.10 / 0.25)
+
+
+def test_extended_metrics_no_drawdown_has_no_recovery_factor():
+    points = [
+        ("2024-01-01", 100.0, 100.0),  # wealth 1.00
+        ("2024-01-02", 110.0, 0.0),    # wealth 1.10
+        ("2024-01-03", 120.0, 0.0),    # wealth 1.20 — monotonic, never below peak
+    ]
+    ext = extended_metrics(points, risk_metrics(points).twr)
+    assert ext.max_drawdown == pytest.approx(0.0)
+    assert ext.max_dd_duration_days == 0
+    assert ext.underwater_days == 0
+    assert ext.max_dd_ongoing is False
+    assert ext.max_dd_peak_date is None and ext.max_dd_recovery_date is None
+    assert ext.recovery_factor is None          # nothing to recover from
+    # Worst "day" is the +0% first return, so Max Gain / Max Loss is undefined.
+    assert ext.gain_loss_ratio is None
+
+
+def test_extended_metrics_deepest_of_several_episodes_wins():
+    # Two drawdowns: -10% (recovers), then a deeper -20% (recovers). Deepest drives
+    # the duration/peak fields; underwater sums both episodes.
+    points = [
+        ("2024-01-01", 100.0, 100.0),  # 1.00
+        ("2024-01-02", 90.0, 0.0),     # 0.90  -10% (episode A opens at peak 01-01)
+        ("2024-01-03", 100.0, 0.0),    # 1.00  recovers A (2 days)
+        ("2024-01-04", 80.0, 0.0),     # 0.80  -20% (episode B opens at peak 01-03)
+        ("2024-01-06", 100.0, 0.0),    # 1.00  recovers B (3 days)
+    ]
+    ext = extended_metrics(points, risk_metrics(points).twr)
+    assert ext.max_drawdown == pytest.approx(-0.20)
+    assert ext.max_dd_peak_date == "2024-01-03"      # deeper episode's peak
+    assert ext.max_dd_recovery_date == "2024-01-06"
+    assert ext.max_dd_duration_days == 3
+    assert ext.underwater_days == 5                   # 2 (A) + 3 (B)
+
+
+def test_extended_metrics_empty_series_is_all_none():
+    ext = extended_metrics([], None)
+    assert ext.max_drawdown is None
+    assert ext.max_dd_duration_days is None
+    assert ext.underwater_days is None
+    assert ext.max_dd_ongoing is False
+    assert ext.recovery_factor is None
+    assert ext.best_day is None and ext.worst_day is None
+    assert ext.gain_loss_ratio is None
 
 
 # ---------------------------------------------------------------------------
@@ -1268,3 +1371,100 @@ def test_weighted_ter_cost_value_weighted_and_dilution():
     assert fee2 == pytest.approx(15.0) and wter2 == pytest.approx(0.375)  # B dilutes
 
     assert perf._weighted_ter_cost(rows, {"A": None, "B": None, "C": None}) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# --metrics command (ADR-0033, Phase A)
+# ---------------------------------------------------------------------------
+
+def _ext_metrics(**overrides):
+    base = dict(
+        max_drawdown=-0.1, max_dd_duration_days=1, max_dd_peak_date="2024-01-01",
+        max_dd_recovery_date="2024-01-02", max_dd_ongoing=False, underwater_days=1,
+        recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
+        worst_day=-0.1, worst_day_date="2024-01-01", gain_loss_ratio=1.0,
+    )
+    base.update(overrides)
+    return perf.ExtendedMetrics(**base)
+
+
+def test_maxdd_duration_note_variants():
+    assert "no drawdown" in perf._maxdd_duration_note(_ext_metrics(max_dd_peak_date=None))
+    assert "still underwater" in perf._maxdd_duration_note(_ext_metrics(max_dd_ongoing=True))
+    assert "recovery 2024-01-02" in perf._maxdd_duration_note(_ext_metrics())
+
+
+def test_main_metrics_report_renders(tmp_path, capsys):
+    # One EUR holding, peak 06-01 → -25% trough 09-01 → recovery 12-31.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-06-01", 12.0),
+            (EUR_ISIN, "2024-09-01", 9.0),
+            (EUR_ISIN, "2024-12-31", 13.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--metrics"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Portfolio metrics as of 2024-12-31" in out
+    assert "Max Drawdown" in out and "-25.0%" in out
+    assert "MaxDD Duration" in out and "213d" in out
+    assert "peak 2024-06-01 → recovery 2024-12-31" in out
+    assert "Recovery Factor" in out and "1.20" in out
+    assert "Best Day" in out and "+44.44%" in out
+    assert "Worst Day" in out and "-25.00%" in out
+    assert "Max Gain / Max Loss" in out and "1.78" in out
+
+
+def test_main_metrics_short_history_estimated_and_excluded_notes(tmp_path, capsys):
+    # EUR priced (short window, stale as of 08-25) + USD held but never priced.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2026-08-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2026-08-01", USD_ISIN, 10.0, 90.0),
+        ],
+        prices=[(EUR_ISIN, "2026-08-01", 10.0), (EUR_ISIN, "2026-08-20", 11.0)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2026-08-25", "--metrics"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "* < 1y or short history" in out
+    assert "~ MktVal carried forward" in out
+    assert "⚠ excluded" in out and USD_ISIN in out
+
+
+def test_main_metrics_no_holdings(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    code = perf.main(_args(db, config, meta, "--metrics"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No ETF holdings in database" in out
+
+
+def test_main_metrics_no_priceable_holdings(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )  # no prices at all → nothing valuable
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--metrics"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No priceable holdings as of 2024-12-31" in out
+
+
+def test_main_metrics_mutually_exclusive_with_series(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    code = perf.main(_args(db, config, meta, "--metrics", "--series", "10"))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "mutually exclusive" in out

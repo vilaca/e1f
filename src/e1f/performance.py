@@ -135,6 +135,176 @@ def annualize(twr: float | None, days: int) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Extended drawdown-shape + daily-extreme metrics (ADR-0033, Phase A). Computed
+# from the same time-weighted daily return series as ``risk_metrics``, so the
+# MaxDD they report is identical; these add its duration, the total underwater
+# time, the recovery factor, and the best/worst single-period moves. Pure, no DB.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _DrawdownEpisode:
+    """One peak-to-recovery drawdown of the wealth index.
+
+    ``peak_date`` is the last all-time-high before the decline; ``end_date`` is the
+    day the index regained that peak, or — when ``recovered`` is False — the last
+    day in the series (the drawdown is still open as of that day). ``trough`` is the
+    deepest ``wealth/peak − 1`` reached within the episode (≤ 0).
+    """
+
+    peak_date: str
+    end_date: str
+    recovered: bool
+    trough: float
+
+
+@dataclass(frozen=True)
+class ExtendedMetrics:
+    """Drawdown-shape and daily-extreme metrics over a value/contribution series.
+
+    ``max_drawdown`` equals ``risk_metrics``'s (same return series). Durations are
+    **calendar days** between the dated wealth-index points; ``max_dd_ongoing``
+    marks a deepest drawdown not yet recovered as of the last day (its duration is
+    then measured to that day). Any field is ``None`` when the series is too short
+    to define it — and ``recovery_factor`` is ``None`` when there is no drawdown to
+    recover from.
+    """
+
+    max_drawdown: float | None
+    max_dd_duration_days: int | None
+    max_dd_peak_date: str | None
+    max_dd_recovery_date: str | None
+    max_dd_ongoing: bool
+    underwater_days: int | None
+    recovery_factor: float | None
+    best_day: float | None
+    best_day_date: str | None
+    worst_day: float | None
+    worst_day_date: str | None
+    gain_loss_ratio: float | None
+
+
+def _wealth_and_returns(
+    points: list[tuple[str, float, float]],
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """Dated wealth index and dated sub-period returns from a value/contribution series.
+
+    The recurrence is identical to ``risk_metrics`` — ``r_t = V_t/(V_prev+CF_t) − 1``
+    with the contribution treated as start-of-day, chain-linked into a wealth index
+    seeded at 1.0 — so the two never disagree. Returns ``(wealth_path, returns)``,
+    each a list of ``(date, value)`` over the days where a return is defined.
+    """
+    returns: list[tuple[str, float]] = []
+    wealth_path: list[tuple[str, float]] = []
+    previous_value = 0.0
+    wealth = 1.0
+    for day, value, contribution in points:
+        denominator = previous_value + contribution
+        if denominator > 0.0:
+            period_return = value / denominator - 1.0
+            returns.append((day, period_return))
+            wealth *= 1.0 + period_return
+            wealth_path.append((day, wealth))
+        previous_value = value
+    return wealth_path, returns
+
+
+def _drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[_DrawdownEpisode]:
+    """Peak-to-recovery drawdown episodes of the wealth index, in chronological order.
+
+    The running peak is seeded at 1.0 (the pre-investment wealth), matching
+    ``risk_metrics``, so a first-day loss already counts as a drawdown. An episode
+    opens on the first day the index sits below its running peak and closes when it
+    regains that peak; a still-open episode at the end is emitted with
+    ``recovered=False`` and ``end_date`` = the last day.
+    """
+    if not wealth_path:
+        return []
+    episodes: list[_DrawdownEpisode] = []
+    peak = 1.0
+    peak_date = wealth_path[0][0]
+    open_trough: float | None = None  # None while the index is at/above its peak
+    for day, wealth in wealth_path:
+        if wealth >= peak:
+            if open_trough is not None:
+                episodes.append(_DrawdownEpisode(peak_date, day, True, open_trough))
+                open_trough = None
+            peak, peak_date = wealth, day
+        else:
+            drawdown = wealth / peak - 1.0
+            open_trough = drawdown if open_trough is None else min(open_trough, drawdown)
+    if open_trough is not None:
+        episodes.append(_DrawdownEpisode(peak_date, wealth_path[-1][0], False, open_trough))
+    return episodes
+
+
+def extended_metrics(
+    points: list[tuple[str, float, float]], twr: float | None
+) -> ExtendedMetrics:
+    """Drawdown-shape and daily-extreme metrics over a value/contribution series.
+
+    ``twr`` (from ``risk_metrics``) feeds the recovery factor ``twr/|MaxDD|`` so the
+    two stay consistent; it is the only input not derivable here. The deepest
+    drawdown episode (by trough) supplies the duration / peak / recovery / ongoing
+    fields; underwater time sums every episode's peak-to-recovery span.
+    """
+    wealth_path, returns = _wealth_and_returns(points)
+
+    best_day: float | None
+    worst_day: float | None
+    best_day_date: str | None
+    worst_day_date: str | None
+    if returns:
+        best_day_date, best_day = max(returns, key=lambda dr: dr[1])
+        worst_day_date, worst_day = min(returns, key=lambda dr: dr[1])
+        gain_loss_ratio = abs(best_day) / abs(worst_day) if worst_day != 0.0 else None
+    else:
+        best_day = worst_day = gain_loss_ratio = None
+        best_day_date = worst_day_date = None
+
+    episodes = _drawdown_episodes(wealth_path)
+    if episodes:
+        deepest = min(episodes, key=lambda episode: episode.trough)
+        max_drawdown: float | None = deepest.trough
+        max_dd_duration: int | None = _window_days(deepest.peak_date, deepest.end_date)
+        max_dd_peak_date: str | None = deepest.peak_date
+        max_dd_recovery_date: str | None = deepest.end_date
+        max_dd_ongoing = not deepest.recovered
+        underwater_days: int | None = sum(
+            _window_days(episode.peak_date, episode.end_date) for episode in episodes
+        )
+    elif wealth_path:  # priced days but never below the seed peak — no drawdown
+        max_drawdown = 0.0
+        max_dd_duration = 0
+        max_dd_peak_date = max_dd_recovery_date = None
+        max_dd_ongoing = False
+        underwater_days = 0
+    else:  # no defined return at all
+        max_drawdown = max_dd_duration = underwater_days = None
+        max_dd_peak_date = max_dd_recovery_date = None
+        max_dd_ongoing = False
+
+    recovery_factor = (
+        None if twr is None or not max_drawdown else twr / abs(max_drawdown)
+    )
+
+    return ExtendedMetrics(
+        max_drawdown=max_drawdown,
+        max_dd_duration_days=max_dd_duration,
+        max_dd_peak_date=max_dd_peak_date,
+        max_dd_recovery_date=max_dd_recovery_date,
+        max_dd_ongoing=max_dd_ongoing,
+        underwater_days=underwater_days,
+        recovery_factor=recovery_factor,
+        best_day=best_day,
+        best_day_date=best_day_date,
+        worst_day=worst_day,
+        worst_day_date=worst_day_date,
+        gain_loss_ratio=gain_loss_ratio,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Per-ISIN series assembly on the shared valuation core (graduated to
 # ``common``, ADR-0013 decision 4). Breakpoint-day assembly and per-point series
 # stay here — they are performance's own return-metric machinery.
@@ -1031,6 +1201,122 @@ def _cmd_performance_series(
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Metrics mode (ADR-0033, Phase A): a portfolio-level extended risk report.
+# ---------------------------------------------------------------------------
+
+
+_METRIC_LABEL = 21
+
+
+def _metric_line(label: str, value: str, *, note: str = "") -> str:
+    tail = f"   {note}" if note else ""
+    return f"    {label:<{_METRIC_LABEL}} {value:>12}{tail}"
+
+
+def _fmt_ratio(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
+
+
+def _fmt_signed_pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value * 100.0:+.2f}%"
+
+
+def _fmt_duration(days: int | None) -> str:
+    return "n/a" if days is None else f"{days:,}d"
+
+
+def _maxdd_duration_note(ext: ExtendedMetrics) -> str:
+    if ext.max_dd_peak_date is None:  # no drawdown at all
+        return "no drawdown"
+    if ext.max_dd_ongoing:
+        return f"peak {ext.max_dd_peak_date} → still underwater at {ext.max_dd_recovery_date}"
+    return f"peak {ext.max_dd_peak_date} → recovery {ext.max_dd_recovery_date}"
+
+
+def _render_metrics(as_of: str, total: PerformanceRow, ext: ExtendedMetrics) -> list[str]:
+    """The portfolio metrics report as a list of printable lines (pure, testable)."""
+    return [
+        f"\nPortfolio metrics as of {as_of} (EUR)",
+        "",
+        "  Value",
+        _metric_line("MktVal€", _fmt_money(total.market_value, flag=total.estimated)),
+        _metric_line("Cost€", _fmt_money(total.cost)),
+        _metric_line("P&L€", _fmt_money(total.pnl), note=_fmt_pct(total.pnl_pct, scaled=True)),
+        "",
+        "  Return",
+        _metric_line("XIRR (money-weighted)", _fmt_pct(total.xirr)),
+        _metric_line("TWR (time-weighted)", _fmt_pct(total.twr)),
+        _metric_line("CAGR", _fmt_pct(total.cagr, flag=total.short_history)),
+        "",
+        "  Risk / drawdown",
+        _metric_line("Volatility (ann.)", _fmt_pct(total.volatility, flag=total.short_history)),
+        _metric_line("Max Drawdown", _fmt_pct(ext.max_drawdown)),
+        _metric_line(
+            "MaxDD Duration",
+            _fmt_duration(ext.max_dd_duration_days),
+            note=_maxdd_duration_note(ext),
+        ),
+        _metric_line("Underwater (total)", _fmt_duration(ext.underwater_days)),
+        _metric_line("Recovery Factor", _fmt_ratio(ext.recovery_factor)),
+        "",
+        "  Daily extremes",
+        _metric_line("Best Day", _fmt_signed_pct(ext.best_day), note=ext.best_day_date or ""),
+        _metric_line("Worst Day", _fmt_signed_pct(ext.worst_day), note=ext.worst_day_date or ""),
+        _metric_line("Max Gain / Max Loss", _fmt_ratio(ext.gain_loss_ratio)),
+    ]
+
+
+def _cmd_performance_metrics(
+    db_path: str,
+    config_path: str,
+    *,
+    as_of: str,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> int:
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
+    if not any(row.valuable for row in rows):
+        print(f"No priceable holdings as of {as_of}")
+        return 0
+
+    total = _total_row(rows, holdings, as_of, db_path)
+    # Re-derive the TOTAL's own value/contribution series (the same valuable set,
+    # first_day, and _aggregate_series call _total_row uses) so extended_metrics
+    # measures exactly the series total.twr came from.
+    valuable = [series for series in holdings if _value_on(series, as_of, db_path) is not None]
+    first_day = min((series.events[0].date for series in valuable), default=as_of)
+    points = _aggregate_series(valuable, first_day, as_of, db_path)
+    ext = extended_metrics(points, total.twr)
+
+    for line in _render_metrics(as_of, total, ext):
+        print(line)
+
+    if total.short_history:
+        print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
+    if total.estimated:
+        print(
+            "\n~ MktVal carried forward from an earlier close (no price on the as-of "
+            "day itself — fetch to refresh)."
+        )
+    excluded = [row.isin for row in rows if not row.valuable]
+    if excluded:
+        print(
+            f"\n⚠ excluded (no price/FX on or before {as_of}): " + ", ".join(sorted(excluded))
+        )
+    print(
+        "\nDurations are calendar days (peak → recovery); MaxDD Duration is the deepest "
+        "drawdown's. Best/Worst Day are single time-weighted return periods on the "
+        "gap-bridged daily series."
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f performance",
@@ -1063,6 +1349,12 @@ first. Mutually exclusive with --diff. Two trailing columns (ADR-0031) add the
 market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
 (Fee€/yr); holdings without TER metadata contribute 0 (dilutes).
 
+--metrics (ADR-0033) replaces the per-holding table with a portfolio-level
+extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, total
+underwater time, recovery factor, and the best/worst single-period returns.
+Durations are calendar days. Composes with --as-of; mutually exclusive with
+--diff / --series.
+
 Examples:
   e1f performance
   e1f performance --as-of 2025-12-31
@@ -1071,6 +1363,7 @@ Examples:
   e1f performance --explain
   e1f performance --series 90
   e1f performance --as-of 2025-12-31 --series 30 --reverse
+  e1f performance --metrics
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -1125,6 +1418,13 @@ Examples:
         "days (cumulative-since-inception metrics; composes with --as-of; --reverse "
         "shows newest first). Mutually exclusive with --diff. N ≥ 1.",
     )
+    parser.add_argument(
+        "--metrics",
+        action="store_true",
+        help="Portfolio-level extended risk report (MaxDD duration, underwater time, "
+        "recovery factor, best/worst day) instead of the per-holding table. Composes "
+        "with --as-of; mutually exclusive with --diff / --series.",
+    )
     return parser
 
 
@@ -1156,6 +1456,15 @@ def main(argv: list[str] | None = None) -> int:
         series_n = _validate_positive_int(args.series, "--series")
         if diff_n is not None and series_n is not None:
             raise ValueError("--diff and --series are mutually exclusive")
+        if args.metrics and (diff_n is not None or series_n is not None):
+            raise ValueError("--metrics is mutually exclusive with --diff / --series")
+        if args.metrics:
+            return _cmd_performance_metrics(
+                args.db,
+                args.config,
+                as_of=args.as_of,
+                currency_meta_path=args.currency_meta,
+            )
         if series_n is not None:
             return _cmd_performance_series(
                 args.db,
