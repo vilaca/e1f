@@ -23,7 +23,7 @@ src/e1f/
   validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
-  performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics; --diff N signed change over N calendar days (ADR-0029)
+  performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics; --diff N signed change over N calendar days (ADR-0029); --series N daily cumulative TOTAL over N days (ADR-0030)
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
   scenario.py  — scenario command: CRUD for named ISIN:pct baskets (one YAML, many scenarios)
@@ -85,6 +85,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0027` — `seasonality --portfolio`: inferential vs DESCRIPTIVE cohorts; consensus table of fund-level monthly means; cross-sectional permutation of strongest/weakest-month concentration; correlated-universe caveat; balanced equal-weight book; `--rule` stays single-ISIN only
 - `ADR-0028` — `seasonality --evaluate`: frozen August/November contribution skip/shift vs DCA (sit-out secondary); in-sample or labelled holdout; months are constants, not re-selected
 - `ADR-0029` — `performance --diff N`: signed change table over N calendar days (reading-A, money columns only, union of held ISINs, held-but-unpriceable → unavailable); composes with `--as-of`; `portfolio --diff` deferred
+- `ADR-0030` — `performance --series N`: one portfolio-TOTAL row per trading day over the last N calendar days; cumulative-since-inception metrics (each row == `--as-of` that day, by reusing `_snapshot`/`_snapshot_total`); trading days come from the price data (weekends/holidays drop out, no hardcoded calendar); `P&Lctr` dropped; composes with `--as-of`, `--reverse` newest-first, mutually exclusive with `--diff`
 
 ## Skills
 

@@ -27,6 +27,7 @@ from e1f.common import (
     Status,
     _explain_metric,
     build_series as _build_series,
+    load_price_series,
     load_trades,
     position_asof as _position_asof,
     position_timeline,
@@ -363,6 +364,54 @@ def _total_row(
         short_history=any(row.short_history for row in included),
         estimated=any(row.estimated for row in included),
     )
+
+
+def _snapshot(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    as_of: str,
+) -> tuple[list[PerformanceRow], list[HoldingSeries]]:
+    """Per-ISIN rows + their series for every ISIN held on/before ``as_of``.
+
+    The single definition of "the portfolio as of a day" — shared by the snapshot
+    command and the ``--series`` per-day totals so both agree to the cent. Events
+    are capped to ``as_of`` before the series is built, since the return-metric
+    flow helpers read ``series.events`` unfiltered.
+    """
+    holdings: list[HoldingSeries] = []
+    rows: list[PerformanceRow] = []
+    for isin, events in timeline.items():
+        capped = [event for event in events if event.date <= as_of]
+        if not capped:
+            continue
+        series = _build_series(db_path, isin, capped, as_of, currency_meta_path)
+        row = _build_row(isin, series, as_of, config_path, db_path)
+        if row is None:
+            continue
+        holdings.append(series)
+        rows.append(row)
+    return rows, holdings
+
+
+def _snapshot_total(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    as_of: str,
+) -> PerformanceRow | None:
+    """The portfolio TOTAL row as of ``as_of``, or None when nothing is valuable.
+
+    Identical to the TOTAL line ``performance --as-of <as_of>`` prints (same
+    ``_snapshot`` + ``_total_row`` path). None when no held ISIN can be valued on
+    the day, so ``--series`` never emits a phantom €0 row.
+    """
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
+    if not any(row.valuable for row in rows):
+        return None
+    return _total_row(rows, holdings, as_of, db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -731,19 +780,7 @@ def _cmd_performance(
         print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
         return 0
 
-    holdings: list[HoldingSeries] = []
-    rows: list[PerformanceRow] = []
-    for isin, events in timeline.items():
-        capped = [event for event in events if event.date <= as_of]
-        if not capped:
-            continue
-        series = _build_series(db_path, isin, capped, as_of, currency_meta_path)
-        row = _build_row(isin, series, as_of, config_path, db_path)
-        if row is None:
-            continue
-        holdings.append(series)
-        rows.append(row)
-
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
     if not rows:
         print(f"No holdings as of {as_of}")
         return 0
@@ -806,6 +843,109 @@ def _cmd_performance(
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Series mode (ADR-0030): one TOTAL row per trading day over the window.
+# ---------------------------------------------------------------------------
+
+
+_SERIES_HEADER = (
+    f"\n{'Date':<12} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
+    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Vol':>8} {'MaxDD':>8} {'CAGR':>8}"
+)
+_SERIES_RULE_WIDTH = len(_SERIES_HEADER.lstrip("\n"))
+
+
+def _format_series_row(day: str, row: PerformanceRow) -> str:
+    """One dated TOTAL row; ~ flags a carried-forward close, * a short history."""
+    flag = row.short_history
+    return (
+        f"{day:<12} "
+        f"{_fmt_money(row.market_value, flag=row.estimated):>13} "
+        f"{_fmt_money(row.cost):>13} {_fmt_money(row.pnl):>13} "
+        f"{_fmt_pct(row.pnl_pct, scaled=True):>8} "
+        f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.twr):>8} "
+        f"{_fmt_pct(row.volatility, flag=flag):>8} {_fmt_pct(row.max_drawdown):>8} "
+        f"{_fmt_pct(row.cagr, flag=flag):>8}"
+    )
+
+
+def _trading_days(
+    db_path: str, timeline: dict[str, list[PositionEvent]], start: str, end: str
+) -> list[str]:
+    """Sorted days with a close in the DB within ``[start, end]`` across held ISINs.
+
+    The price data defines a trading day, so weekends and market holidays (no
+    close) drop out with no hardcoded calendar. A day that predates the first
+    holding is dropped later, when its snapshot has nothing valuable.
+    """
+    days: set[str] = set()
+    for isin in timeline:
+        dates, _closes = load_price_series(db_path, isin, end)
+        days.update(d for d in dates if start <= d)
+    return sorted(days)
+
+
+def _series_rows(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    *,
+    start: str,
+    end: str,
+) -> list[tuple[str, PerformanceRow]]:
+    """``(day, TOTAL)`` for each trading day in the window, cumulative since inception.
+
+    Each TOTAL is the same row ``performance --as-of <day>`` prints (both go
+    through ``_snapshot_total``). Days with nothing valuable are skipped.
+    """
+    result: list[tuple[str, PerformanceRow]] = []
+    for day in _trading_days(db_path, timeline, start, end):
+        total = _snapshot_total(db_path, config_path, currency_meta_path, timeline, day)
+        if total is not None:
+            result.append((day, total))
+    return result
+
+
+def _cmd_performance_series(
+    db_path: str,
+    config_path: str,
+    *,
+    as_of: str,
+    n: int,
+    reverse: bool = False,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> int:
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    start = (date.fromisoformat(as_of) - timedelta(days=n)).isoformat()
+    rows = _series_rows(db_path, config_path, currency_meta_path, timeline, start=start, end=as_of)
+    if not rows:
+        print(f"No priced trading days in window {start} → {as_of}")
+        return 0
+    if reverse:
+        rows = list(reversed(rows))
+
+    print(f"\nPortfolio performance series {start} → {as_of} (EUR, cumulative since inception)")
+    print(_SERIES_HEADER)
+    print("-" * _SERIES_RULE_WIDTH)
+    for day, row in rows:
+        print(_format_series_row(day, row))
+
+    if any(row.short_history for _day, row in rows):
+        print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
+    if any(row.estimated for _day, row in rows):
+        print(
+            "\n~ MktVal carried forward from an earlier close on flagged days "
+            "(no close on the day itself — fetch to refresh)."
+        )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f performance",
@@ -830,12 +970,20 @@ Provenance (ADR-0014, off by default): --show-status adds a Status column
 (CALCULATED / UNAVAILABLE, the row's valuation gate); --explain adds per-holding
 provenance blocks and implies --show-status.
 
+--series N (ADR-0030) lists the portfolio TOTAL for each trading day over the
+last N calendar days — one row per day, cumulative-since-inception metrics,
+identical to running --as-of on each of those days. Trading days come from the
+price data (weekends/holidays with no close drop out); --reverse shows newest
+first. Mutually exclusive with --diff.
+
 Examples:
   e1f performance
   e1f performance --as-of 2025-12-31
   e1f performance --sort value --reverse
   e1f performance --show-status
   e1f performance --explain
+  e1f performance --series 90
+  e1f performance --as-of 2025-12-31 --series 30 --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -882,6 +1030,14 @@ Examples:
         help="Show signed change over the last N calendar days instead of a snapshot "
         "(composes with --as-of: window is [as_of − N, as_of]). N ≥ 1.",
     )
+    parser.add_argument(
+        "--series",
+        metavar="N",
+        default=None,
+        help="List the portfolio TOTAL for each trading day over the last N calendar "
+        "days (cumulative-since-inception metrics; composes with --as-of; --reverse "
+        "shows newest first). Mutually exclusive with --diff. N ≥ 1.",
+    )
     return parser
 
 
@@ -892,15 +1048,16 @@ def _validate_as_of(as_of: str) -> None:
         raise ValueError(f"--as-of must be YYYY-MM-DD: {as_of}") from exc
 
 
-def _validate_diff(raw: str | None) -> int | None:
+def _validate_positive_int(raw: str | None, flag: str) -> int | None:
+    """Parse an optional ``N`` window arg (``--diff`` / ``--series``); None when unset."""
     if raw is None:
         return None
     try:
         n = int(raw)
     except ValueError as exc:
-        raise ValueError(f"--diff must be a positive integer, got: {raw!r}") from exc
+        raise ValueError(f"{flag} must be a positive integer, got: {raw!r}") from exc
     if n < 1:
-        raise ValueError(f"--diff must be ≥ 1, got: {n}")
+        raise ValueError(f"{flag} must be ≥ 1, got: {n}")
     return n
 
 
@@ -908,7 +1065,19 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         _validate_as_of(args.as_of)
-        diff_n = _validate_diff(args.diff)
+        diff_n = _validate_positive_int(args.diff, "--diff")
+        series_n = _validate_positive_int(args.series, "--series")
+        if diff_n is not None and series_n is not None:
+            raise ValueError("--diff and --series are mutually exclusive")
+        if series_n is not None:
+            return _cmd_performance_series(
+                args.db,
+                args.config,
+                as_of=args.as_of,
+                n=series_n,
+                reverse=args.reverse,
+                currency_meta_path=args.currency_meta,
+            )
         if diff_n is not None:
             end = args.as_of
             start = (date.fromisoformat(end) - timedelta(days=diff_n)).isoformat()
