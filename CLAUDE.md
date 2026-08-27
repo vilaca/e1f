@@ -23,7 +23,7 @@ src/e1f/
   validate.py  — validate command: config/DB sync and price-data quality
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions
-  performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics
+  performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics; --diff N signed change over N calendar days (ADR-0029)
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
   scenario.py  — scenario command: CRUD for named ISIN:pct baskets (one YAML, many scenarios)
@@ -84,6 +84,7 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0026` — experimental `seasonality` command: all-twelve-month calendar analysis (descriptive + permutation omnibus + extreme-month placebo); no September privilege; total-return default (accumulating NAV only); pre-specified / frozen-OOS rules only, never an auto-traded weakest month; separate from dip `backtest`
 - `ADR-0027` — `seasonality --portfolio`: inferential vs DESCRIPTIVE cohorts; consensus table of fund-level monthly means; cross-sectional permutation of strongest/weakest-month concentration; correlated-universe caveat; balanced equal-weight book; `--rule` stays single-ISIN only
 - `ADR-0028` — `seasonality --evaluate`: frozen August/November contribution skip/shift vs DCA (sit-out secondary); in-sample or labelled holdout; months are constants, not re-selected
+- `ADR-0029` — `performance --diff N`: signed change table over N calendar days (reading-A, money columns only, union of held ISINs, held-but-unpriceable → unavailable); composes with `--as-of`; `portfolio --diff` deferred
 
 ## Skills
 

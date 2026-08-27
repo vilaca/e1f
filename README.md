@@ -34,7 +34,7 @@ walled off so no stable command depends on them:
 4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`.
-7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide.
+7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; `--diff N` shows the signed change over the last N calendar days (ADR-0029).
 8. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 9. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
 10. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
@@ -79,6 +79,8 @@ e1f portfolio --explain              # + provenance block (ADR-0014)
 # 4. Value the portfolio and measure returns (EUR)
 e1f performance
 e1f performance --as-of 2025-12-31   # historical snapshot
+e1f performance --diff 7             # signed change over the last 7 calendar days (ADR-0029)
+e1f performance --as-of 2025-12-31 --diff 7  # change in the week ending Dec 31
 e1f performance --sort value --reverse
 e1f performance --show-status        # + per-holding provenance Status column (ADR-0014)
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)

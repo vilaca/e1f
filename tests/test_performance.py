@@ -606,3 +606,374 @@ def test_main_explain_implies_status_and_prints_blocks(tmp_path, capsys):
     # the unvaluable holding's block names its UNAVAILABLE valuation
     assert "no close/FX on or before the as-of date" in out
     assert unk in out
+
+
+# ---------------------------------------------------------------------------
+# --diff mode: unit seam (_diff_rows) — ADR-0029
+# ---------------------------------------------------------------------------
+
+def _ep_row(isin, *, value, cost=100.0, estimated=False):
+    """Minimal PerformanceRow for _diff_rows unit tests."""
+    return perf.PerformanceRow(
+        isin=isin, name=isin.lower(), cost=cost, market_value=value,
+        xirr=None, twr=None, volatility=None, max_drawdown=None, cagr=None,
+        short_history=False, estimated=estimated,
+    )
+
+
+def test_diff_rows_held_through_produces_signed_delta():
+    start = {"A": _ep_row("A", value=1000.0, cost=900.0)}
+    end = {"A": _ep_row("A", value=1200.0, cost=900.0)}
+    rows = perf._diff_rows(start, end)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.isin == "A"
+    assert r.delta_market_value == pytest.approx(200.0)
+    assert r.delta_cost == pytest.approx(0.0)
+    assert r.delta_pnl == pytest.approx(200.0)
+    assert r.valuable is True
+    assert r.estimated is False
+
+
+def test_diff_rows_new_in_window_start_is_zero():
+    start: dict[str, perf.PerformanceRow] = {}
+    end = {"B": _ep_row("B", value=500.0, cost=450.0)}
+    rows = perf._diff_rows(start, end)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.delta_market_value == pytest.approx(500.0)
+    assert r.delta_cost == pytest.approx(450.0)
+    assert r.delta_pnl == pytest.approx(50.0)
+
+
+def test_diff_rows_sold_in_window_end_is_zero():
+    start = {"C": _ep_row("C", value=800.0, cost=700.0)}
+    end: dict[str, perf.PerformanceRow] = {}
+    rows = perf._diff_rows(start, end)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.delta_market_value == pytest.approx(-800.0)
+    assert r.delta_cost == pytest.approx(-700.0)
+    assert r.delta_pnl == pytest.approx(-100.0)
+
+
+def test_diff_rows_held_but_unpriceable_at_end_is_unavailable():
+    start = {"D": _ep_row("D", value=1000.0, cost=900.0)}
+    end = {"D": _ep_row("D", value=None, cost=900.0)}  # held but no price
+    rows = perf._diff_rows(start, end)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.valuable is False
+    assert r.delta_market_value is None
+    assert r.delta_pnl is None
+
+
+def test_diff_rows_held_but_unpriceable_at_start_is_unavailable():
+    start = {"E": _ep_row("E", value=None, cost=900.0)}
+    end = {"E": _ep_row("E", value=1200.0, cost=900.0)}
+    rows = perf._diff_rows(start, end)
+    assert rows[0].valuable is False
+
+
+def test_diff_rows_union_of_isins():
+    start = {"A": _ep_row("A", value=100.0), "B": _ep_row("B", value=200.0)}
+    end = {"B": _ep_row("B", value=210.0), "C": _ep_row("C", value=300.0)}
+    isins = [r.isin for r in perf._diff_rows(start, end)]
+    assert sorted(isins) == ["A", "B", "C"]
+
+
+def test_diff_rows_estimated_flag_propagates_from_either_endpoint():
+    start = {"F": _ep_row("F", value=1000.0, estimated=True)}
+    end = {"F": _ep_row("F", value=1100.0, estimated=False)}
+    rows = perf._diff_rows(start, end)
+    assert rows[0].estimated is True
+
+    start2 = {"G": _ep_row("G", value=1000.0, estimated=False)}
+    end2 = {"G": _ep_row("G", value=1100.0, estimated=True)}
+    rows2 = perf._diff_rows(start2, end2)
+    assert rows2[0].estimated is True
+
+
+def test_diff_rows_empty_when_no_isins():
+    assert perf._diff_rows({}, {}) == []
+
+
+# ---------------------------------------------------------------------------
+# --diff mode: command seam (main + capsys) — ADR-0029
+# ---------------------------------------------------------------------------
+
+def _sell(txid, day, isin, shares, price_eur, fee=0.0, broker="tr"):
+    return (broker, txid, day, isin, "SELL", shares, price_eur, fee, 0.0)
+
+
+def test_diff_main_two_holdings_header_and_totals(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),   # cost 1000
+            _buy("t2", "2024-01-01", USD_ISIN, 10.0, 90.0),    # cost 900 EUR
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),   # start: 1100
+            (EUR_ISIN, "2024-12-31", 12.0),   # end:   1200
+            (USD_ISIN, "2024-12-24", 110.0),  # start: 10*110/1.1 = 1000
+            (USD_ISIN, "2024-12-31", 120.0),  # end:   10*120/1.2 = 1000
+        ],
+        fx=[
+            ("EUR", "USD", "2024-12-24", 1.1),
+            ("EUR", "USD", "2024-12-31", 1.2),
+        ],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Performance change 2024-12-24 → 2024-12-31 (EUR)" in out
+    # EUR_ISIN: +100 (1200-1100), USD_ISIN: 0, TOTAL: +100
+    assert "+100.00" in out
+    assert "TOTAL" in out
+    # Rate columns (XIRR, TWR, etc.) must NOT appear
+    assert "XIRR" not in out and "TWR" not in out and "CAGR" not in out
+
+
+def test_diff_main_new_position_in_window(tmp_path, capsys):
+    new_isin = "IE00NEW000001"
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-12-28", new_isin, 50.0, 20.0),   # bought inside window
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+            (new_isin, "2024-12-28", 20.0),
+            (new_isin, "2024-12-31", 22.0),
+        ],
+        currencies={EUR_ISIN: "EUR", new_isin: "EUR"},
+        names={EUR_ISIN: "Euro Fund", new_isin: "New Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert new_isin in out
+    # new_isin: start=0, end=50*22=1100 → delta = +1,100.00
+    assert "+1,100.00" in out
+
+
+def test_diff_main_sold_position_appears_with_negative_delta(tmp_path, capsys):
+    sold_isin = "IE00SOLD00001"
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", sold_isin, 50.0, 20.0),    # cost 1000
+            _sell("t3", "2024-12-27", sold_isin, 50.0, 22.0),   # sell all inside window
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+            (sold_isin, "2024-12-24", 22.0),  # start: 50*22 = 1100
+        ],
+        currencies={EUR_ISIN: "EUR", sold_isin: "EUR"},
+        names={EUR_ISIN: "Euro Fund", sold_isin: "Sold Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert sold_isin in out
+    # sold_isin: start=1100, end=0 → delta = -1,100.00
+    assert "-1,100.00" in out
+
+
+def test_diff_main_carry_forward_endpoint_flagged_estimated(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-12-20", 11.0),   # no close on 2024-12-24 (start) — carry
+            (EUR_ISIN, "2024-12-31", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "~" in out
+    assert "estimated" in out and "carried-forward" in out
+
+
+def test_diff_main_same_close_both_endpoints_all_zero(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-12-20", 11.0),  # close applies to both endpoints via carry
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    # Both 2024-12-24 and 2024-12-31 carry forward from 2024-12-20 → same price
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    # Delta is 0; no error
+    assert "0.00" in out
+
+
+def test_diff_main_unpriceable_endpoint_shows_dash_and_excluded(tmp_path, capsys):
+    unpriced = "IE00UNP000001"
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", unpriced, 50.0, 20.0),  # held but never priced
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR", unpriced: "EUR"},
+        names={EUR_ISIN: "Euro Fund", unpriced: "Unpriced Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert unpriced in out
+    assert "—" in out                      # em dash for unavailable row
+    assert "excluded from TOTAL" in out
+    assert unpriced in out.split("excluded from TOTAL")[1]
+
+
+def test_diff_main_rate_columns_absent(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    for absent in ("XIRR", "TWR", "Vol", "MaxDD", "CAGR", "P&Lctr", "P&L%"):
+        assert absent not in out, f"rate column {absent!r} should not appear in diff output"
+
+
+def test_diff_main_composes_with_as_of(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-06-24", 11.0),
+            (EUR_ISIN, "2024-07-01", 13.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    # Window: 2024-06-24 → 2024-07-01
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-07-01", "--diff", "7"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Performance change 2024-06-24 → 2024-07-01 (EUR)" in out
+    # delta = 100*(13-11) = +200
+    assert "+200.00" in out
+
+
+def test_diff_main_invalid_n_rejected(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    for bad in ("0", "-1", "1.5", "foo"):
+        code = perf.main(_args(db, config, meta, "--diff", bad))
+        assert code != 0, f"expected non-zero exit for --diff {bad!r}"
+
+
+def test_diff_main_show_status_adds_column(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7", "--show-status")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Status" in out
+    assert "CALCULATED" in out
+
+
+def test_diff_main_explain_adds_provenance_note(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7", "--explain"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Status" in out       # --explain implies show-status
+    assert "reading-A" in out
+
+
+def test_diff_main_invariance_diff_equals_end_minus_start(tmp_path, capsys):
+    """--diff N TOTAL must equal (--as-of end TOTAL) minus (--as-of start TOTAL)."""
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", USD_ISIN, 10.0, 90.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-24", 11.0),
+            (EUR_ISIN, "2024-12-31", 12.0),
+            (USD_ISIN, "2024-12-24", 110.0),
+            (USD_ISIN, "2024-12-31", 120.0),
+        ],
+        fx=[
+            ("EUR", "USD", "2024-12-24", 1.1),
+            ("EUR", "USD", "2024-12-31", 1.2),
+        ],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+
+    def _total_market_value(out: str) -> float:
+        for line in out.splitlines():
+            if line.startswith("TOTAL"):
+                # columns: ISIN Name MktVal€ Cost€ P&L€ ...
+                # or diff:  ISIN Name ΔMktVal€ ΔCost€ ΔP&L€ ...
+                parts = line.split()
+                # find the first numeric token after TOTAL
+                for tok in parts[1:]:
+                    cleaned = tok.replace(",", "").replace("+", "").replace("~", "")
+                    try:
+                        return float(cleaned)
+                    except ValueError:
+                        continue
+        raise AssertionError(f"no TOTAL line found in:\n{out}")
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    end_mv = _total_market_value(capsys.readouterr().out)
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-24"))
+    start_mv = _total_market_value(capsys.readouterr().out)
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--diff", "7"))
+    diff_mv = _total_market_value(capsys.readouterr().out)
+
+    assert diff_mv == pytest.approx(end_mv - start_mv, abs=0.01)
