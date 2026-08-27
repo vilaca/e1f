@@ -31,7 +31,7 @@ walled off so no stable command depends on them:
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
 2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
 3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
-4. **`e1f validate`** — check config/DB sync, history depth, and data quality.
+4. **`e1f validate`** — check config/DB sync, history depth, and data quality (including interior single-day price gaps — a day a fund lacks that its same-exchange peers have — repairable with `e1f fetch <isin> --force`).
 5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
 7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; `--diff N` shows the signed change over the last N calendar days (ADR-0029); `--series N` lists the portfolio TOTAL for each trading day over the last N days, cumulative since inception, with market-value-weighted TER and estimated annual fee columns (ADR-0030, ADR-0031); `--metrics` prints a portfolio-level extended risk report — MaxDD duration, total underwater time, recovery factor, and best/worst single-period return (ADR-0033).
