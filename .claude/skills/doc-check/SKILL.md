@@ -1,11 +1,12 @@
 ---
 name: doc-check
 description: >
-  Audit e1f's README, CLAUDE.md, and ADRs for drift, redundancy, and convention breaks
-  against the actual implementation. Enforces "one home per fact": finds prose
-  that restates a code shape instead of linking it, claims whose referenced code
-  has changed or gone, stale Python version / flag / command references,
-  duplicated facts, dead internal links, and ADR convention violations.
+  Audit e1f's README, CLAUDE.md, ADRs, and the metric glossary for drift, redundancy,
+  and convention breaks against the actual implementation. Enforces "one home per fact":
+  finds prose that restates a code shape instead of linking it, claims whose referenced
+  code has changed or gone, stale Python version / flag / command references,
+  duplicated facts, dead internal links, ADR convention violations, and glossary
+  entries that drift from the metrics the stable commands actually emit.
   Use when the user says "check the docs", "are the docs stale", "doc-check",
   "audit ADRs", "docs consistency", or before a release. Reports findings; only
   edits when asked.
@@ -24,13 +25,14 @@ Do **not** edit unless the user asks; if they do, fix and re-run `scripts/check.
 
 ## 0. Scope
 
-Targets: `README.md`, `CLAUDE.md`, `ADR/*.md`, and `.claude/skills/*/SKILL.md`.
+Targets: `README.md`, `CLAUDE.md`, `ADR/*.md`, `.claude/skills/*/SKILL.md`, and
+`data/glossary.md` (the checked-in metric glossary read by `e1f glossary`; ADR-0034).
 
 **Not in scope:** `scripts/*` comments (e.g. coverage footnotes in `check.sh`) —
 those are maintainer notes, not user-facing docs. Flag them only if the user asks.
 
-Read **`README.md`**, **`CLAUDE.md`**, and **all `ADR/*.md`** first to calibrate
-the current state before checking anything.
+Read **`README.md`**, **`CLAUDE.md`**, **all `ADR/*.md`**, and **`data/glossary.md`**
+first to calibrate the current state before checking anything.
 
 ## 1. Prose that restates a code shape (should link instead)
 
@@ -83,15 +85,17 @@ and verify each still matches the code:
   `performance`: `--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`.
 - **Command list** — top-level (`cli.py` `COMMANDS`; frozen in
   `tests/test_contracts.py`): stable `autocomplete`, `config`, `fetch`,
-  `validate`, `transactions`, `portfolio`, `performance`, `correlation`,
-  `rebalance`, `scenario`; experimental `lookthrough`, `concentration`,
-  `overlap`, `backtest`, `seasonality`. Nested: `config`: `add`, `list`, `update`, `remove`,
+  `validate`, `transactions`, `portfolio`, `performance`, `benchmark`,
+  `deposits`, `correlation`, `rebalance`, `scenario`, `glossary`; experimental
+  `lookthrough`, `concentration`, `overlap`, `backtest`, `seasonality`. Nested:
+  `config`: `add`, `list`, `update`, `remove`,
   `trim` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
   `xtb` (in `transactions.py`); `scenario`: `save`, `list`, `show`, `delete`
   (in `scenario.py`); `overlap`: default report, `candidates`, `resolve`
   (in `src/e1f/experimental/overlap.py`). `autocomplete`, `validate`,
-  `portfolio`, `performance`, `correlation`, `rebalance`, `lookthrough`,
-  `concentration`, `backtest`, and `seasonality` have no nested subcommands.
+  `portfolio`, `performance`, `benchmark`, `deposits`, `correlation`,
+  `rebalance`, `glossary`, `lookthrough`, `concentration`, `backtest`, and
+  `seasonality` have no nested subcommands.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
@@ -139,7 +143,38 @@ Each `.claude/skills/*/SKILL.md` references files, scripts, and conventions.
 Verify every named file path, command, flag, and **scope target** still resolves
 and matches the actual codebase. A stale pointer in a skill breaks the next audit.
 
-## 7. Report
+## 7. Metric glossary (`data/glossary.md`)
+
+`data/glossary.md` is the single source for `e1f glossary` — parsed, never
+duplicated in code (ADR-0034). `## ` headings are groups, `### ` headings are
+terms; everything else (title, group intros, the `## Metric families` /
+`## What isn't measured` sections) is orientation prose the parser ignores.
+`src/e1f/glossary.py` parses it; `tests/test_glossary.py` pins the core terms and
+the structural contract. Check:
+
+- **`**Where:**` references resolve** — each term's `**Where:**` line names the
+  command(s) and flag(s) that emit the metric. Verify each command is in `cli.py`
+  `COMMANDS` and each flag (`--metrics`, `--series`, `--contrib`, `--diff`,
+  `--as-of`, …) exists in that command's argparse. A term pointing at a flag that
+  was renamed or removed is stale.
+- **Scope discipline (ADR-0034)** — the glossary is scoped to *stable-command*
+  metrics: `performance`, `portfolio`, `deposits`, `benchmark`, `correlation`.
+  Flag any `**Where:**` line naming an experimental command (`concentration`,
+  `overlap`, `backtest`, `seasonality`, `lookthrough`) or a rebalance plan column
+  — those are out of scope and belong in an ADR/README note, not here.
+- **Coverage drift** — a metric column newly emitted by a stable command's output
+  with no `### ` term, or a `### ` term for a metric the code no longer prints, is
+  drift. Spot-check the table/`--metrics`/`--series`/`--contrib` headers in
+  `performance.py`, `portfolio.py`, `deposits.py`, `benchmark.py`, `correlation.py`
+  against the term list.
+- **Structural contract** — every term has `**Useful for:**` and `**Read with:**`
+  (pinned by `tests/test_glossary.py`; flag here only for completeness). Terms in
+  `**Read with:**` should name real metrics elsewhere in the file.
+- **No second source** — README / CLAUDE.md must not re-state a metric's
+  definition; they describe *that* the glossary exists and link to it, per
+  "one home per fact".
+
+## 8. Report
 
 Group by the sections above. Lead with stale claims and dead links (correctness),
 then restated code shapes (drift risk), then redundancy and convention. End with a
@@ -147,7 +182,7 @@ one-line count: `N findings: X stale, Y drift, Z dead links, W convention`.
 If asked to fix, prefer "replace restated shape with a link to the source" over
 rewording, and re-run `scripts/check.sh` if any source files changed.
 
-## 8. Regression corpus (run when the prompt or model changes)
+## 9. Regression corpus (run when the prompt or model changes)
 
 `.claude/skills/doc-check/corpus/cases.yaml` holds cases that pin expected
 verdicts. Run before committing a new version of this skill or switching models.

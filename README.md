@@ -22,6 +22,30 @@ source <(e1f autocomplete)
 
 The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override it.
 
+## Which command answers my question?
+
+| Your question | Run | Read in the output |
+|---|---|---|
+| What do I hold, and at what weight? | `e1f portfolio` (add `--show-cost-basis` for EUR value) | **Weight** (share of the book); with the flag, **Value€** (EUR market value) |
+| How did *my* investing go — my cash, my timing? | `e1f performance` | **XIRR** — your annualized return, size- and timing-weighted (a late deposit that's flat drags it) |
+| How did the *funds* do, timing stripped out? | `e1f performance` | **TWR** (cumulative) and **CAGR** (that per year) — the holdings' return, comparable to a factsheet |
+| Am I up or down, in euros? | `e1f performance` | **P&L€** (euros vs what you paid), **P&L%** (that over cost) |
+| Which holdings actually drove the return? | `e1f performance --contrib` | **Ctr%** — each holding's share of the book's TWR (sums to TOTAL), beside its **TWR** and value **Weight**; for the euro share **P&Lctr**, see the plain `e1f performance` table |
+| How rough was the ride — worst drop, time underwater? | `e1f performance --metrics` | **MaxDD** (deepest fall), **SinceHi** (days off the current peak), **RecFac** (TWR ÷ that fall — >1 means it paid off) |
+| What changed over the last N days? | `e1f performance --diff N` | **ΔMktVal€ / ΔP&L€** — a **ΔCost€** spike is cash *in*, not a gain |
+| How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day (levels, not deltas) |
+| How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
+| Did I beat the market? | `e1f benchmark` | **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
+| Are my funds redundant — do they move alike? | `e1f correlation` | **ρ** (near 1 = a second helping of the same bet), the clusters, and **n** |
+| What should I buy to hit target weights? | `e1f rebalance --target ISIN:PCT …` | **Buy€** per fund and the minimum cash `C_min` (a `--target` or `--scenario` is required) |
+| What does a metric mean? | `e1f glossary <term>` | the entry itself |
+
+Most bold names are glossary terms — `e1f glossary Out%` (or `RelStr`, `RecFac`, …)
+prints the full mechanics, when to trust it, and what *not* to conclude (the
+rebalance plan's `Buy€` / `C_min` are the exception — see `e1f rebalance --help`).
+For *which metric* answers a question rather than which command, see the
+metric-family table in `data/glossary.md`.
+
 ## Workflow
 
 The tool exposes fifteen commands around a shared config/DB. Ten are stable; the

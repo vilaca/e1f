@@ -32,17 +32,27 @@ from the terminal.
 
 2. **The file is the single source — the command only parses and renders it.** No
    metric definition is duplicated in Python. `## ` headings are groups, `### `
-   headings are terms, and each term's body is the Markdown until the next heading;
-   text before the first term (title + intro) is ignored. This keeps the file
-   readable on its own *and* machine-queryable, with no second copy to drift.
+   headings are terms, and each term's body is the Markdown until the next heading.
+   Text before the first group (title + intro) is ignored by the CLI (still the
+   read-through frame in the file). This keeps the file readable on its own *and*
+   machine-queryable, with no second copy to drift.
 
-3. **Lookup is a case-insensitive substring match on the term name, with a
+3. **Lookup is a case-insensitive name match anchored at a word start, with a
    group/body fallback.** `e1f glossary P&L` fans out to `P&L€`, `P&L%`, `P&Lctr`
-   because "p&l" is a substring of each; a name match short-circuits (so `TWR`
-   returns only the TWR entry, not every body that mentions TWR). When nothing
-   matches a name, group and body text are searched so a topical query
-   (`e1f glossary drawdown`, `risk`) still finds something. No arguments lists every
-   term, grouped.
+   because "p&l" begins a token in each; a name match short-circuits (so `TWR`
+   returns only the TWR entry, not every body that mentions TWR). Anchoring at a
+   left word boundary is what keeps `TER` on `WTER (weighted TER)` without also
+   matching the buried `ter` in `Underwater`. When nothing matches a name, group
+   and body text are searched so a topical query (`e1f glossary drawdown`, `risk`)
+   still finds something. A **single-character** query matches a name only as a
+   whole token (`n` → `n (observations)`, not `drawdown`) and does not fall
+   through to body search — a letter is not a topical query. Non-alphanumeric
+   single chars (`€`, `%`) use plain substring instead, since they never appear
+   token-isolated in names. A small alias table maps ASCII stand-ins (`e` → `€`,
+   `pct` → `%`, `r2` → `R²`) for chars that are hard to type or render in a
+   terminal. Screen aliases (`MaxDD`, `G/L`, `1 Month`, `Vol`, `RecFac`, …) live
+   in the `###` heading so name-match can see them. No arguments lists every term,
+   grouped.
 
 4. **Named `glossary`, not `explain` or `metrics`.** `--explain` already means
    provenance (ADR-0014) on `performance`/`portfolio`/`correlation`, so reusing

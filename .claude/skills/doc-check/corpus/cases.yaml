@@ -63,4 +63,23 @@ cases:
     note: >
       scripts/check.sh has a maintainer comment "Current coverage is ~94%" that
       may lag pytest output by a point or two. doc-check must NOT flag script
-      header comments — scope is README.md, CLAUDE.md, ADR/*.md, and skills only.
+      header comments — scope is README.md, CLAUDE.md, ADR/*.md, skills, and
+      data/glossary.md only.
+
+  - name: glossary_term_points_at_experimental_command
+    verdict: VIOLATED
+    section: "7 (metric glossary)"
+    finding: >
+      A data/glossary.md term's **Where:** line names an experimental command
+      (e.g. backtest or seasonality). ADR-0034 scopes the glossary to
+      stable-command metrics only (performance, portfolio, deposits, benchmark,
+      correlation); an experimental source is out of scope and must be flagged.
+
+  - name: glossary_family_table_not_a_missing_term
+    verdict: HOLDS
+    section: "7 (metric glossary)"
+    note: >
+      The "## Metric families" and "## What isn't measured" sections and the
+      per-group intro prose are orientation text the parser ignores (they have no
+      ### term headings). doc-check must NOT flag them as coverage drift or as
+      undocumented terms — only ### headings are terms.
