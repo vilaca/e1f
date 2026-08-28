@@ -13,6 +13,7 @@ DEFAULT_CONFIG = str(_ROOT / "data" / "etf_universe.yaml")
 DEFAULT_DB = str(_ROOT / "data" / "e1f.db")
 DEFAULT_CURRENCY_META = str(_ROOT / "data" / "currency_metadata.yaml")  # pinned ftgo resolution
 DEFAULT_SCENARIOS = str(_ROOT / "data" / "scenarios.yaml")  # named ISIN:pct baskets (ADR-0017)
+DEFAULT_GLOSSARY = str(_ROOT / "data" / "glossary.md")  # metric glossary read by `glossary`
 DEFAULT_START_DATE = "2000-01-01"  # earlier than any ETF inception; fetch returns from inception
 
 # Portfolio is valued in a single base currency (ADR-0010). GBX/GBp (pence) is

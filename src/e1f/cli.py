@@ -21,6 +21,7 @@ from e1f import (
     correlation,
     deposits,
     fetch,
+    glossary,
     performance,
     portfolio,
     rebalance,
@@ -51,6 +52,7 @@ STABLE_PARSER_FACTORIES = {
     "correlation": correlation._build_parser,
     "rebalance": rebalance._build_parser,
     "scenario": scenario._build_parser,
+    "glossary": glossary._build_parser,
 }
 EXPERIMENTAL_PARSER_FACTORIES = {
     "concentration": concentration._build_parser,
@@ -78,6 +80,7 @@ STABLE_COMMANDS: dict[str, Command] = {
     "correlation": correlation.main,
     "rebalance": rebalance.main,
     "scenario": scenario.main,
+    "glossary": glossary.main,
 }
 EXPERIMENTAL_COMMANDS: dict[str, Command] = {
     "concentration": concentration.main,
@@ -108,6 +111,7 @@ Commands:
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
   scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)
+  glossary      Look up what a metric means and what it's useful for
 
 Experimental (ADR-0024 — isolated tier; may change or give wrong results):
   lookthrough   Refresh cached yfinance look-through snapshots for held funds
