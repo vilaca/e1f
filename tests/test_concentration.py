@@ -82,6 +82,7 @@ def test_cumulative_share_known_and_unknown():
 def test_dimension_issue_flags_unsound_weightings():
     assert conc.dimension_issue([("A", 0.6), ("B", 0.4)]) is None            # sound
     assert conc.dimension_issue([]) == "no weights"
+    assert conc.dimension_issue([("X", float("nan"))]) == "contains non-finite weights"
     assert conc.dimension_issue([("A", -1e-12), ("B", 1.0)]) == "contains negative weights"
     assert conc.dimension_issue([("A", 1.145), ("B", -0.145)]) == "contains negative weights"
     assert conc.dimension_issue([("A", 1.2), ("B", 0.0)]) == "a weight exceeds 100%"

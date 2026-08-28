@@ -6,6 +6,7 @@ freezes the SQLite schema as a data contract — column/type changes without a
 recorded migration break this test.
 """
 
+import ast
 import re
 import sqlite3
 import tomllib
@@ -20,6 +21,69 @@ from e1f.fetch import DataExtractor
 from e1f.transactions import TradeRepublicImporter
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _open_mode(call: ast.Call) -> str | None:
+    positional_index = 1 if isinstance(call.func, ast.Name) else 0
+    if len(call.args) > positional_index:
+        value = call.args[positional_index]
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+        return "?"
+    for keyword in call.keywords:
+        if keyword.arg == "mode":
+            value = keyword.value
+            return (
+                value.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str)
+                else "?"
+            )
+    return None
+
+
+def test_production_file_writes_use_atomic_persistence_boundary() -> None:
+    """Crash-sensitive file writes belong exclusively to common.persistence."""
+    allowed = Path("src/e1f/common/persistence.py")
+    violations: list[str] = []
+    for path in (ROOT / "src/e1f").rglob("*.py"):
+        relative = path.relative_to(ROOT)
+        if relative == allowed:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            api: str | None = None
+            if isinstance(function, ast.Attribute):
+                if function.attr in {"write_text", "write_bytes"}:
+                    api = function.attr
+                elif (
+                    isinstance(function.value, ast.Name)
+                    and function.value.id == "yaml"
+                    and function.attr in {"dump", "safe_dump"}
+                ):
+                    api = f"yaml.{function.attr}"
+                elif (
+                    isinstance(function.value, ast.Name)
+                    and function.value.id in {"os", "tempfile"}
+                    and function.attr in {"fdopen", "replace", "mkstemp", "NamedTemporaryFile"}
+                ):
+                    api = f"{function.value.id}.{function.attr}"
+                elif function.attr == "open":
+                    mode = _open_mode(node)
+                    if mode == "?" or (mode and any(flag in mode for flag in "wax+")):
+                        api = f"open(mode={mode})"
+            elif isinstance(function, ast.Name) and function.id == "open":
+                mode = _open_mode(node)
+                if mode == "?" or (mode and any(flag in mode for flag in "wax+")):
+                    api = f"open(mode={mode})"
+            if api is not None:
+                violations.append(f"{relative}:{node.lineno} uses {api}")
+
+    assert violations == [], (
+        "production file writes must use e1f.common.persistence.atomic_write_yaml:\n"
+        + "\n".join(violations)
+    )
 
 
 def test_cli_commands_surface():

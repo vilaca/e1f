@@ -349,6 +349,29 @@ def test_report_discloses_lookthrough_coverage_and_missing_snapshot(tmp_path, ca
     assert "valued funds with no look-through snapshot" in out and F2 in out
 
 
+def test_observation_load_partitions_every_requested_fund(tmp_path):
+    db, _meta = _seed(
+        tmp_path,
+        snapshots={F1: [_security("Apple Inc.", 0.05, 1)]},
+    )
+    loaded = overlap._observations_for([F1, F2], db)
+    assert loaded.requested == frozenset({F1, F2})
+    assert loaded.available == frozenset({F1})
+    assert loaded.missing == frozenset({F2})
+    assert loaded.coverage == pytest.approx(0.5)
+    assert {observation.fund_isin for observation in loaded.observations} == {F1}
+
+
+def test_observation_load_rejects_an_incomplete_partition():
+    with pytest.raises(ValueError, match="must partition requested funds"):
+        overlap.LookthroughObservationLoad(
+            observations=[],
+            requested=frozenset({F1, F2}),
+            available=frozenset({F1}),
+            missing=frozenset(),
+        )
+
+
 def test_bad_as_of_is_exit_1(tmp_path, capsys):
     db, meta = _seed(tmp_path)
     assert overlap.main(["--db", db, "--currency-meta", meta, "--as-of", "nope"]) == 1

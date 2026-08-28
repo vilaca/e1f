@@ -98,11 +98,12 @@ All recorded in `ADR/`. The most load-bearing:
 
 ## Skills
 
-- `/doc-check` — audit README, CLAUDE.md, and ADRs for drift, stale claims, and dead links
+- `/doc-check` — audit user/agent docs, ADRs, and the metric glossary for drift, stale claims, dead links, and convention breaks
 
 ## Conventions
 
 - One home per fact: the *why* lives in an ADR, code shapes live in code, README describes behaviour without duplicating argparse definitions.
+- Financial timing/fill conventions are governed by their ADR. Any change must update or supersede that ADR and add or update a pinned-date regression test with hand-computed expected fills, terminal wealth, or equivalent numerics; property tests complement but do not replace date pins.
 - Before calling a change done: `./scripts/check.sh` must be green.
 - Coverage floor is 90%; ratchet up, never down without a recorded reason.
 - New modules must satisfy the layer contract in `ADR-0003`; experimental modules live under `e1f.experimental` behind the one-way boundary in `ADR-0024` (no stable module may import them).

@@ -77,9 +77,6 @@ exits non-zero.
 The first intended subject is the same accumulating all-world series the
 timing work already uses (`IE00B3YLTY66`), chosen explicitly by the user.
 
-README, CLAUDE.md layout, and the CLI-surface contract test are updated
-**when the code lands**, not by this ADR existing.
-
 ### 2. Four questions, reported as four layers — never collapsed
 
 Every run answers the first two. The third and fourth run only when the
@@ -506,6 +503,8 @@ prints and the statistical / OOS blocks become UNAVAILABLE with a reason.
   - `--month` without `--rule` exits non-zero
   - `--rule avoid-month --month 9`: Control A ≡ constant-DCA on the same
     fills; invariance `N·C == equity_cost + leftover_cash` at `--cash-rate 0`
+  - `sit-out-month`: literal January/February/March fills pin sale at the
+    selected month's fill and reinvestment at the next fill
   - `--rule historical-weakest` with a synthetic January premium in
     training only: selected month is January; test evaluation does not
     reread training; test-period January returns do not change the pick
@@ -521,8 +520,6 @@ prints and the statistical / OOS blocks become UNAVAILABLE with a reason.
     the twelve-row table and the four-line footer; `--explain` names seed,
     *P*, price-mode, and partial-month handling
   Coverage floor 90%.
-- README behaviour blurb, CLAUDE.md layout line, and ADR-0024's "four
-  experimental commands" wording update **when the code lands**.
 
 ## Deferred (not in this ADR)
 

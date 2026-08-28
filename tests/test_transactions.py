@@ -402,6 +402,32 @@ def test_load_xtb_cash_operations_sample():
     assert len(df) == 3
 
 
+def test_load_xtb_cash_operations_keeps_ids_as_opaque_strings(tmp_path):
+    path = tmp_path / "xtb_ids.xlsx"
+    ids = [9007199254740990, None, 9007199254740991, "9007199254740993"]
+    pd.DataFrame(
+        {
+            "Type": ["BUY"] * len(ids),
+            "Instrument": ["ETF"] * len(ids),
+            "Ticker": ["ETF.DE"] * len(ids),
+            "Category": ["STOCK PURCHASE"] * len(ids),
+            "Time": ["2026-01-01"] * len(ids),
+            "Amount": [-100.0] * len(ids),
+            "ID": ids,
+            "Comment": ["OPEN BUY 1/1 @ 100"] * len(ids),
+        }
+    ).to_excel(path, sheet_name="Cash Operations", index=False)
+
+    loaded = load_xtb_cash_operations(path)
+    assert loaded["id"].tolist() == [
+        "9007199254740990",
+        "",
+        "9007199254740991",
+        "9007199254740993",
+    ]
+    assert all(isinstance(value, str) for value in loaded["id"])
+
+
 def test_is_xtb_etf_trade_row_sample():
     df = load_xtb_cash_operations(SAMPLE_XTB_XLSX)
     flags = [is_xtb_etf_trade_row(row) for _, row in df.iterrows()]
