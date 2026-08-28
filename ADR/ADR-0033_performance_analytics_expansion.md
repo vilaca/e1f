@@ -50,12 +50,33 @@ data-backed today, and defer the rest **on the record** rather than approximatin
   new `performance --metrics` view, which composes with `--series N` to tabulate
   the same figures one row per trading day (cumulative since inception, the same
   contract as the plain `--series`; the trailing-window reading is the deferred
-  rolling family below, not this). Ships first. **Later addition (same scope):**
-  Days Since High — calendar days since the *current* running peak (0 = the last
-  day is itself a new high), distinct from MaxDD Duration (which tracks the
-  *deepest* episode); the two coincide only while the deepest drawdown is also the
-  open one. Same own-return-series basis, no new data; surfaced in `--metrics` and
-  as the `SinceHi` column under `--series`.
+  rolling family below, not this). Ships first.
+
+  **Later additions (same clean scope, no new data — landed this session):**
+  - Days Since High — calendar days since the *current* running peak (0 = the last
+    day is itself a new high), distinct from MaxDD Duration (which tracks the
+    *deepest* episode); the two coincide only while the deepest drawdown is also the
+    open one. Surfaced in `--metrics` and as the `SinceHi` column under `--series`.
+  - Best/Worst Month — calendar-month buckets of the daily time-weighted return
+    series, chain-linked (partial first/last months included), labelled `YYYY-MM`.
+    In the `--metrics` "Extremes" block alongside Best/Worst Day.
+  - Trailing 1M / 3M / 6M returns — time-weighted return over each trailing
+    calendar-month window ending at the latest valued day, read off the wealth
+    index; a window whose start predates inception shows `n/a` (so a ~2-month book
+    reports 1M and leaves 3M/6M blank until it has the history). This lands the
+    **short end** of the trailing family; **1Y/2Y stay deferred** as young-book
+    (they would only emit `n/a` today — see the window-too-short note below).
+  - Per-holding **return contribution** (`performance --contrib`) — each holding's
+    Cariño-linked (ADR reference: Cariño 1999) contribution to the book's total
+    time-weighted return. Each day's portfolio return is decomposed into
+    `w_{i,prev}·r_{i,t}` (which sums to the day's portfolio return by construction);
+    the daily arithmetic contributions are Cariño log-linked so the per-holding
+    totals sum **exactly** to the multi-period portfolio TWR (reconciles to the
+    `performance` TOTAL, the reconcile-to-the-cent bar). Cariño is a convention, but
+    **the** standard additive-linking one — chosen as a disclosed default (the
+    output names it), not a silent pick. The primitive `contribution_to_return`
+    graduates into `common/returns.py`. This fills the return-contribution-**by-
+    holding** gap; contribution **by sector/region/factor** stays data-blocked below.
 
 - **Phase B — benchmark comparison (needs the MSCI World fund):** Beta, R²,
   Tracking Error, Information Ratio, Relative Strength, against one or more
@@ -152,14 +173,13 @@ what's missing is a chosen definition, not data or a rate):**
 
 **Window too short — premature regardless of code (young-book gate, revisit as the
 book ages; no ADR needed, just enough history):**
-- Trailing-period returns **1M / 3M / 6M / 1Y / 2Y** — a table of point-to-point
-  return over each trailing calendar window. The 1M/3M/6M windows are computable
-  today; **1Y/2Y are meaningless on a book only a couple of months old** and would
-  render `n/a` (a window auto-skips when it predates inception). The metric itself
-  is unbuilt but unblocked — the reason it isn't shipped is that half the columns
-  would be empty; it earns its place once there is history to fill them. Distinct
-  from `--diff N` (signed change over N days) and `--series N`
-  (cumulative-since-inception per day), which already exist.
+- Trailing-period returns **1Y / 2Y** — the long end of the trailing table. The
+  short end (**1M / 3M / 6M**) **landed** in Phase A (see the later-additions list
+  above); the long windows stay out because they are **meaningless on a book only a
+  couple of months old** and would only render `n/a` (a window auto-skips when its
+  start predates inception). They earn their place once there is history to fill
+  them — no code decision, just enough time. Distinct from `--diff N` (signed change
+  over N days) and `--series N` (cumulative-since-inception per day).
 
 **Blocked on data e1f does not hold (the genuinely hard one — not a convention, a
 rate, or a window, but a missing dataset):**

@@ -49,6 +49,7 @@ from .rebalance import (
 from .returns import (
     aggregate_value_series,
     contribution_on,
+    contribution_to_return,
     eur_return_series,
     portfolio_return_series,
     wealth_and_returns,
@@ -100,6 +101,7 @@ __all__ = [
     "close_asof",
     "compute_rebalance",
     "contribution_on",
+    "contribution_to_return",
     "convert_to_eur",
     "delete_scenario",
     "distribution_from_name",
