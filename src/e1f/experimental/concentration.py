@@ -24,7 +24,6 @@ Usage:
 """
 
 import argparse
-import math
 import re
 import sys
 from dataclasses import dataclass
@@ -44,8 +43,10 @@ from e1f.experimental.common import (
     DIMENSION_SECTOR,
     DIMENSION_SECURITY,
     LookthroughSnapshot,
+    NavWeightIssue,
     _snapshot_provenance,
     latest_lookthrough_snapshot,
+    nav_weight_issue,
     overlap_candidates,
 )
 
@@ -60,18 +61,32 @@ _ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
 # >100% components, or a sum far from 1.0 (seen on swap / synthetic funds) — the
 # premise fails, so the figure is flagged suspect and downgraded rather than
 # stamped CALCULATED over data its provenance does not support.
-_WEIGHT_EPS = 0.005       # 0.5% upper-bound slack; the zero lower bound is exact
 _WEIGHT_SUM_TOL = 0.02    # 2% slack on the 100% total
+
+
+def _component_issue(weights: list[float]) -> str | None:
+    messages = {
+        NavWeightIssue.NON_FINITE: "contains non-finite weights",
+        NavWeightIssue.NEGATIVE: "contains negative weights",
+        NavWeightIssue.ABOVE_NAV: "a weight exceeds 100%",
+    }
+    issues = {nav_weight_issue(weight) for weight in weights}
+    for issue in (
+        NavWeightIssue.NON_FINITE,
+        NavWeightIssue.NEGATIVE,
+        NavWeightIssue.ABOVE_NAV,
+    ):
+        if issue in issues:
+            return messages[issue]
+    return None
 
 
 def dimension_issue(entries: list[tuple[str, float]]) -> str | None:
     """Why a complete weighting is untrustworthy, or None when it is sound."""
     if not entries:
         return "no weights"
-    if any(w < 0.0 for _, w in entries):
-        return "contains negative weights"
-    if any(w > 1.0 + _WEIGHT_EPS for _, w in entries):
-        return "a weight exceeds 100%"
+    if issue := _component_issue([weight for _, weight in entries]):
+        return issue
     total = sum(w for _, w in entries)
     if abs(total - 1.0) > _WEIGHT_SUM_TOL:
         return f"weights sum to {total * 100:.0f}%"
@@ -80,12 +95,8 @@ def dimension_issue(entries: list[tuple[str, float]]) -> str | None:
 
 def security_issue(weights: list[float]) -> str | None:
     """Why partial named-security weights cannot support concentration bounds."""
-    if any(not math.isfinite(weight) for weight in weights):
-        return "contains non-finite weights"
-    if any(weight < 0.0 for weight in weights):
-        return "contains negative weights"
-    if any(weight > 1.0 + _WEIGHT_EPS for weight in weights):
-        return "a weight exceeds 100%"
+    if issue := _component_issue(weights):
+        return issue
     total = sum(weights)
     if total > 1.0 + _WEIGHT_SUM_TOL:
         return f"observed weights sum to {total * 100:.0f}%"

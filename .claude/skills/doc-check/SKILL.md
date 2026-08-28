@@ -124,6 +124,29 @@ Read all existing `ADR/*.md` files to learn the template, then check each one:
 - Timing ("when will this happen") is not restated in ADRs — flag any milestone
   dates copied in.
 
+### Financial timing/fill conventions
+
+Milestone timing above is distinct from ADR-governed financial timing. For the
+registered conventions below, compare all three sources: the ADR's Decision text,
+the named implementation, and the pinned regression test. Flag a missing pin or
+any disagreement about which date/fill performs an action. Do not require README
+or CLAUDE.md to repeat fill mechanics; high-level prose that links the ADR is
+correct under "one home per fact."
+
+- `monthly_fill_indices`: ADR-0019 / ADR-0026;
+  `src/e1f/experimental/common.py::monthly_fill_indices`;
+  `tests/test_backtest.py::test_monthly_fill_indices_one_per_month_on_or_after`.
+- `sit-out-month`: ADR-0026 / ADR-0028;
+  `src/e1f/experimental/seasonality.py::simulate_seasonal`;
+  `tests/test_seasonality.py::test_sit_out_sells_at_selected_fill_and_reenters_at_next_fill`.
+- `avoid-month` redeployment: ADR-0026 / ADR-0028;
+  `src/e1f/experimental/seasonality.py::simulate_seasonal`;
+  `tests/test_seasonality.py::test_shift_september_matches_avoid_august`.
+
+The pinned test must use literal dates and hand-computed expected fill indices,
+terminal wealth, or equivalent numeric outcomes. A property/invariance test may
+supplement that pin but cannot replace it when the convention selects a date.
+
 ## 4. Redundancy / second source of truth
 
 Flag the same fact asserted in two places:

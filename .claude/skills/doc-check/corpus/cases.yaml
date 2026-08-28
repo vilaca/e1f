@@ -47,6 +47,33 @@ cases:
       but the module also ingests XTB Excel (ADR-0006). The agent-facing module
       blurb is stale.
 
+  - name: sit_out_adr_vs_pinned_test_drift
+    verdict: VIOLATED
+    section: "3 (financial timing/fill conventions)"
+    finding: >
+      ADR-0026 says sit-out-month sells at the last fill before the selected
+      month, but simulate_seasonal and
+      test_sit_out_sells_at_selected_fill_and_reenters_at_next_fill use the
+      selected month's own fill and re-enter at the next fill. The governing
+      ADR and pinned-date behavior disagree.
+
+  - name: sit_out_convention_aligned
+    verdict: HOLDS
+    section: "3 (financial timing/fill conventions)"
+    note: >
+      ADR-0026 and ADR-0028 say sit-out-month sells at the selected month's fill
+      and re-enters at the next fill. The pinned test uses literal dates and a
+      hand-computed terminal value that matches. This aligned state must not be
+      flagged.
+
+  - name: readme_seasonality_summary_without_fill_details
+    verdict: HOLDS
+    section: "3 (financial timing/fill conventions)"
+    note: >
+      README describes seasonality at calendar-month level and links its ADRs
+      without copying monthly_fill_indices or sit-out mechanics. Per one home
+      per fact, the summary must not be flagged for omitting fill details.
+
   - name: price_sources_summary_ok
     verdict: HOLDS
     section: "4 (redundancy)"

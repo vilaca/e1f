@@ -21,7 +21,6 @@ Subcommands:
 """
 
 import argparse
-import math
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -38,8 +37,10 @@ from e1f.common import (
 from e1f.experimental.common import (
     DIMENSION_SECURITY,
     LookthroughSnapshot,
+    NavWeightIssue,
     latest_lookthrough_snapshot,
     load_security_aliases,
+    nav_weight_issue,
     normalize_security_name,
     overlap_candidates,
     upsert_security_alias,
@@ -50,7 +51,6 @@ from e1f.experimental.common import (
 # slack; the zero lower bound is exact. Never clamp, net, infer the cause, or
 # classify a negative as a short — exclude and disclose it so one bad
 # observation cannot contaminate the others.
-_WEIGHT_EPS = 0.005
 
 
 OVERLAP_FLOOR_CONTRACT = MetricContract(
@@ -87,6 +87,27 @@ class Observation:
     snapshot_as_of: str
 
 
+@dataclass(frozen=True)
+class LookthroughObservationLoad:
+    """Snapshot assembly with an exhaustive partition of every requested fund."""
+
+    observations: list[Observation]
+    requested: frozenset[str]
+    available: frozenset[str]
+    missing: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if self.available & self.missing or self.available | self.missing != self.requested:
+            raise ValueError("available and missing snapshots must partition requested funds")
+        observation_funds = {observation.fund_isin for observation in self.observations}
+        if not observation_funds <= self.available:
+            raise ValueError("observations must belong to snapshot-backed funds")
+
+    @property
+    def coverage(self) -> float | None:
+        return None if not self.requested else len(self.available) / len(self.requested)
+
+
 def _snapshot_observations(
     fund_isin: str, snapshot: LookthroughSnapshot | None
 ) -> list[Observation]:
@@ -106,13 +127,13 @@ def _snapshot_observations(
 
 def _weight_issue(weight: float) -> str | None:
     """Why a weight may not enter the floor, or None when it is a valid long weight."""
-    if not math.isfinite(weight):
-        return "non-finite weight"
-    if weight < 0.0:
-        return "negative weight"
-    if weight > 1.0 + _WEIGHT_EPS:
-        return "weight exceeds 100% (not a NAV portfolio weight)"
-    return None
+    issue = nav_weight_issue(weight)
+    return {
+        NavWeightIssue.NON_FINITE: "non-finite weight",
+        NavWeightIssue.NEGATIVE: "negative weight",
+        NavWeightIssue.ABOVE_NAV: "weight exceeds 100% (not a NAV portfolio weight)",
+        None: None,
+    }[issue]
 
 
 # ---------------------------------------------------------------------------
@@ -278,16 +299,23 @@ def _valuation_view(
     return ValuationView(as_of=as_of, fund_values=fund_values, unvalued=unvalued)
 
 
-def _observations_for(isins: list[str], db_path: str) -> tuple[list[Observation], list[str]]:
+def _observations_for(isins: list[str], db_path: str) -> LookthroughObservationLoad:
     observations: list[Observation] = []
-    missing_snapshots: list[str] = []
+    available: set[str] = set()
+    missing: set[str] = set()
     for isin in isins:
         snapshot = latest_lookthrough_snapshot(db_path, isin)
         if snapshot is None:
-            missing_snapshots.append(isin)
+            missing.add(isin)
         else:
+            available.add(isin)
             observations.extend(_snapshot_observations(isin, snapshot))
-    return observations, missing_snapshots
+    return LookthroughObservationLoad(
+        observations=observations,
+        requested=frozenset(isins),
+        available=frozenset(available),
+        missing=frozenset(missing),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -310,16 +338,17 @@ def _coverage_line(view: ValuationView) -> str:
     return f"Valued portfolio: {_fmt_eur(view.valued_total)} · valuation coverage {pct}"
 
 
-def _lookthrough_coverage_lines(view: ValuationView, missing_snapshots: list[str]) -> list[str]:
-    valued_count = len(view.fund_values)
-    available = valued_count - len(missing_snapshots)
-    coverage = None if valued_count == 0 else available / valued_count
-    pct = "n/a" if coverage is None else f"{coverage * 100.0:.1f}%"
-    lines = [f"Look-through coverage: {pct} of valued funds ({available}/{valued_count} snapshots)"]
-    if missing_snapshots:
+def _lookthrough_coverage_lines(load: LookthroughObservationLoad) -> list[str]:
+    valued_count = len(load.requested)
+    pct = "n/a" if load.coverage is None else f"{load.coverage * 100.0:.1f}%"
+    lines = [
+        f"Look-through coverage: {pct} of valued funds "
+        f"({len(load.available)}/{valued_count} snapshots)"
+    ]
+    if load.missing:
         lines.append(
             "⚠ valued funds with no look-through snapshot: "
-            + ", ".join(sorted(missing_snapshots))
+            + ", ".join(sorted(load.missing))
         )
     return lines
 
@@ -433,14 +462,15 @@ def _cmd_report(
         return 0
 
     view = _valuation_view(held, as_of, db_path, currency_meta_path)
-    observations, missing_snapshots = _observations_for(sorted(view.fund_values), db_path)
+    loaded = _observations_for(sorted(view.fund_values), db_path)
+    observations = loaded.observations
     aliases = load_security_aliases(db_path)
     floors = compute_floors(observations, view.fund_values, aliases)
     worklist = unresolved_worklist(observations, aliases)
 
     print(f"\nCross-fund security overlap — ADR-0013 v1b (as of {as_of})")
     print(_coverage_line(view))
-    for line in _lookthrough_coverage_lines(view, missing_snapshots):
+    for line in _lookthrough_coverage_lines(loaded):
         print(line)
 
     if not view.fund_values:

@@ -9,6 +9,7 @@ consume shared ``e1f.common`` primitives (e.g. ``xirr``).
 """
 
 import bisect
+import math
 import random
 import re
 import sqlite3
@@ -34,6 +35,26 @@ from e1f.common import xirr
 DIMENSION_SECURITY = "security"
 DIMENSION_SECTOR = "sector"
 DIMENSION_ASSET_CLASS = "asset_class"
+NAV_WEIGHT_UPPER_TOLERANCE = 0.005
+
+
+class NavWeightIssue(StrEnum):
+    """Reason a scalar cannot be used as a long NAV portfolio weight."""
+
+    NON_FINITE = "non_finite"
+    NEGATIVE = "negative"
+    ABOVE_NAV = "above_nav"
+
+
+def nav_weight_issue(weight: float) -> NavWeightIssue | None:
+    """Validate the scalar boundary shared by concentration and overlap."""
+    if not math.isfinite(weight):
+        return NavWeightIssue.NON_FINITE
+    if weight < 0.0:
+        return NavWeightIssue.NEGATIVE
+    if weight > 1.0 + NAV_WEIGHT_UPPER_TOLERANCE:
+        return NavWeightIssue.ABOVE_NAV
+    return None
 
 # Source tier priority: higher wins when several snapshots exist for one fund
 # (ADR-0012 decision 5). ``provider`` is yfinance; the rest are v1b territory.

@@ -48,8 +48,8 @@ metric-family table in `data/glossary.md`.
 
 ## Workflow
 
-The tool exposes fifteen commands around a shared config/DB. Ten are stable; the
-last five are an isolated **experimental** tier (ADR-0024) — still rough, and
+The tool exposes stable commands around a shared config/DB. The least-settled
+commands form an isolated **experimental** tier (ADR-0024) — still rough, and
 walled off so no stable command depends on them:
 
 1. **`e1f autocomplete`** — print Bash or Zsh completion setup.

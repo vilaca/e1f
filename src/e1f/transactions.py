@@ -363,7 +363,18 @@ def load_xtb_cash_operations(path: Path) -> pd.DataFrame:
         if header_row is None:
             raise ValueError("could not find Cash Operations header row in XTB export")
 
-        df = pd.read_excel(path, sheet_name=sheet, header=header_row)
+        header = preview.iloc[header_row]
+        id_column = next(
+            (value for value in header if _parse_str(value).lower() == "id"),
+            None,
+        )
+        converters = {id_column: _parse_xtb_id} if id_column is not None else None
+        df = pd.read_excel(
+            path,
+            sheet_name=sheet,
+            header=header_row,
+            converters=converters,
+        )
     df.columns = [_parse_str(col).lower() for col in df.columns]
     required = {"type", "ticker", "category", "time", "amount", "id", "comment"}
     missing = required - set(df.columns)
@@ -371,6 +382,7 @@ def load_xtb_cash_operations(path: Path) -> pd.DataFrame:
         missing_list = ", ".join(sorted(missing))
         raise ValueError(f"missing required XTB Cash Operations columns: {missing_list}")
 
+    df["id"] = df["id"].map(_parse_str)
     df = df[df["type"].notna()]
     df = df[df["type"].astype(str).str.strip().str.lower() != "total"]
     return df.reset_index(drop=True)
