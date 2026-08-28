@@ -27,6 +27,7 @@ from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, XTB_EXCHANGE_SUFFIX, ConfigMa
 BROKER_TRADE_REPUBLIC = "trade_republic"
 BROKER_XTB = "xtb"
 _ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
+_MAX_SAFE_FLOAT_INTEGER = 2**53 - 1
 TR_ETF_TRADE_TYPES = frozenset({"BUY", "SELL", "SAVINGS_PLAN"})
 TR_ETF_ASSET_CLASSES = frozenset({"FUND"})
 
@@ -194,7 +195,7 @@ def _normalize_tr_type(value: object) -> str:
     return _parse_str(value).upper().replace(" ", "_")
 
 
-def _parse_float(value: object, field: str = "value", *, required: bool = False) -> float | None:
+def _parse_float(value: object, field: str, *, required: bool = False) -> float | None:
     """Finite numeric field; blank is allowed only when optional."""
     text = _parse_str(value)
     if not text:
@@ -222,14 +223,18 @@ def _parse_xtb_id(value: object) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
     if isinstance(value, float):
+        if (
+            not math.isfinite(value)
+            or not value.is_integer()
+            or abs(value) > _MAX_SAFE_FLOAT_INTEGER
+        ):
+            return ""
         return str(int(value))
     text = _parse_str(value)
     if not text:
         return ""
-    try:
-        return str(int(float(text)))
-    except ValueError:
-        return text
+    spreadsheet_integer = re.fullmatch(r"([0-9]+)\.0+", text)
+    return spreadsheet_integer.group(1) if spreadsheet_integer else text
 
 
 def is_etf_trade_row(row: pd.Series) -> bool:

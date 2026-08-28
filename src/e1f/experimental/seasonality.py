@@ -970,6 +970,7 @@ def simulate_seasonal(
                     shares += contribution / price
                     equity_cost += contribution
             elif kind == DeployKind.SIT_OUT:
+                # ADR-0026/0028: exit at this month's fill, re-enter at the next fill.
                 if month == selected_month:
                     cash += shares * price + contribution
                     shares = 0.0
