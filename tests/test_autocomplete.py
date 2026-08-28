@@ -35,6 +35,16 @@ def test_completes_nested_commands_and_options(capsys):
         config_candidates
     )
 
+    assert cli.main(["autocomplete", "--complete", "config", "remove", ""]) == 0
+    assert {"--db", "--currency-meta", "--force", "-f"} <= set(
+        capsys.readouterr().out.splitlines()
+    )
+
+    assert cli.main(["autocomplete", "--complete", "config", "trim", ""]) == 0
+    assert {"--db", "--currency-meta", "--force", "-f"} <= set(
+        capsys.readouterr().out.splitlines()
+    )
+
     assert cli.main(["autocomplete", "--complete", "portfolio", "--sort", ""]) == 0
     assert set(capsys.readouterr().out.splitlines()) == {
         "broker",

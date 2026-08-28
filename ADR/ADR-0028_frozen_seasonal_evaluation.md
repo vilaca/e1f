@@ -102,6 +102,10 @@ August → September is Test A, not a third search. Both shifts
 are always run. The command does not pick the richer one as
 the winner.
 
+If a sampled year contains the August fill but not the named later
+redeploy fill, the evaluation is refused. It must not silently turn
+that year's shift into an unreported skip-and-hold strategy.
+
 **Test C — full-portfolio sit-out (secondary)**
 
 Sit out August: sell at the August fill, hold cash through the

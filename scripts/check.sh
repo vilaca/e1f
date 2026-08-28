@@ -37,15 +37,15 @@ gate_lint()   { uv run ruff check; }
 gate_layers() { uv run lint-imports; }
 gate_shell()  {
     if ! command -v shellcheck &>/dev/null; then
-        echo "shellcheck not found — skipping (install with: brew install shellcheck)"
-        return 0
+        echo "shellcheck is required (install with: brew install shellcheck)"
+        return 127
     fi
     git ls-files '*.sh' | xargs shellcheck --severity=warning
 }
 gate_actions() {
     if ! command -v actionlint &>/dev/null; then
-        echo "actionlint not found — skipping (install with: brew install actionlint)"
-        return 0
+        echo "actionlint is required (install with: brew install actionlint)"
+        return 127
     fi
     actionlint
 }
@@ -54,8 +54,11 @@ gate_dead()   { uv run vulture src/e1f --min-confidence 80; }
 gate_package() { uv run python scripts/package_smoke.py; }
 gate_mutation() {
     uv run mutmut run --max-children 4 \
+        'e1f.common.fees.x_weighted_ter_cost*' \
         'e1f.common.rebalance.x_compute_rebalance*' \
         'e1f.common.scenarios.x__validate_scenario*' \
+        'e1f.experimental.seasonality.x__shift_schedule_refusal*' \
+        'e1f.glossary.x_find_terms*' \
         'e1f.transactions.x__parse_float*'
     uv run python scripts/mutation_score.py
 }

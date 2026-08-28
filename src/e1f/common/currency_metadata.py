@@ -26,7 +26,7 @@ class CurrencyMetadata:
     fx_pairs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: str = DEFAULT_CURRENCY_META) -> "CurrencyMetadata":
+    def load(cls, path: str = DEFAULT_CURRENCY_META) -> CurrencyMetadata:
         if not os.path.exists(path):
             return cls()
         with open(path) as stream:

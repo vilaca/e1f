@@ -19,6 +19,7 @@ import logging
 import sys
 import warnings
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,6 +43,17 @@ from e1f.experimental.common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LookthroughRefreshSummary:
+    """Exhaustive semantic outcome for one held-fund refresh."""
+
+    held_isins: tuple[str, ...]
+    created_isins: tuple[str, ...]
+    unchanged_isins: tuple[str, ...]
+    unavailable_isins: tuple[str, ...]
+    skipped_isins: tuple[str, ...]
 
 
 def _yf_rate_limited(e: Exception) -> bool:
@@ -127,7 +139,7 @@ def _fetch_lookthrough(tickers: list[str]) -> list[HoldingRow] | None:
     return None
 
 
-def refresh_lookthrough(db_path: str, config_path: str) -> int:
+def refresh_lookthrough(db_path: str, config_path: str) -> LookthroughRefreshSummary:
     """Refresh look-through snapshots for every held fund (best-effort).
 
     ``insert_lookthrough_snapshot`` creates the look-through schema on first
@@ -137,7 +149,7 @@ def refresh_lookthrough(db_path: str, config_path: str) -> int:
     if not held:
         print("No ETF holdings in database")
         print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
-        return 0
+        return LookthroughRefreshSummary((), (), (), (), ())
 
     universe = {
         isin: ETFDefinition.from_config(isin, data)
@@ -145,13 +157,24 @@ def refresh_lookthrough(db_path: str, config_path: str) -> int:
     }
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     retrieved_at = datetime.now(UTC).isoformat()
+    created: list[str] = []
+    unchanged: list[str] = []
+    unavailable: list[str] = []
+    skipped: list[str] = []
     for isin in held:
         etf = universe.get(isin)
-        if not etf or not etf.tickers:
+        if etf is None:
+            logger.warning("✗ %s — held fund is absent from the ETF config; skipped", isin)
+            skipped.append(isin)
+            continue
+        if not etf.tickers:
+            logger.warning("✗ %s %s — no configured ticker; skipped", isin, etf.name)
+            skipped.append(isin)
             continue
         rows = _fetch_lookthrough(etf.tickers)
         if not rows:
             logger.warning(f"✗ {isin} {etf.name} — no yfinance look-through")
+            unavailable.append(isin)
             continue
         snapshot_id = insert_lookthrough_snapshot(
             db_path,
@@ -165,11 +188,28 @@ def refresh_lookthrough(db_path: str, config_path: str) -> int:
         )
         if snapshot_id is None:
             logger.info(f"{isin} look-through — unchanged")
+            unchanged.append(isin)
         else:
             logger.info(
                 f"{isin} look-through — snapshot #{snapshot_id} ({len(rows)} rows)"
             )
-    return 0
+            created.append(isin)
+    summary = LookthroughRefreshSummary(
+        held_isins=tuple(held),
+        created_isins=tuple(created),
+        unchanged_isins=tuple(unchanged),
+        unavailable_isins=tuple(unavailable),
+        skipped_isins=tuple(skipped),
+    )
+    logger.info(
+        "Look-through refresh: held=%d; new=%d; unchanged=%d; unavailable=%d; skipped=%d",
+        len(summary.held_isins),
+        len(summary.created_isins),
+        len(summary.unchanged_isins),
+        len(summary.unavailable_isins),
+        len(summary.skipped_isins),
+    )
+    return summary
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -203,7 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
     args = _build_parser().parse_args(argv)
     try:
-        return refresh_lookthrough(args.db, args.config)
+        refresh_lookthrough(args.db, args.config)
+        return 0
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
         return 1

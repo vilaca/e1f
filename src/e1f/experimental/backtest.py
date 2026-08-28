@@ -21,6 +21,7 @@ import statistics
 import sys
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from e1f.common import (
@@ -93,6 +94,15 @@ BACKTEST_CONTRACT = MetricContract(
 
 class BacktestError(Exception):
     """A usage/data problem that stops a run with a message (never a stack trace)."""
+
+
+@dataclass(frozen=True)
+class BacktestSpan:
+    """Semantic decomposition of the effective test start."""
+
+    signal_warmup_closes: int
+    from_index: int
+    start_index: int
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +408,22 @@ def _needs_warmup(strategies: list[StrategyParams]) -> bool:
     )
 
 
+def _backtest_span(
+    dates: list[str],
+    strategies: list[StrategyParams],
+    signal: SignalSpec,
+    from_date: str | None,
+) -> BacktestSpan:
+    """Separate signal warm-up from an explicit ``--from`` constraint."""
+    warmup = _warmup_idx(len(dates), signal) if _needs_warmup(strategies) else 0
+    from_index = _from_idx(dates, from_date)
+    return BacktestSpan(
+        signal_warmup_closes=warmup,
+        from_index=from_index,
+        start_index=max(warmup, from_index),
+    )
+
+
 def _from_idx(dates: list[str], from_date: str | None) -> int:
     return 0 if from_date is None else bisect.bisect_left(dates, from_date)
 
@@ -475,16 +501,22 @@ def _window_crash_coverage(
 def _run_header(
     isin: str, name: str, dates: list[str], fills: list[int],
     contribution: float, signal: SignalSpec, cash_rate: float,
+    span: BacktestSpan,
 ) -> list[str]:
     first, last, eff = dates[0], dates[-1], dates[fills[0]]
     # Crash inclusion uses the effective TEST span (first contribution → valuation),
     # not the data span — so --from and the warm-up burn are honoured (ADR-0019 §8).
     tested, absent = _crash_split(eff, last)
+    warmup = (
+        f", warm-up burned {span.signal_warmup_closes} closes"
+        if span.signal_warmup_closes
+        else ""
+    )
     return [
         f"\nContribution-timing backtest — {name} ({isin}) · {BASE_CURRENCY}",
         f"Data:          {first} → {last}  ({_years(first, last):.1f}y, {len(dates)} closes)",
         f"Test:          {eff} → {last}  ({_years(eff, last):.1f}y, {len(fills)} monthly × "
-        f"€{contribution:,.0f}, warm-up burned {fills[0]} closes)",
+        f"€{contribution:,.0f}{warmup})",
         _horizons_line(_years(eff, last)),
         f"Crashes:       tested: {', '.join(tested) or '—'}  ·  "
         f"absent: {', '.join(absent) or '—'}",
@@ -699,11 +731,11 @@ def _explain_block(
 
 
 def _run_single(
-    isin: str, name: str, dates: list[str], closes: list[float], start_idx: int,
+    isin: str, name: str, dates: list[str], closes: list[float], span: BacktestSpan,
     strategies: list[StrategyParams], signal: SignalSpec, contribution: float, cash_rate: float,
     *, blind_seeds: int, show_status: bool, explain: bool,
 ) -> list[str]:
-    fills = monthly_fill_indices(dates, start_idx, len(dates) - 1)
+    fills = monthly_fill_indices(dates, span.start_index, len(dates) - 1)
     if len(fills) < BACKTEST_MIN_CONTRIBUTIONS:
         raise BacktestError(
             f"only {len(fills)} usable monthly contributions after warm-up "
@@ -714,7 +746,16 @@ def _run_single(
         for s in strategies
     ]
     dca_terminal = next(r.terminal_wealth for r in results if r.label == "constant-DCA")
-    out = _run_header(isin, name, dates, fills, contribution, signal, cash_rate)
+    out = _run_header(
+        isin,
+        name,
+        dates,
+        fills,
+        contribution,
+        signal,
+        cash_rate,
+        span,
+    )
     out += _table(results, dca_terminal, show_status)
     out += _reserve_diagnostics(results)
     out += _decomposition_block(strategies, results)
@@ -728,7 +769,7 @@ def _run_single(
 
 
 def _run_window(
-    isin: str, name: str, dates: list[str], closes: list[float], start_idx: int,
+    isin: str, name: str, dates: list[str], closes: list[float], span: BacktestSpan,
     window_months: int, strategies: list[StrategyParams], signal: SignalSpec,
     contribution: float, cash_rate: float,
 ) -> list[str]:
@@ -754,7 +795,7 @@ def _run_window(
     # One monthly-fill list; each window is a length-``window_months`` slice of it
     # (starting one month later each step). Slicing the shared list avoids the
     # anchor-recomputation that would skip any month whose 1st is not a trading day.
-    all_fills = monthly_fill_indices(dates, start_idx, end_idx)
+    all_fills = monthly_fill_indices(dates, span.start_index, end_idx)
     for k in range(0, len(all_fills) - window_months + 1):
         window_fills = all_fills[k : k + window_months]
         # each window's own horizon end = its last fill (not the whole series end).
@@ -791,7 +832,12 @@ def _run_window(
         f"Data:     {dates[0]} → {dates[-1]}  "
         f"({_years(dates[0], dates[-1]):.1f}y, {len(dates)} closes)",
         f"Windows:  {n_windows} × {window_months}-month, step 1 month "
-        f"(starts {starts[0]} → {starts[-1]})",
+        f"(starts {starts[0]} → {starts[-1]})"
+        + (
+            f", warm-up burned {span.signal_warmup_closes} closes"
+            if span.signal_warmup_closes
+            else ""
+        ),
         _window_horizon_line(len(all_fills)),
         *_window_crash_coverage(starts, ends, n_windows),
     ]
@@ -863,22 +909,23 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     # window; a run with no signal-consulting strategy (e.g. daily-dip only,
     # ADR-0021) needs none and starts at the series start. All strategies in one
     # run share this start, so the comparison stays controlled.
-    warm = _warmup_idx(len(dates), signal) if _needs_warmup(strategies) else 0
-    start_idx = max(warm, _from_idx(dates, args.from_date))
-    if start_idx > len(dates) - 1:
+    span = _backtest_span(dates, strategies, signal, args.from_date)
+    if span.start_index > len(dates) - 1:
         raise BacktestError(
-            f"warm-up ({warm} closes) / --from leaves no room in a {len(dates)}-close series"
+            f"warm-up ({span.signal_warmup_closes} closes) / --from leaves no room "
+            f"in a {len(dates)}-close series"
         )
 
     if args.window is not None:
         lines = _run_window(
-            args.isin, name, dates, closes, start_idx, args.window, strategies, signal,
+            args.isin, name, dates, closes, span, args.window, strategies, signal,
             args.contribution, args.cash_rate,
         )
     else:
         lines = _run_single(
-            args.isin, name, dates, closes, start_idx, strategies, signal,
-            args.contribution, args.cash_rate, blind_seeds=args.blind_seeds,
+            args.isin, name, dates, closes, span, strategies, signal,
+            args.contribution, args.cash_rate,
+            blind_seeds=args.blind_seeds,
             show_status=args.show_status or args.explain, explain=args.explain,
         )
     print("\n".join(lines))

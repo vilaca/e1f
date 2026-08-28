@@ -637,9 +637,12 @@ def test_run_header_crash_span_is_the_test_span_not_the_data_span():
     # date decides crash inclusion, so a later --from must drop COVID (review #2).
     dates = ["2020-01-06", "2020-02-03", "2020-03-02", "2020-06-01",
              "2020-09-01", "2020-12-01", "2021-06-01"]
+    span = bt.BacktestSpan(signal_warmup_closes=0, from_index=0, start_index=0)
 
     def crash_line(fills):
-        line = next(x for x in bt._run_header("X", "X", dates, fills, 1000.0, ATH, 0.0)
+        line = next(x for x in bt._run_header(
+            "X", "X", dates, fills, 1000.0, ATH, 0.0, span,
+        )
                     if x.startswith("Crashes:"))
         tested, _, absent = line.partition("absent:")
         return tested, absent
@@ -650,6 +653,59 @@ def test_run_header_crash_span_is_the_test_span_not_the_data_span():
     # Contributions start 2020-01-06 (spanning COVID) → COVID is tested.
     tested, absent = crash_line([0, 1, 2, 3])
     assert "COVID 2020" in tested and "COVID 2020" not in absent
+
+
+def test_run_header_reports_actual_signal_warmup_not_first_fill_index():
+    dates = ["2024-01-02", "2024-02-01", "2024-03-01", "2024-04-01"]
+    no_warmup_span = bt.BacktestSpan(0, 2, 2)
+    no_warmup = bt._run_header(
+        "X", "X", dates, [2, 3], 1000.0, ATH, 0.0, no_warmup_span,
+    )
+    assert "warm-up burned" not in next(line for line in no_warmup if line.startswith("Test:"))
+
+    warmed_span = bt.BacktestSpan(1, 0, 1)
+    warmed = bt._run_header(
+        "X", "X", dates, [2, 3], 1000.0, ATH, 0.0, warmed_span,
+    )
+    test_line = next(line for line in warmed if line.startswith("Test:"))
+    assert "warm-up burned 1 closes" in test_line
+    assert "warm-up burned 2 closes" not in test_line
+
+
+def test_backtest_span_separates_signal_warmup_from_explicit_from():
+    dates = ["2024-01-02", "2024-02-01", "2024-03-01", "2024-04-01"]
+    dip = StrategyParams("dip", 0.75, 3.0, 2.0, 0.0)
+    rolling = bt._backtest_span(dates, [dip], SignalSpec(lookback=3), "2024-02-01")
+    assert rolling == bt.BacktestSpan(
+        signal_warmup_closes=2,
+        from_index=1,
+        start_index=2,
+    )
+
+    explicit_from = bt._backtest_span(
+        dates,
+        [dip],
+        SignalSpec(lookback=2),
+        "2024-04-01",
+    )
+    assert explicit_from == bt.BacktestSpan(
+        signal_warmup_closes=1,
+        from_index=3,
+        start_index=3,
+    )
+
+    daily = StrategyParams(
+        "daily",
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        deploy=DeployMode.DAILY_DIP,
+        slices=2,
+    )
+    assert bt._backtest_span(dates, [daily], SignalSpec(lookback=3), None) == (
+        bt.BacktestSpan(signal_warmup_closes=0, from_index=0, start_index=0)
+    )
 
 
 def test_main_single_run_reports_data_test_and_horizons(tmp_path, capsys):

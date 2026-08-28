@@ -21,8 +21,10 @@ from e1f.common import (
     MetricContract,
     Status,
     _explain_metric,
+    annual_fee_estimate,
     convert_to_eur,
     pinned_quote_currency,
+    weighted_ter_cost,
 )
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
@@ -192,14 +194,8 @@ def _fund_meta(
 
 
 def yearly_fee_est(ter_float: float | None, market_value: float | None) -> float | None:
-    """Estimated annual fee in EUR: TER% × EUR market value (ADR-0032).
-
-    TER is levied on AUM, so the fee weights by the holding's current market value,
-    not its cost basis. None when the TER or the value is unavailable.
-    """
-    if ter_float is None or market_value is None or market_value <= 0:
-        return None
-    return ter_float / 100.0 * market_value
+    """Backward-compatible command helper delegated to the shared fee primitive."""
+    return annual_fee_estimate(ter_float, market_value)
 
 
 def _distribution_label(distribution: str) -> str:
@@ -312,6 +308,26 @@ def render_holdings_explain(
     return lines
 
 
+def _table_header(*, show_broker: bool, show_cost_basis: bool, show_status: bool) -> str:
+    header = "\n"
+    if show_broker:
+        header += f"{'Brkr':<{_BROKER_COL}} "
+    header += (
+        f"{'ISIN':<14} {'Name':<32} {'Class':<6} "
+        f"{'CCY':<8} {'Dist':<4} {'TER':>6}"
+    )
+    if show_cost_basis:
+        header += (
+            f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
+            f" {'Last px':>8} {'Total':>8} {'Value€':>9}"
+        )
+    else:
+        header += f" {'Weight':>7}"
+    if show_status:
+        header += f" {'Status':>{_STATUS_COL}}"
+    return header
+
+
 def _cmd_portfolio(
     db_path: str,
     config_path: str,
@@ -350,22 +366,11 @@ def _cmd_portfolio(
         eur_values=eur_values,
     )
 
-    header = "\n"
-    if show_broker:
-        header += f"{'Brkr':<{_BROKER_COL}} "
-    header += (
-        f"{'ISIN':<14} {'Name':<32} {'Class':<6} "
-        f"{'CCY':<8} {'Dist':<4} {'TER':>6}"
+    header = _table_header(
+        show_broker=show_broker,
+        show_cost_basis=show_cost_basis,
+        show_status=show_status,
     )
-    if show_cost_basis:
-        header += (
-            f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
-            f" {'Last px':>8} {'Total':>8} {'Value€':>9}"
-        )
-    else:
-        header += f" {'Weight':>7}"
-    if show_status:
-        header += f" {'Status':>{_STATUS_COL}}"
     print(header)
     rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 58
     if show_status:
@@ -373,8 +378,7 @@ def _cmd_portfolio(
     if not show_broker:
         rule -= _BROKER_COL + 1
     print("-" * rule)
-    total_fee_est = 0.0
-    has_any_fee = False
+    fee_inputs: list[tuple[float | None, float | None]] = []
     excluded: list[str] = []
     for holding in holdings:
         name = _etf_name(config_path, holding.symbol)
@@ -386,9 +390,7 @@ def _cmd_portfolio(
         if value is None:
             excluded.append(holding.symbol)
         fee = yearly_fee_est(ter_float, value)
-        if fee is not None:
-            total_fee_est += fee
-            has_any_fee = True
+        fee_inputs.append((ter_float, value))
         row = ""
         if show_broker:
             row += f"{_broker_label(holding.broker):<{_BROKER_COL}} "
@@ -411,11 +413,9 @@ def _cmd_portfolio(
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
-    weighted_ter = (
-        100.0 * total_fee_est / total_market_value
-        if has_any_fee and total_market_value > 0
-        else None
-    )
+    weighted_ter, annual_fee = weighted_ter_cost(fee_inputs)
+    total_fee_est = annual_fee or 0.0
+    has_any_fee = annual_fee is not None
     total = f"\nTotal: {len(holdings)} holdings"
     if show_cost_basis:
         total += f", {total_invested:.2f} total paid"

@@ -77,6 +77,8 @@ _ALIASES: dict[str, str] = {"e": "€", "pct": "%", "r2": "r²"}
 def find_terms(terms: list[Term], query: str) -> list[Term]:
     """Terms matching ``query`` (case-insensitive): by name first, else by group/body."""
     needle = query.strip().lower()
+    if not needle:
+        return []
     needle = _ALIASES.get(needle, needle)
     by_name = [t for t in terms if _name_matches(t.name, needle)]
     if by_name:
@@ -122,7 +124,7 @@ def _cmd_glossary(glossary_path: str, query: str | None) -> int:
         print(f"No terms found in glossary file: {glossary_path}")
         return 0
 
-    if not query:
+    if query is None:
         for line in render_list(terms):
             print(line)
         return 0
@@ -170,7 +172,7 @@ Examples:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    query = " ".join(args.term).strip() or None
+    query = " ".join(args.term).strip() if args.term else None
     try:
         return _cmd_glossary(args.file, query)
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1

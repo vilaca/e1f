@@ -341,6 +341,12 @@ decision 7.
 Because `overlap` may import only `common` (never `concentration` or
 `performance`), ADR-0013 moves three shared primitives down into `common`:
 
+**Later placement update (ADR-0024):** experimental-tier isolation moved
+`overlap`, `concentration`, and their experimental-only `overlap_candidates`
+primitive under `e1f.experimental`. The valuation and provenance primitives
+remain in stable `e1f.common`; `overlap_candidates` now lives in
+`e1f.experimental.common`.
+
 1. **Valuation core** → `fund_eur_value` + `HoldingSeries` / `build_series` /
    `value_on` (decision 4).
 2. **Co-occurrence scan** → `overlap_candidates` (v1a's Tier-1 seed), so both

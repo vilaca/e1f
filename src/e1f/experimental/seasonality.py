@@ -878,6 +878,15 @@ class StrategyResult:
     n_fills: int
 
 
+@dataclass(frozen=True)
+class ShiftScheduleRefusal:
+    """Semantic reason a contribution shift cannot be evaluated."""
+
+    selected_month: int
+    redeploy_month: int
+    incomplete_years: tuple[int, ...]
+
+
 def strategy_fills(
     dates: list[str],
     complete: set[tuple[int, int]],
@@ -892,6 +901,48 @@ def strategy_fills(
         if (day.year, day.month) in complete:
             kept.append(idx)
     return kept
+
+
+def _shift_schedule_refusal(
+    fill_month: dict[int, int],
+    fill_year: dict[int, int],
+    selected_month: int,
+    redeploy_month: int,
+) -> ShiftScheduleRefusal | None:
+    months_by_year: dict[int, set[int]] = {}
+    for index, month in fill_month.items():
+        months_by_year.setdefault(fill_year[index], set()).add(month)
+    incomplete = tuple(
+        sorted(
+            year
+            for year, months in months_by_year.items()
+            if selected_month in months and redeploy_month not in months
+        )
+    )
+    if not incomplete:
+        return None
+    return ShiftScheduleRefusal(selected_month, redeploy_month, incomplete)
+
+
+def _validate_shift_schedule(
+    fill_month: dict[int, int],
+    fill_year: dict[int, int],
+    selected_month: int | None,
+    redeploy_month: int | None,
+) -> None:
+    if selected_month is None or redeploy_month is None or redeploy_month <= selected_month:
+        raise SeasonalityError("shift requires a later redeploy month in the same calendar year")
+    refusal = _shift_schedule_refusal(
+        fill_month,
+        fill_year,
+        selected_month,
+        redeploy_month,
+    )
+    if refusal is not None:
+        years = ", ".join(str(year) for year in refusal.incomplete_years)
+        raise SeasonalityError(
+            f"shift has no {_month_name(redeploy_month)} redeploy fill for year(s): {years}"
+        )
 
 
 def simulate_seasonal(
@@ -909,6 +960,8 @@ def simulate_seasonal(
     fill_set = set(fills)
     fill_month = {i: date.fromisoformat(dates[i]).month for i in fills}
     fill_year = {i: date.fromisoformat(dates[i]).year for i in fills}
+    if kind == DeployKind.SHIFT:
+        _validate_shift_schedule(fill_month, fill_year, selected_month, redeploy_month)
     shares = 0.0
     cash = 0.0
     last_day = dates[0]

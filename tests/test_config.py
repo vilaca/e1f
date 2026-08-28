@@ -65,6 +65,20 @@ def write_db(path, isin_closes):
         conn.commit()
 
 
+def write_trade(path, isin, *, side="BUY", shares=1.0):
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS transactions ("
+            "transaction_id TEXT PRIMARY KEY, datetime TEXT, symbol TEXT, "
+            "side TEXT, shares REAL)"
+        )
+        conn.execute(
+            "INSERT INTO transactions VALUES (?, '2026-01-01', ?, ?, ?)",
+            (f"{side}-{isin}", isin, side, shares),
+        )
+        conn.commit()
+
+
 def write_meta(path, isins):
     with open(path, "w") as f:
         yaml.dump(
@@ -176,6 +190,112 @@ def test_remove_deletes_everywhere(paths, capsys):
         assert set(yaml.safe_load(f)) == {ISIN_B}
 
 
+def test_remove_refuses_to_strand_live_holding(paths, capsys):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_trade(paths["db"], ISIN_A)
+    write_meta(paths["meta"], [ISIN_A])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "remove",
+            ISIN_A,
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 1
+    assert "Refusing to remove live holding" in capsys.readouterr().out
+    assert read_config_isins(paths["config"]) == {ISIN_A}
+    assert read_db_isins(paths["db"]) == {ISIN_A}
+    with open(paths["meta"]) as stream:
+        assert set(yaml.safe_load(stream)) == {ISIN_A}
+
+
+def test_remove_force_retains_transactions_while_removing_valuation_data(paths, capsys):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_trade(paths["db"], ISIN_A)
+    write_meta(paths["meta"], [ISIN_A])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "remove",
+            ISIN_A,
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+            "--force",
+        ]
+    )
+
+    assert rc == 0
+    assert "forcing removal of live holding" in capsys.readouterr().out
+    assert read_config_isins(paths["config"]) == set()
+    assert read_db_isins(paths["db"]) == set()
+    with closing(sqlite3.connect(paths["db"])) as conn:
+        symbols = {row[0] for row in conn.execute("SELECT symbol FROM transactions")}
+    assert symbols == {ISIN_A}
+
+
+def test_remove_allows_fully_closed_position(paths):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_trade(paths["db"], ISIN_A, shares=2.0)
+    write_trade(paths["db"], ISIN_A, side="SELL", shares=2.0)
+    write_meta(paths["meta"], [ISIN_A])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "remove",
+            ISIN_A,
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 0
+    assert read_config_isins(paths["config"]) == set()
+    assert read_db_isins(paths["db"]) == set()
+
+
+def test_remove_live_holding_refuses_entire_batch(paths):
+    write_config(paths["config"], [ISIN_A, ISIN_B])
+    write_db(paths["db"], {ISIN_A: [100], ISIN_B: [200]})
+    write_trade(paths["db"], ISIN_A)
+    write_meta(paths["meta"], [ISIN_A, ISIN_B])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "remove",
+            ISIN_A,
+            ISIN_B,
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 1
+    assert read_config_isins(paths["config"]) == {ISIN_A, ISIN_B}
+    assert read_db_isins(paths["db"]) == {ISIN_A, ISIN_B}
+
+
 def test_remove_rolls_back_all_stores_when_metadata_write_fails(paths, monkeypatch):
     write_config(paths["config"], [ISIN_A])
     write_db(paths["db"], {ISIN_A: [100]})
@@ -252,6 +372,84 @@ def test_trim_keeps_intersection(paths, capsys):
     assert read_db_isins(paths["db"]) == {ISIN_B}
     with open(paths["meta"]) as f:
         assert set(yaml.safe_load(f)) == {ISIN_B}
+
+
+def test_trim_refuses_entire_batch_when_it_would_strand_live_holding(paths, capsys):
+    write_config(paths["config"], [ISIN_A, ISIN_B])
+    write_db(paths["db"], {ISIN_A: [100], ISIN_B: [200], ISIN_C: [300]})
+    write_trade(paths["db"], ISIN_A)
+    write_meta(paths["meta"], [ISIN_B, ISIN_C])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "trim",
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 1
+    assert "Refusing to trim live holding" in capsys.readouterr().out
+    assert read_config_isins(paths["config"]) == {ISIN_A, ISIN_B}
+    assert read_db_isins(paths["db"]) == {ISIN_A, ISIN_B, ISIN_C}
+    with open(paths["meta"]) as stream:
+        assert set(yaml.safe_load(stream)) == {ISIN_B, ISIN_C}
+
+
+def test_trim_force_retains_transactions_while_removing_valuation_data(paths, capsys):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_trade(paths["db"], ISIN_A)
+    write_meta(paths["meta"], [])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "trim",
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+            "--force",
+        ]
+    )
+
+    assert rc == 0
+    assert "forcing trim of live holding" in capsys.readouterr().out
+    assert read_config_isins(paths["config"]) == set()
+    assert read_db_isins(paths["db"]) == set()
+    with closing(sqlite3.connect(paths["db"])) as conn:
+        symbols = {row[0] for row in conn.execute("SELECT symbol FROM transactions")}
+    assert symbols == {ISIN_A}
+
+
+def test_trim_allows_fully_closed_position(paths):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_trade(paths["db"], ISIN_A, shares=2.0)
+    write_trade(paths["db"], ISIN_A, side="SELL", shares=2.0)
+    write_meta(paths["meta"], [])
+
+    rc = config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "trim",
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 0
+    assert read_config_isins(paths["config"]) == set()
+    assert read_db_isins(paths["db"]) == set()
 
 
 def test_trim_preserves_needed_fx_pair_metadata(paths):

@@ -12,15 +12,28 @@ import sqlite3
 import tomllib
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import unquote
 
 import yaml
 
+from e1f.common import defaults
 from e1f.cli import COMMANDS, STABLE_COMMANDS
 from e1f.experimental.common import init_lookthrough_schema
 from e1f.fetch import DataExtractor
 from e1f.transactions import TradeRepublicImporter
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _documentation_files() -> list[Path]:
+    return [
+        ROOT / "README.md",
+        ROOT / "CLAUDE.md",
+        ROOT / "metrics-roadmap.md",
+        ROOT / "data/glossary.md",
+        *(ROOT / "specs").glob("*.md"),
+        *(ROOT / "ADR").glob("*.md"),
+    ]
 
 
 def _open_mode(call: ast.Call) -> str | None:
@@ -130,7 +143,7 @@ def test_layer_contracts_cover_every_stable_command() -> None:
 def test_readme_python_version_matches_pyproject():
     """README 'Requires Python X.Y+' must agree with pyproject.toml requires-python."""
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    requires = pyproject["project"]["requires-python"]  # e.g. ">=3.11"
+    requires = pyproject["project"]["requires-python"]  # e.g. ">=3.14"
     min_version = re.search(r"[\d.]+", requires).group()  # type: ignore[union-attr]
 
     readme = (ROOT / "README.md").read_text()
@@ -140,6 +153,78 @@ def test_readme_python_version_matches_pyproject():
         f"README does not mention 'Requires Python ... {min_version}' "
         f"(pyproject requires-python = {requires!r})"
     )
+
+
+def test_markdown_relative_links_resolve() -> None:
+    broken: list[str] = []
+    for document in _documentation_files():
+        for line_number, line in enumerate(document.read_text().splitlines(), start=1):
+            for match in re.finditer(r"\]\(([^)]+)\)", line):
+                raw_target = match.group(1).strip().strip("<>")
+                target = raw_target.split(maxsplit=1)[0]
+                if (
+                    not target
+                    or target.startswith(("#", "http://", "https://", "mailto:"))
+                ):
+                    continue
+                relative = unquote(target.split("#", 1)[0])
+                if not (document.parent / relative).resolve().exists():
+                    broken.append(
+                        f"{document.relative_to(ROOT)}:{line_number} -> {raw_target}"
+                    )
+    assert broken == [], "broken relative Markdown links:\n" + "\n".join(broken)
+
+
+def test_adr_sequence_and_identity() -> None:
+    paths = sorted((ROOT / "ADR").glob("ADR-*.md"))
+    numbered = [
+        (int(match.group(1)), path)
+        for path in paths
+        if (match := re.fullmatch(r"ADR-(\d{4})_.+\.md", path.name))
+    ]
+    assert len(numbered) == len(paths)
+    assert [number for number, _path in numbered] == list(range(1, len(paths) + 1))
+    for number, path in numbered:
+        text = path.read_text()
+        assert text.startswith(f"# ADR-{number:04d} —"), path.name
+        assert "**Scope:**" in text, path.name
+        assert "## Context" in text, path.name
+        assert re.search(r"^## Decisions?$", text, re.MULTILINE), path.name
+
+
+def test_readme_and_claude_reference_every_cli_command() -> None:
+    readme = (ROOT / "README.md").read_text()
+    claude = (ROOT / "CLAUDE.md").read_text()
+    missing_readme = sorted(command for command in COMMANDS if f"e1f {command}" not in readme)
+    missing_claude = sorted(command for command in COMMANDS if f"{command}.py" not in claude)
+    assert missing_readme == []
+    assert missing_claude == []
+
+
+def test_claude_check_gates_match_check_script() -> None:
+    check_script = (ROOT / "scripts/check.sh").read_text()
+    assignments = re.findall(r"gates=\(([^)]+)\)", check_script)
+    default = next(value for value in assignments if value.strip().startswith("lint "))
+    gates = default.split()
+    claude = (ROOT / "CLAUDE.md").read_text()
+    running_checks = claude.split("## Running checks", 1)[1].split("## ", 1)[0]
+    missing = [gate for gate in gates if gate not in running_checks]
+    assert missing == []
+
+
+def test_wheel_data_files_match_packaged_runtime_defaults():
+    """Immutable packaged defaults must agree with their runtime path constants."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    shipped = {
+        Path(path).name
+        for path in pyproject["tool"]["setuptools"]["data-files"]["share/e1f"]
+    }
+    expected = {
+        Path(defaults.DEFAULT_CONFIG).name,
+        Path(defaults.DEFAULT_CURRENCY_META).name,
+        Path(defaults.DEFAULT_GLOSSARY).name,
+    }
+    assert shipped == expected
 
 
 def test_prices_schema_contract(tmp_path: Path) -> None:

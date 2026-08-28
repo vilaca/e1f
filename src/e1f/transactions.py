@@ -333,7 +333,7 @@ def is_xtb_etf_trade_row(row: pd.Series) -> bool:
 
 
 @contextmanager
-def _suppress_openpyxl_default_style_warning() -> Generator[None, None, None]:
+def _suppress_openpyxl_default_style_warning() -> Generator[None]:
     """XTB exports trigger a harmless openpyxl default-style warning."""
     with warnings.catch_warnings():
         warnings.filterwarnings(

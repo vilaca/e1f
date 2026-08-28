@@ -24,12 +24,12 @@ A quick map before the detail:
 |---|---|---|
 | Personal return | What did my cash earn? | XIRR |
 | Investment return | What did the holdings earn? | TWR, CAGR |
-| Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€ |
+| Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€ |
 | Attribution | Which holdings drove the return? | Ctr%, P&Lctr |
 | Allocation | Where is capital/risk? | Weight |
 | Risk | How rough was the ride? | Vol, MaxDD, DDdur, SinceHi, Underwtr, RecFac |
 | Benchmark-relative | Did I beat the alternative? | Out%, RelStr, IR, Beta, TE, R² |
-| Fees | What does the fund cost annually? | WTER, Fee€/yr |
+| Fees | What does the fund cost annually? | TER, WTER, Fee€/yr |
 | Diversification | Do holdings move alike? | ρ, clusters |
 
 Covers `performance` (table, `--metrics`, `--series`, `--contrib`, `--diff`),
@@ -499,6 +499,46 @@ The same TOTAL P&L as performance, sliced by contribution instead of by holding.
   (holdings skill, not capital skill). P&L% (per-holding version of a similar
   idea).
 
+### Amount€
+- **Where:** `deposits` per-deposit table
+- **Type:** money, historical contribution
+- **Definition:** EUR cost of one buy: shares × execution price + transaction
+  fee. It is the lot-level input to Invested and excludes the lot when its
+  shares cannot be valued at the report date.
+- **Useful for:** seeing how much capital each purchase put at risk and
+  separating a large contribution from a high-return one.
+- **Don't:** read Amount€ as current value or market performance — it is the
+  historical amount paid.
+- **Read with:** Value€ (what those shares are worth now). Gain€ (the euro
+  difference). Ret% (the same difference divided by Amount€). Invested (the
+  sum across valuable deposits).
+
+### Value€ (per deposit)
+- **Where:** `deposits` per-deposit table; `portfolio` per-fund table
+- **Type:** money, snapshot
+- **Definition:** EUR market value of the displayed shares at the report date,
+  using the nearest-prior close and FX rate. An unpriceable row is unavailable,
+  not zero.
+- **Useful for:** comparing a lot or holding's current size with what was paid
+  and reconciling the valuable rows with the report total.
+- **Don't:** treat an unavailable Value€ as a zero-value investment, or assume
+  it is fresh when its close was carried forward.
+- **Read with:** Amount€ for a deposit or Total paid for a holding. Gain€ and
+  Ret% for the result since purchase. MktVal€ for the performance spelling of
+  the portfolio-level value.
+
+### Gain€ (per deposit)
+- **Where:** `deposits` per-deposit table
+- **Type:** money
+- **Definition:** Value€ − Amount€ for one buy. Across valuable deposits it
+  sums to Organic gain and the performance TOTAL P&L€.
+- **Useful for:** seeing which purchases generated the actual euros of profit
+  or loss, independent of their percentage return.
+- **Don't:** rank lots by Gain€ alone without considering Amount€ — large buys
+  naturally dominate euro outcomes.
+- **Read with:** Ret% (gain relative to this lot's amount). %P&L (share of the
+  book's total gain). Organic gain (the reconciled total).
+
 ### Ret% (per deposit)
 - **Where:** `deposits` per-deposit table
 - **Type:** money-weighted return, buy-and-hold
@@ -539,6 +579,20 @@ fees paid at purchase are included in Cost€ but are a one-time cost, not an on
 drag. Tax, bid/ask spread, and FX transaction costs are not modeled. Do not describe
 reported TWR or CAGR as "gross" unless you know what the fund factsheet embeds; do not
 describe it as "after-tax net" either — e1f has no tax model.
+
+### TER (per fund)
+- **Where:** `portfolio` per-fund table
+- **Type:** annual percentage, fund metadata
+- **Definition:** The fund's total expense ratio from configuration metadata.
+  It is charged within the fund and is therefore already reflected in NAV
+  returns; e1f does not subtract it a second time.
+- **Useful for:** comparing each holding's ongoing product cost and auditing
+  the inputs used by WTER and Fee€/yr.
+- **Don't:** confuse TER with a broker transaction fee, or add it again to TWR
+  as though the reported return were gross of fund costs.
+- **Read with:** WTER (the market-value-weighted portfolio blend). Fee€/yr (the
+  estimated euro cost at current AUM). TWR / CAGR (returns already net of the
+  expense embedded in NAV).
 
 ### WTER (weighted TER)
 - **Where:** `performance --series` (`WTER`); `portfolio` total line

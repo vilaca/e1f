@@ -3,15 +3,14 @@
 **Scope:** add two trailing columns to the `performance --series` table
 (ADR-0030) — the market-value-weighted TER (`WTER`) and the estimated annual fee
 in EUR (`Fee€/yr`) — so the daily timeline also shows the book's cost of
-ownership as it evolves. `portfolio` already reports both, cost-basis weighted.
+ownership as it evolves.
 
 ## Context
 
-`portfolio` prints a weighted average TER and an estimated `~€/yr` in fees, both
-weighted by cost basis (`total_paid`), because `portfolio`'s whole frame is
-cost-basis. `--series` is a market-value timeline: every column is derived from
-EUR market value. Carrying the fee view into the series makes it visible how
-WTER and annual cost drift as the holdings mix and AUM change.
+At the time of this decision, `portfolio` weighted its fee figures by cost
+basis. ADR-0032 later superseded that behavior and aligned `portfolio` on market
+value. `--series` is a market-value timeline: carrying the fee view into it
+makes visible how WTER and annual cost drift as the holdings mix and AUM change.
 
 ## Decisions
 
@@ -20,9 +19,7 @@ columns weight by each holding's EUR market value on the day:
 `WTER = Σ(terᵢ × MktValᵢ) / Σ MktValᵢ` and `Fee€/yr = Σ(terᵢ/100 × MktValᵢ)`,
 with `Fee€/yr = WTER% × Σ MktVal` by construction. This is internally consistent
 with every other series column and answers "what am I paying per year at today's
-value". It deliberately differs from `portfolio`'s cost-basis figure — mixing a
-cost-basis metric into an otherwise market-value table would be the category
-error `--diff` already avoids (ADR-0029).
+value". ADR-0032 later applied this same basis to `portfolio`.
 
 **Missing TER dilutes (matches `portfolio`).** A holding with no TER metadata
 contributes 0 to the fee but stays in the denominator, so `WTER` is the effective
@@ -34,11 +31,11 @@ is suppressed.
 after `CAGR`, so the nine columns the ADR-0030 invariance test pins (`MktVal …
 CAGR`) are unchanged and still equal `performance --as-of <day>`'s TOTAL.
 
-**No cross-command import.** `performance` does not import `portfolio`'s
-`yearly_fee_est` (the layer contract, ADR-0003, bars command-to-command imports).
-The fee arithmetic (`ter/100 × value`) is a trivial inline computation in
-`_weighted_ter_cost`; graduating a shared helper to `common` was not worth it for
-a one-line formula.
+**Shared primitive, no cross-command import.** The layer contract (ADR-0003)
+still bars command-to-command imports. Once both commands owned the same
+market-value calculation, the single-holding and weighted-summary arithmetic
+moved to `e1f.common.fees`; `performance` and `portfolio` consume that shared
+primitive.
 
 **`--series` only.** The snapshot and `--diff` tables are unchanged; the request
 was scoped to the series.

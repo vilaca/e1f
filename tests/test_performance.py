@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from e1f import performance as perf
+from e1f import portfolio as portfolio_mod
 from e1f.common import (
     PositionEvent,
     aggregate_value_series,
@@ -1449,11 +1450,67 @@ def test_weighted_ter_cost_value_weighted_and_dilution():
     rows = [_perf_row("A", 3000.0), _perf_row("B", 1000.0), _perf_row("C", None)]
     wter, fee = perf._weighted_ter_cost(rows, {"A": 0.5, "B": 0.1, "C": 0.9})
     assert wter == pytest.approx(0.4) and fee == pytest.approx(16.0)  # C unvaluable, ignored
+    assert portfolio_mod.weighted_ter_cost(
+        [(0.5, 3000.0), (0.1, 1000.0), (0.9, None)]
+    ) == pytest.approx((wter, fee))
 
     wter2, fee2 = perf._weighted_ter_cost(rows, {"A": 0.5, "B": None, "C": None})
     assert fee2 == pytest.approx(15.0) and wter2 == pytest.approx(0.375)  # B dilutes
 
     assert perf._weighted_ter_cost(rows, {"A": None, "B": None, "C": None}) == (None, None)
+
+
+def test_portfolio_and_performance_reconcile_fees_multi_currency_multi_broker(
+    tmp_path,
+    capsys,
+):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("tr-eur", "2024-01-01", EUR_ISIN, 60.0, 10.0, broker="tr"),
+            _buy("xtb-eur", "2024-01-01", EUR_ISIN, 40.0, 10.0, broker="xtb"),
+            _buy("xtb-usd", "2024-01-01", USD_ISIN, 10.0, 90.0, broker="xtb"),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-31", 30.0),
+            (USD_ISIN, "2024-12-31", 120.0),
+        ],
+        fx=[("EUR", "USD", "2024-12-31", 1.2)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+        ters={EUR_ISIN: 0.5, USD_ISIN: 0.1},
+    )
+    as_of = "2024-12-31"
+
+    assert portfolio_mod.main(
+        _args(db, config, meta, "--show-cost-basis", "--show-broker")
+    ) == 0
+    portfolio_output = capsys.readouterr().out
+    market_value = float(
+        re.search(r"€([\d,.]+) market value", portfolio_output).group(1).replace(",", "")
+    )
+    annual_fee = float(
+        re.search(r"~€([\d,.]+)/yr in fees", portfolio_output).group(1).replace(",", "")
+    )
+    weighted_ter = float(
+        re.search(r"([\d.]+)% weighted avg TER", portfolio_output).group(1)
+    )
+
+    timeline = position_timeline(load_trades(db))
+    points = perf._series_rows(
+        db,
+        config,
+        meta,
+        timeline,
+        start=as_of,
+        end=as_of,
+    )
+    assert len(points) == 1
+    point = points[0]
+    assert point.total.market_value == pytest.approx(market_value)
+    assert point.weighted_ter == pytest.approx(weighted_ter)
+    assert point.annual_cost == pytest.approx(annual_fee)
+    assert (market_value, weighted_ter, annual_fee) == pytest.approx((4000.0, 0.4, 16.0))
 
 
 # ---------------------------------------------------------------------------

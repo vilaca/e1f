@@ -5,7 +5,7 @@ Prices come from ftgo (FT Markets) with an optional yfinance fallback (`--fallba
 
 ## Setup
 
-Requires Python 3.11+.
+Requires Python 3.14+.
 
 ```bash
 python3 -m venv .venv
@@ -52,27 +52,27 @@ The tool exposes stable commands around a shared config/DB. The least-settled
 commands form an isolated **experimental** tier (ADR-0024) — still rough, and
 walled off so no stable command depends on them:
 
-1. **`e1f autocomplete`** — print Bash or Zsh completion setup.
-2. **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
-3. **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
-4. **`e1f validate`** — check config/DB sync, history depth, and data quality (including interior single-day price gaps — a day a fund lacks that its same-exchange peers have — repairable with `e1f fetch <isin> --force`).
-5. **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
-6. **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
-7. **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; `--diff N` shows the signed change over the last N calendar days (ADR-0029); `--series N` lists the portfolio TOTAL for each trading day over the last N days, cumulative since inception, with market-value-weighted TER and estimated annual fee columns (ADR-0030, ADR-0031); `--metrics` prints a portfolio-level extended risk report — MaxDD duration, days since the current running peak, total underwater time, recovery factor, best/worst single-period return, best/worst calendar month, and trailing 1M/3M/6M returns; `--contrib` prints a per-holding return-contribution table (each holding's Cariño-linked share of the book's time-weighted return, summing to the TOTAL TWR) (ADR-0033).
-8. **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs (beta, R², tracking error, information ratio, relative strength, and window outperformance); defaults to six broad benchmarks (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, FTSE All-World), shown by index name with `*` for any you also hold; no minimum-overlap floor by default — raise `--min-overlap` for rigor (ADR-0033).
-9. **`e1f deposits`** — organic-vs-reported value split, ROIC (organic gain ÷ invested), and per-deposit impact: each contribution's shares valued to the as-of date with its gain, own return, and share of total P&L. Buy-and-hold, so the per-deposit values reconcile with the `performance` TOTAL (ADR-0033).
-10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
-11. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
-12. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
-13. **`e1f glossary`** — look up what a metric means and what it's useful for; reads the checked-in `data/glossary.md` (`e1f glossary` lists all, `e1f glossary TWR` / `e1f glossary "P&L"` looks one up) (ADR-0034).
+- **`e1f autocomplete`** — print Bash or Zsh completion setup.
+- **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
+- **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
+- **`e1f validate`** — check config/DB sync, history depth, and data quality (including interior single-day price gaps — a day a fund lacks that its same-exchange peers have — repairable with `e1f fetch <isin> --force`).
+- **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
+- **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
+- **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; see `e1f glossary` for metric definitions and `e1f performance --help` for report modes.
+- **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs; see the glossary for the reported metrics and ADR-0033 for the benchmark set and overlap policy.
+- **`e1f deposits`** — compare invested capital with reported value and inspect each deposit's impact. Buy-and-hold totals reconcile with the `performance` TOTAL (ADR-0033).
+- **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
+- **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
+- **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
+- **`e1f glossary`** — look up what a metric means and what it's useful for; reads the checked-in `data/glossary.md` (ADR-0034).
 
 Experimental tier (ADR-0024):
 
-14. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
-15. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
-16. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
-17. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
-18. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
+- **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
+- **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
+- **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
+- **`e1f backtest`** — evaluate contribution-timing strategies against controlled DCA and blind-deployment baselines (ADR-0019 through ADR-0023).
+- **`e1f seasonality`** — analyze calendar-month effects and pre-specified or frozen-OOS rules without auto-trading the weakest in-sample month (ADR-0026 through ADR-0028).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -81,7 +81,9 @@ e1f config add IE00BM67HK77 IE00BDBRDM35 IE00BKM4GZ66
 e1f config list
 e1f config update IE00BM67HK77
 
-# Remove ETFs from config, DB, and currency metadata
+# Remove ETFs from config, DB, and currency metadata.
+# Both remove and trim refuse to strand live positions unless --force;
+# transaction history is always retained.
 e1f config remove IE00BM67HK77
 e1f config trim        # keep only ISINs present in config, DB, and metadata
 
@@ -243,47 +245,12 @@ holdings with no price or FX are excluded from those totals with a warning.
 
 Performance and returns: `ADR/ADR-0011_performance_command.md` (output in
 `src/e1f/performance.py`). `e1f performance` values holdings in EUR
-(`shares × close × FX`, cost basis from `transactions`) and reports XIRR
-(money-weighted, headline), TWR, volatility, max drawdown, CAGR, and each
-holding's share of total unrealized P&L — per holding and portfolio-wide. `--as-of DATE` values a past snapshot; a holding with no
-price/FX on or before that date shows `n/a` and drops out of the total, a market
-value carried forward from an earlier close (no price on the as-of day itself) is
-flagged with its price date and staleness, and annualized figures on under a year
-of history are flagged. `--show-status` / `--explain` add opt-in provenance
-disclosure (ADR-0014; see below).
-
-Reading the metrics (formulas in ADR-0011 §5):
-
-- **XIRR** — money-weighted annualized return. Treats every contribution as a
-  dated cash flow and solves for the single rate that reconciles them with
-  today's value, so a euro invested five years ago counts for more than one
-  added last month. This is the headline: it answers *what did my money actually
-  earn*, the return you'd compare against a savings-account rate. Because it
-  weights by both size and timing, pouring in more just before a rally lifts it
-  and buying just before a drop drags it down — it reflects your real experience,
-  not just the funds'.
-- **TWR** (time-weighted return) — cumulative return with contribution timing
-  removed, so it measures *how the holdings performed* independent of when you
-  paid in. This is the fair way to compare against a benchmark or a fund's own
-  published return, since it isn't flattered or punished by your deposit schedule.
-- **Vol** (annualized volatility) — how much daily returns swing around their
-  average, scaled to a yearly figure. A rough size-of-the-ride gauge: higher vol
-  means larger day-to-day moves in both directions, useful for judging whether an
-  otherwise-good return came with a bumpy path you could stomach.
-- **MaxDD** (maximum drawdown) — the deepest peak-to-trough fall the portfolio
-  endured over the window, measured on the contribution-neutralized wealth index
-  (new money can't paper over a loss). It answers *what's the worst decline I'd
-  have sat through* — a concrete worst-case-so-far, more visceral than volatility
-  for gauging whether you could have held on.
-- **CAGR** — the annualized form of TWR (a constant yearly rate equivalent to the
-  cumulative TWR), so it lines up directly against XIRR: time-weighted vs.
-  money-weighted annual return.
-- **P&Lctr** (unrealized P&L contribution) — each holding's share of the
-  portfolio's total unrealized P&L, summing to 100% across holdings. Unlike P&L%
-  (a holding's own return on its own cost), this weights by size too, so it
-  answers *which positions actually drove the portfolio's gain or loss* — a big
-  percentage gain in a tiny position contributes less than a modest gain in a
-  large one.
+and reports per-holding and portfolio-wide valuation, return, risk, and
+attribution metrics. `--as-of DATE` values a past snapshot; unavailable or
+carried-forward inputs are disclosed rather than silently fabricated.
+`--show-status` / `--explain` add opt-in provenance disclosure (ADR-0014).
+Metric definitions, formulas, interpretation, and complementary reads live only
+in `data/glossary.md` (`e1f glossary <term>`).
 
 Concentration (experimental tier, ADR-0024): `ADR/ADR-0012_concentration_command.md`
 (output in `src/e1f/experimental/concentration.py`). `e1f concentration` reports
@@ -411,3 +378,6 @@ uv sync --extra dev
 ./scripts/check.sh          # lint, layers, shell, actions, types, dead, package, mutation, test + coverage
 uv run pytest               # tests only
 ```
+
+The full check requires `shellcheck` and `actionlint`; a missing gate tool is a
+failure, not a skipped success. On macOS: `brew install shellcheck actionlint`.

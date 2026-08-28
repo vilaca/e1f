@@ -38,6 +38,7 @@ from e1f.common import (
     price_date_asof as _price_date_asof,
     value_on as _value_on,
     wealth_and_returns as _wealth_and_returns,
+    weighted_ter_cost,
     xirr,
 )
 
@@ -1097,27 +1098,14 @@ def _ter_by_isin(config_path: str, isins: list[str]) -> dict[str, float | None]:
 def _weighted_ter_cost(
     rows: list[PerformanceRow], ter_by_isin: dict[str, float | None]
 ) -> tuple[float | None, float | None]:
-    """Market-value-weighted TER (%) and estimated EUR/yr fee over the day's holdings.
-
-    TER is levied on AUM, so both weight by each holding's EUR market value, not
-    cost basis (ADR-0031). A holding with no TER metadata contributes 0 to the fee
-    but still counts in the denominator (dilutes, matching ``portfolio``). Returns
-    ``(None, None)`` when no held ISIN has a TER or nothing is valuable.
-    """
-    total_value = 0.0
-    annual = 0.0
-    covered = False
-    for row in rows:
-        if not row.valuable or row.market_value is None:
-            continue
-        total_value += row.market_value
-        ter = ter_by_isin.get(row.isin)
-        if ter is not None:
-            covered = True
-            annual += ter / 100.0 * row.market_value
-    if not covered or total_value <= 0.0:
-        return None, None
-    return 100.0 * annual / total_value, annual
+    """Command-row adapter for the shared fee primitive."""
+    return weighted_ter_cost(
+        (
+            ter_by_isin.get(row.isin),
+            row.market_value if row.valuable else None,
+        )
+        for row in rows
+    )
 
 
 def _format_series_row(point: SeriesPoint) -> str:

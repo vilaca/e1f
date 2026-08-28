@@ -16,10 +16,18 @@ The module graph is stratified into three layers, enforced by import-linter
 (`[tool.importlinter]` in `pyproject.toml`, `layers` gate in `scripts/check.sh`):
 
 ```
-e1f.cli                              ← entry point; may import any layer below
-e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.correlation | e1f.rebalance | e1f.scenario  ← stable commands; may import common, never each other
-e1f.common                           ← shared primitives package (ADR-0025); submodules may import each other, never command modules
+e1f.cli
+  ↓
+stable command modules:
+  autocomplete, benchmark, config, correlation, deposits, fetch, glossary,
+  performance, portfolio, rebalance, scenario, transactions, validate
+  ↓
+e1f.common
 ```
+
+The CLI entry point may import every lower layer. Stable commands may import
+`e1f.common`, but never one another. `e1f.common` submodules may import one
+another, but never command modules.
 
 New modules are placed at the lowest layer that satisfies their needs. A module
 that only uses primitives goes in `common` or alongside it. A module that

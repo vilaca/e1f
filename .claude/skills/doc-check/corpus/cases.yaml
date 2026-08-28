@@ -110,3 +110,35 @@ cases:
       per-group intro prose are orientation text the parser ignores (they have no
       ### term headings). doc-check must NOT flag them as coverage drift or as
       undocumented terms — only ### headings are terms.
+
+  - name: glossary_whitespace_query_lists_every_term
+    verdict: VIOLATED
+    section: "7 (metric glossary)"
+    finding: >
+      A whitespace-only explicit glossary query strips to an empty needle and
+      matches every heading. It must be rejected as an empty lookup rather than
+      behaving like the intentionally omitted query that lists all terms.
+
+  - name: glossary_whitespace_query_rejected
+    verdict: HOLDS
+    section: "7 (metric glossary)"
+    note: >
+      An omitted glossary query lists all terms, while an explicitly supplied
+      whitespace-only query returns no matches. The two inputs are deliberately
+      distinct and this behavior must not be flagged.
+
+  - name: readme_duplicates_metric_formulas
+    verdict: VIOLATED
+    section: "4 (redundancy)"
+    finding: >
+      README contains paragraph-length definitions or formulas for XIRR, TWR,
+      volatility, drawdown, CAGR, or P&L contribution even though
+      data/glossary.md is the single source for metric interpretation.
+
+  - name: readme_points_to_metric_glossary
+    verdict: HOLDS
+    section: "4 (redundancy)"
+    note: >
+      README names the metrics a command reports, gives high-level orientation,
+      and points to e1f glossary for definitions without copying formulas. This
+      is appropriate user guidance, not a second source of truth.
