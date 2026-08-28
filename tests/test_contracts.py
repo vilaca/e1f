@@ -181,15 +181,18 @@ def test_transactions_schema_contract(tmp_path: Path) -> None:
     with closing(sqlite3.connect(str(db))) as conn:
         cols = conn.execute("PRAGMA table_info(transactions)").fetchall()
 
-    schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
+    schema = {
+        row[1]: {"type": row[2], "notnull": bool(row[3]), "pk": row[5]}
+        for row in cols
+    }
     assert schema == {
-        "broker": {"type": "TEXT", "pk": 1},
-        "transaction_id": {"type": "TEXT", "pk": 2},
-        "datetime": {"type": "TEXT", "pk": 0},
-        "symbol": {"type": "TEXT", "pk": 0},
-        "side": {"type": "TEXT", "pk": 0},
-        "shares": {"type": "REAL", "pk": 0},
-        "price": {"type": "REAL", "pk": 0},
-        "fee": {"type": "REAL", "pk": 0},
-        "tax": {"type": "REAL", "pk": 0},
+        "broker": {"type": "TEXT", "notnull": True, "pk": 1},
+        "transaction_id": {"type": "TEXT", "notnull": True, "pk": 2},
+        "datetime": {"type": "TEXT", "notnull": False, "pk": 0},
+        "symbol": {"type": "TEXT", "notnull": False, "pk": 0},
+        "side": {"type": "TEXT", "notnull": True, "pk": 0},
+        "shares": {"type": "REAL", "notnull": True, "pk": 0},
+        "price": {"type": "REAL", "notnull": True, "pk": 0},
+        "fee": {"type": "REAL", "notnull": False, "pk": 0},
+        "tax": {"type": "REAL", "notnull": False, "pk": 0},
     }

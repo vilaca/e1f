@@ -5,8 +5,8 @@ ETF universe config and historical price fetching into SQLite.
 ## Running checks
 
 ```bash
-./scripts/check.sh              # all gates: lint, layers, shell, actions, types, dead, test + coverage
-./scripts/check.sh lint         # single gate (lint | layers | shell | actions | types | dead | test)
+./scripts/check.sh              # all gates: lint, layers, shell, actions, types, dead, package, mutation, test
+./scripts/check.sh lint         # one gate (lint | layers | shell | actions | types | dead | package | mutation | test)
 uv run pytest                   # tests only, no coverage floor
 ```
 

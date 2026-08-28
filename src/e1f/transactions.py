@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import math
 import re
 import sqlite3
 import sys
@@ -71,6 +72,26 @@ _INSERT_SQL = """
     ON CONFLICT (broker, transaction_id) DO NOTHING
 """
 
+_TRANSACTION_SIDES = ("BUY", "SELL", "SAVINGS_PLAN")
+_TRANSACTIONS_TABLE_SQL = """
+    CREATE TABLE {table} (
+        broker TEXT NOT NULL,
+        transaction_id TEXT NOT NULL,
+        datetime TEXT,
+        symbol TEXT,
+        side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL', 'SAVINGS_PLAN')),
+        shares REAL NOT NULL CHECK (
+            typeof(shares) IN ('integer', 'real') AND shares > 0.0 AND shares < 1e308
+        ),
+        price REAL NOT NULL CHECK (
+            typeof(price) IN ('integer', 'real') AND price > 0.0 AND price < 1e308
+        ),
+        fee REAL,
+        tax REAL,
+        PRIMARY KEY (broker, transaction_id)
+    )
+"""
+
 
 @dataclass(frozen=True)
 class ImportSummary:
@@ -86,22 +107,60 @@ class ImportSummary:
 
 def init_transactions_database(db_path: str) -> None:
     with closing(sqlite3.connect(db_path)) as conn:
+        schema_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'"
+        ).fetchone()
+        if schema_row is None:
+            conn.execute(_TRANSACTIONS_TABLE_SQL.format(table="transactions"))
+            conn.commit()
+            return
+        schema = " ".join(str(schema_row[0]).split())
+        # Heuristic marker for our schema; a false negative only triggers a safe rebuild.
+        if all(
+            fragment in schema
+            for fragment in (
+                "side TEXT NOT NULL CHECK",
+                "shares REAL NOT NULL CHECK",
+                "price REAL NOT NULL CHECK",
+            )
+        ):
+            return
+
+        invalid = conn.execute(
+            """
+            SELECT broker, transaction_id
+            FROM transactions
+            WHERE side IS NULL
+               OR side NOT IN ('BUY', 'SELL', 'SAVINGS_PLAN')
+               OR shares IS NULL
+               OR typeof(shares) NOT IN ('integer', 'real')
+               OR shares <= 0.0
+               OR shares >= 1e308
+               OR price IS NULL
+               OR typeof(price) NOT IN ('integer', 'real')
+               OR price <= 0.0
+               OR price >= 1e308
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid is not None:
+            raise ValueError(
+                "cannot harden transactions table: invalid existing row "
+                f"{invalid[0]!r}/{invalid[1]!r}; side must be one of {_TRANSACTION_SIDES}, "
+                "and shares/price must be finite positive numbers"
+            )
+
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(_TRANSACTIONS_TABLE_SQL.format(table="transactions_hardened"))
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS transactions (
-                broker TEXT NOT NULL,
-                transaction_id TEXT NOT NULL,
-                datetime TEXT,
-                symbol TEXT,
-                side TEXT,
-                shares REAL,
-                price REAL,
-                fee REAL,
-                tax REAL,
-                PRIMARY KEY (broker, transaction_id)
-            )
+            INSERT INTO transactions_hardened
+            SELECT broker, transaction_id, datetime, symbol, side, shares, price, fee, tax
+            FROM transactions
             """
         )
+        conn.execute("DROP TABLE transactions")
+        conn.execute("ALTER TABLE transactions_hardened RENAME TO transactions")
         conn.commit()
 
 
@@ -135,14 +194,22 @@ def _normalize_tr_type(value: object) -> str:
     return _parse_str(value).upper().replace(" ", "_")
 
 
-def _parse_float(value: object) -> float | None:
+def _parse_float(value: object, field: str = "value", *, required: bool = False) -> float | None:
+    """Finite numeric field; blank is allowed only when optional."""
     text = _parse_str(value)
     if not text:
+        if required:
+            raise ValueError(f"{field} is required")
         return None
     try:
-        return float(text)
+        parsed = float(text)
     except ValueError:
-        return None
+        raise ValueError(f"{field} is not numeric: {text!r}") from None
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field} must be finite")
+    if required and parsed <= 0.0:
+        raise ValueError(f"{field} must be positive")
+    return parsed
 
 
 def _format_datetime(value: object) -> str:
@@ -239,7 +306,7 @@ def xtb_shares_and_price(row: pd.Series) -> tuple[float, float] | None:
     shares, comment_price = trade
     if shares <= 0:
         return None
-    amount = _parse_float(row.get("amount"))
+    amount = _parse_float(row.get("amount"), "amount")
     if amount is not None and amount != 0:
         return shares, abs(amount) / shares
     return shares, comment_price
@@ -387,10 +454,10 @@ class TradeRepublicImporter:
             _parse_str(row["datetime"]),
             _parse_str(row["symbol"]),
             _normalize_tr_type(row["type"]),
-            _parse_float(row["shares"]),
-            _parse_float(row["price"]),
-            _parse_float(row["fee"]),
-            _parse_float(row["tax"]),
+            _parse_float(row["shares"], "shares", required=True),
+            _parse_float(row["price"], "price", required=True),
+            _parse_float(row["fee"], "fee"),
+            _parse_float(row["tax"], "tax"),
         )
 
     def import_csv(self, csv_path: str | Path) -> ImportSummary:
@@ -418,7 +485,12 @@ class TradeRepublicImporter:
                     errors += 1
                     continue
 
-                cursor = conn.execute(_INSERT_SQL, self._row_to_values(row))
+                try:
+                    values = self._row_to_values(row)
+                except ValueError:
+                    errors += 1
+                    continue
+                cursor = conn.execute(_INSERT_SQL, values)
                 if cursor.rowcount == 1:
                     inserted += 1
                 else:
@@ -465,7 +537,11 @@ class XtbImporter:
                     continue
 
                 side = normalize_xtb_side(row["type"])
-                trade = xtb_shares_and_price(row)
+                try:
+                    trade = xtb_shares_and_price(row)
+                except ValueError:
+                    errors += 1
+                    continue
                 if trade is None:
                     filtered += 1
                     continue

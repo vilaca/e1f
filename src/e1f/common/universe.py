@@ -13,6 +13,7 @@ import yaml
 from ftgo import get_fund_stats, get_xid
 
 from .defaults import DEFAULT_CONFIG, KNOWN_FUND_CURRENCIES, XTB_EXCHANGE_SUFFIX
+from .persistence import atomic_write_yaml
 from .retry import call_with_retry
 
 logger = logging.getLogger(__name__)
@@ -376,8 +377,7 @@ class ConfigManager:
         return {"etfs": {}}
 
     def _save_config(self) -> None:
-        with open(self.config_path, "w") as f:
-            yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
+        atomic_write_yaml(self.config_path, self.config, sort_keys=False)
 
     def add(self, isin: str) -> bool:
         """Add ETF by ISIN (auto-resolves all fields)."""

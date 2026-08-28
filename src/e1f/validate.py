@@ -10,9 +10,14 @@ from typing import TypedDict
 
 import numpy as np
 import pandas as pd
-import yaml
 
-from e1f.common import DEFAULT_CONFIG, DEFAULT_CURRENCY_META, DEFAULT_DB, ConfigManager
+from e1f.common import (
+    DEFAULT_CONFIG,
+    DEFAULT_CURRENCY_META,
+    DEFAULT_DB,
+    ConfigManager,
+    CurrencyMetadata,
+)
 
 MAX_MISSING_BUSINESS_DAYS = 5
 MAX_ABS_RETURN = 0.5
@@ -224,16 +229,12 @@ def main(argv: list[str] | None = None) -> int:
     db_isins = set(price_df["isin"].unique())
     config_isin_set = set(config_meta.keys())
 
-    try:
-        with open(args.currency_meta) as f:
-            currency_meta = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        currency_meta = {}
+    currency_meta = CurrencyMetadata.load(args.currency_meta)
 
     currency_errors = []
     for isin in sorted(config_isin_set):
-        pinned = currency_meta.get(isin)
-        if not isinstance(pinned, dict):
+        pinned = currency_meta.funds.get(isin)
+        if pinned is None:
             continue
         symbol = str(pinned.get("symbol") or "")
         currency = str(pinned.get("currency") or "")
@@ -253,8 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     quality = quality_report(price_df)
     venue_by_isin = {
         isin: str(pinned.get("symbol", "")).split(":")[1]
-        for isin, pinned in currency_meta.items()
-        if isinstance(pinned, dict) and len(str(pinned.get("symbol", "")).split(":")) >= 3
+        for isin, pinned in currency_meta.funds.items()
+        if len(str(pinned.get("symbol", "")).split(":")) >= 3
     }
     consensus_gap_map = consensus_gaps(price_df, venue_by_isin)
     gap_breakdown = sorted(

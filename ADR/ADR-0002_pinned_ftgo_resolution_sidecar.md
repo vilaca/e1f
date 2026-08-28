@@ -18,6 +18,13 @@ The first successful resolution of each ISIN is pinned to a YAML sidecar file
 sidecar is committed so the resolution is shared across machines and is stable
 across CI runs.
 
+All readers and writers cross one typed `CurrencyMetadata` boundary. Fund pins
+and the reserved `fx_pairs` map are separate collections in memory, even though
+the backward-compatible YAML wire format remains flat. Unknown top-level keys
+cannot be distinguished from legacy fund keys in that format, but malformed
+fund/FX values fail closed instead of flowing into command-specific casts.
+Writes use a fully flushed temporary file followed by atomic replacement.
+
 Resolution logic prefers the listing quoted in the fund's own share-class currency
 (parsed from the fund name, e.g. `"iShares … USD (Acc)"` → `USD`), falling back
 to the first match when the currency cannot be determined.

@@ -54,6 +54,72 @@ def test_init_creates_transactions_table(tmp_path):
         "fee",
         "tax",
     ]
+    not_null = {column[1]: bool(column[3]) for column in cols}
+    assert not_null["side"]
+    assert not_null["shares"]
+    assert not_null["price"]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        ("tr", "bad-side", "2024-01-01", ISIN_ETF, "DIVIDEND", 1.0, 10.0, 0.0, 0.0),
+        ("tr", "null-shares", "2024-01-01", ISIN_ETF, "BUY", None, 10.0, 0.0, 0.0),
+        ("tr", "zero-shares", "2024-01-01", ISIN_ETF, "BUY", 0.0, 10.0, 0.0, 0.0),
+        ("tr", "null-price", "2024-01-01", ISIN_ETF, "BUY", 1.0, None, 0.0, 0.0),
+        ("tr", "infinite-price", "2024-01-01", ISIN_ETF, "BUY", 1.0, float("inf"), 0.0, 0.0),
+    ],
+)
+def test_transactions_table_rejects_invalid_financial_rows(tmp_path, row):
+    importer = make_importer(tmp_path)
+    with (
+        closing(sqlite3.connect(importer.db_path)) as conn,
+        pytest.raises(sqlite3.IntegrityError),
+    ):
+        conn.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+
+
+def test_init_migrates_valid_legacy_transactions_table(tmp_path):
+    db = tmp_path / "legacy.db"
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "CREATE TABLE transactions (broker TEXT, transaction_id TEXT, datetime TEXT, "
+            "symbol TEXT, side TEXT, shares REAL, price REAL, fee REAL, tax REAL, "
+            "PRIMARY KEY (broker, transaction_id))"
+        )
+        row = ("tr", "1", "2024-01-01", ISIN_ETF, "BUY", 1.0, 10.0, 0.0, 0.0)
+        conn.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        conn.commit()
+
+    transactions_mod.init_transactions_database(str(db))
+
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT * FROM transactions").fetchone() == row
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("tr", "2", "2024-01-01", ISIN_ETF, "BUY", None, 10.0, 0.0, 0.0),
+            )
+
+
+def test_init_refuses_invalid_legacy_transaction_without_mutating(tmp_path):
+    db = tmp_path / "legacy-invalid.db"
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "CREATE TABLE transactions (broker TEXT, transaction_id TEXT, datetime TEXT, "
+            "symbol TEXT, side TEXT, shares REAL, price REAL, fee REAL, tax REAL, "
+            "PRIMARY KEY (broker, transaction_id))"
+        )
+        conn.execute(
+            "INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("tr", "bad", "2024-01-01", ISIN_ETF, "BUY", None, 10.0, 0.0, 0.0),
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="cannot harden transactions table"):
+        transactions_mod.init_transactions_database(str(db))
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT shares FROM transactions").fetchone() == (None,)
 
 
 def test_is_etf_trade_row_matches_sample_buy():
@@ -131,6 +197,32 @@ def test_missing_transaction_id_counts_as_error(tmp_path):
     assert summary.skipped == 0
     assert summary.filtered == 2
     assert summary.errors == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("shares", ""),
+        ("shares", "not-a-number"),
+        ("shares", "0"),
+        ("price", ""),
+        ("price", "inf"),
+        ("fee", "not-a-number"),
+        ("tax", "nan"),
+    ],
+)
+def test_invalid_trade_numeric_counts_as_error_and_is_not_stored(tmp_path, field, value):
+    csv_path = tmp_path / "bad_numeric.csv"
+    df = pd.read_csv(SAMPLE_CSV, dtype=str, keep_default_na=False)
+    df.loc[1, field] = value
+    df.to_csv(csv_path, index=False)
+
+    importer = make_importer(tmp_path)
+    summary = importer.import_csv(csv_path)
+    assert summary.inserted == 0
+    assert summary.errors == 1
+    with closing(sqlite3.connect(importer.db_path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
 
 
 def test_missing_file_raises(tmp_path):
@@ -358,6 +450,12 @@ def test_xtb_shares_and_price_uses_amount(tmp_path):
     assert shares * price == pytest.approx(12.49)
 
 
+def test_xtb_shares_and_price_rejects_malformed_amount():
+    row = pd.Series({"comment": "OPEN BUY 1/1 @ 12.502", "amount": "not-a-number"})
+    with pytest.raises(ValueError, match="amount is not numeric"):
+        transactions_mod.xtb_shares_and_price(row)
+
+
 def test_xtb_filters_unmapped_tickers_without_config(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump({"etfs": {}}))
@@ -405,11 +503,14 @@ def test_main_xtb_success(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_parse_float_handles_blank_and_non_numeric():
+def test_parse_float_handles_finite_and_blank_values():
     assert transactions_mod._parse_float("12.5") == pytest.approx(12.5)
     assert transactions_mod._parse_float("") is None
     assert transactions_mod._parse_float(None) is None
-    assert transactions_mod._parse_float("n/a") is None
+    with pytest.raises(ValueError, match="not numeric"):
+        transactions_mod._parse_float("n/a")
+    with pytest.raises(ValueError, match="must be finite"):
+        transactions_mod._parse_float("inf")
 
 
 def test_format_datetime_timestamp_and_plain_string():

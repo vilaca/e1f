@@ -24,7 +24,18 @@ dependencies = [
 e1f = "e1f.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "import-linter", "vulture"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "types-PyYAML",
+    "pandas-stubs",
+    "import-linter",
+    "vulture",
+    "hypothesis>=6.165.10",
+    "mutmut>=3.7.0",
+]
 
 [tool.ruff]
 src = ["src"]
@@ -49,12 +60,30 @@ ignore = [
 # import locally — deferred loads after fixture setup, per-test symbol pulls.
 "tests/**" = ["PLC0415"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.mypy]
 strict = true
 
 [[tool.mypy.overrides]]
 module = ["yfinance.*", "ftgo.*", "scipy.*"]
 ignore_missing_imports = true
+
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = [
+    "src/e1f/common/rebalance.py",
+    "src/e1f/common/scenarios.py",
+    "src/e1f/transactions.py",
+]
+pytest_add_cli_args_test_selection = [
+    "tests/test_rebalance.py",
+    "tests/test_rebalance_properties.py",
+    "tests/test_scenario.py",
+    "tests/test_transactions.py",
+]
+mutate_only_covered_lines = true
 
 [tool.importlinter]
 root_packages = ["e1f"]
@@ -103,3 +132,10 @@ layers = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/e1f" = [
+    "data/currency_metadata.yaml",
+    "data/etf_universe.yaml",
+    "data/glossary.md",
+]
