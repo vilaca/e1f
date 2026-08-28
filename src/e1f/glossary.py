@@ -7,6 +7,7 @@ renders it — the content lives in one place, not duplicated in code.
 """
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,12 +51,38 @@ def parse_glossary(text: str) -> list[Term]:
     return terms
 
 
+def _name_matches(name: str, needle: str) -> bool:
+    """Case-insensitive name hit anchored at a token start.
+
+    A needle beginning with a letter/digit must sit at a left word boundary, so
+    ``P&L`` still fans out to ``P&L€`` / ``P&L%`` / ``P&Lctr`` (all prefixes) while
+    ``TER`` hits ``weighted TER`` without matching the buried ``ter`` in
+    ``Underwater``. A single letter/digit additionally needs a right boundary
+    (``n`` finds ``n (observations)``, not ``drawdown``). Needles starting with a
+    non-alphanumeric char (``€``, ``%``, ``Δ``) use plain substring so ``€`` finds
+    all EUR-suffixed metrics even though they are never token-isolated.
+    """
+    hay = name.lower()
+    needle = needle.lower()
+    if not re.match(r"[a-z0-9]", needle):
+        return needle in hay
+    right = r"(?![a-z0-9])" if len(needle) == 1 else ""
+    return re.search(rf"(?<![a-z0-9]){re.escape(needle)}{right}", hay) is not None
+
+
+# ASCII stand-ins accepted as aliases for hard-to-type chars.
+_ALIASES: dict[str, str] = {"e": "€", "pct": "%", "r2": "r²"}
+
+
 def find_terms(terms: list[Term], query: str) -> list[Term]:
     """Terms matching ``query`` (case-insensitive): by name first, else by group/body."""
     needle = query.strip().lower()
-    by_name = [t for t in terms if needle in t.name.lower()]
+    needle = _ALIASES.get(needle, needle)
+    by_name = [t for t in terms if _name_matches(t.name, needle)]
     if by_name:
         return by_name
+    if len(needle) == 1 and re.match(r"[a-z0-9]", needle):
+        return []  # a letter/digit is not a topical search of every body
     return [
         t for t in terms if needle in t.group.lower() or needle in "\n".join(t.body).lower()
     ]
@@ -118,13 +145,14 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog="""
 Reads data/glossary.md (checked in) — the same file you can open and read. With no
 term it lists every metric, grouped; with a term it prints the matching entries
-(case-insensitive substring, so 'P&L' matches P&L€, P&L%, P&Lctr).
+(case-insensitive, matched at word starts, so 'P&L' fans out to the whole P&L
+family). Quote terms with shell metacharacters, e.g. "P&L".
 
 Examples:
   e1f glossary                # list every term, grouped
   e1f glossary TWR            # one term
   e1f glossary drawdown       # every term whose name contains 'drawdown'
-  e1f glossary P&L            # P&L€, P&L%, P&Lctr
+  e1f glossary "P&L"          # P&L€, P&L%, P&Lctr, ΔP&L€, %P&L
         """,
     )
     parser.add_argument(
