@@ -168,9 +168,12 @@ class ExtendedMetrics:
     ``max_drawdown`` equals ``risk_metrics``'s (same return series). Durations are
     **calendar days** between the dated wealth-index points; ``max_dd_ongoing``
     marks a deepest drawdown not yet recovered as of the last day (its duration is
-    then measured to that day). Any field is ``None`` when the series is too short
-    to define it — and ``recovery_factor`` is ``None`` when there is no drawdown to
-    recover from.
+    then measured to that day). ``days_since_high`` counts calendar days since the
+    *current* running peak (0 when the last day is itself a new high) — distinct
+    from ``max_dd_duration_days``, which tracks the *deepest* episode; the two
+    coincide only while the deepest drawdown is also the open one. Any field is
+    ``None`` when the series is too short to define it — and ``recovery_factor`` is
+    ``None`` when there is no drawdown to recover from.
     """
 
     max_drawdown: float | None
@@ -179,6 +182,7 @@ class ExtendedMetrics:
     max_dd_recovery_date: str | None
     max_dd_ongoing: bool
     underwater_days: int | None
+    days_since_high: int | None
     recovery_factor: float | None
     best_day: float | None
     best_day_date: str | None
@@ -262,6 +266,18 @@ def extended_metrics(
         max_dd_peak_date = max_dd_recovery_date = None
         max_dd_ongoing = False
 
+    # Days since the current running peak: the last episode when it is still open
+    # (its peak is the running high), else 0 — the index sits at a new high as of
+    # the last day. Distinct from the deepest episode's duration above.
+    days_since_high: int | None
+    if not wealth_path:
+        days_since_high = None
+    elif episodes and not episodes[-1].recovered:
+        current = episodes[-1]
+        days_since_high = _window_days(current.peak_date, current.end_date)
+    else:
+        days_since_high = 0
+
     recovery_factor = (
         None if twr is None or not max_drawdown else twr / abs(max_drawdown)
     )
@@ -273,6 +289,7 @@ def extended_metrics(
         max_dd_recovery_date=max_dd_recovery_date,
         max_dd_ongoing=max_dd_ongoing,
         underwater_days=underwater_days,
+        days_since_high=days_since_high,
         recovery_factor=recovery_factor,
         best_day=best_day,
         best_day_date=best_day_date,
@@ -1196,6 +1213,11 @@ def _render_metrics(as_of: str, total: PerformanceRow, ext: ExtendedMetrics) -> 
             _fmt_duration(ext.max_dd_duration_days),
             note=_maxdd_duration_note(ext),
         ),
+        _metric_line(
+            "Days Since High",
+            _fmt_duration(ext.days_since_high),
+            note="at high" if ext.days_since_high == 0 else "",
+        ),
         _metric_line("Underwater (total)", _fmt_duration(ext.underwater_days)),
         _metric_line("Recovery Factor", _fmt_ratio(ext.recovery_factor)),
         "",
@@ -1267,7 +1289,8 @@ def _cmd_performance_metrics(
         )
     print(
         "\nDurations are calendar days (peak → recovery); MaxDD Duration is the deepest "
-        "drawdown's. Best/Worst Day are single time-weighted return periods on the "
+        "drawdown's, Days Since High counts from the current running peak (0 = at a new "
+        "high). Best/Worst Day are single time-weighted return periods on the "
         "gap-bridged daily series."
     )
     return 0
@@ -1280,7 +1303,7 @@ def _cmd_performance_metrics(
 
 
 _METRICS_SERIES_HEADER = (
-    f"\n{'Date':<12} {'TWR':>7} {'MaxDD':>7} {'DDdur':>7} {'Underwtr':>9} "
+    f"\n{'Date':<12} {'TWR':>7} {'MaxDD':>7} {'DDdur':>7} {'SinceHi':>8} {'Underwtr':>9} "
     f"{'RecFac':>7} {'Best':>8} {'Worst':>8} {'G/L':>6}"
 )
 _METRICS_SERIES_RULE_WIDTH = len(_METRICS_SERIES_HEADER.lstrip("\n"))
@@ -1290,6 +1313,7 @@ def _format_metrics_series_row(day: str, total: PerformanceRow, ext: ExtendedMet
     return (
         f"{day:<12} {_fmt_pct(total.twr):>7} {_fmt_pct(ext.max_drawdown):>7} "
         f"{_fmt_duration(ext.max_dd_duration_days):>7} "
+        f"{_fmt_duration(ext.days_since_high):>8} "
         f"{_fmt_duration(ext.underwater_days):>9} {_fmt_ratio(ext.recovery_factor):>7} "
         f"{_fmt_signed_pct(ext.best_day):>8} {_fmt_signed_pct(ext.worst_day):>8} "
         f"{_fmt_ratio(ext.gain_loss_ratio):>6}"
@@ -1336,8 +1360,9 @@ def _cmd_performance_metrics_series(
             "(no price on the day itself — fetch to refresh)."
         )
     print(
-        "\nDDdur/Underwtr are calendar days; a still-open drawdown's duration is measured "
-        "to that day. RecFac = TWR/|MaxDD|. Best/Worst are single time-weighted returns."
+        "\nDDdur/SinceHi/Underwtr are calendar days; a still-open drawdown's duration is "
+        "measured to that day. SinceHi = days since the current running peak (0 = at a new "
+        "high). RecFac = TWR/|MaxDD|. Best/Worst are single time-weighted returns."
     )
     return 0
 
