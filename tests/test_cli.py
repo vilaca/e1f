@@ -51,3 +51,8 @@ def test_real_commands_are_registered():
     assert cli.COMMANDS['validate'] is validate_mod.main
     assert cli.COMMANDS['transactions'] is transactions_mod.main
     assert cli.COMMANDS['portfolio'] is portfolio_mod.main
+
+    import e1f.glossary as glossary_mod
+
+    assert cli.COMMANDS['glossary'] is glossary_mod.main
+    assert cli.PARSER_FACTORIES['glossary'] is glossary_mod._build_parser

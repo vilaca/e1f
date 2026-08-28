@@ -37,6 +37,7 @@ def test_cli_commands_surface():
         "correlation",
         "rebalance",
         "scenario",
+        "glossary",
         "concentration",
         "overlap",
         "backtest",

@@ -40,14 +40,15 @@ walled off so no stable command depends on them:
 10. **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 11. **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
 12. **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
+13. **`e1f glossary`** — look up what a metric means and what it's useful for; reads the checked-in `data/glossary.md` (`e1f glossary` lists all, `e1f glossary TWR` / `e1f glossary "P&L"` looks one up) (ADR-0034).
 
 Experimental tier (ADR-0024):
 
-13. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
-14. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
-15. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
-16. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
-17. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
+14. **`e1f lookthrough`** — refresh cached yfinance look-through snapshots for held funds; run it after `fetch` to feed `concentration` / `overlap`.
+15. **`e1f concentration`** — coverage-aware within-fund concentration (security, sector, asset-class) with rank-constrained bounds on the unobserved tail.
+16. **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
+17. **`e1f backtest`** — contribution-timing backtest over one ETF's real EUR history: does shifting a fixed monthly budget toward market dips beat a constant DCA, net of holding cash? Reports terminal wealth and XIRR per strategy against lump-sum / constant-DCA / cash-drag / blind-even benchmarks, and decomposes each dip into reserve-cost / deployment-benefit / timing-benefit / total (ADR-0020). A within-month **daily dip-slice** strategy (`deploy=daily-dip,n=N`) probes intra-month timing with no cross-month reserve (ADR-0021); a **carry-forward** variant (`deploy=daily-dip-carry`) instead flushes every accrued-but-unspent slice onto each down day (ADR-0023).
+18. **`e1f seasonality`** — calendar-month analysis of one ETF (`--isin`) or a portfolio consensus (`--portfolio`): all twelve months descriptively, a permutation omnibus, a cross-sectional test of whether many funds nominate the same strongest/weakest month, a balanced equal-weight book, and optional pre-specified / frozen-OOS seasonal rules versus constant-DCA. `--evaluate` scores the frozen August/November contribution rules against DCA. September is not special; the weakest in-sample month is never auto-traded (`ADR/ADR-0026_calendar_seasonality.md`, `ADR/ADR-0027_portfolio_seasonality_consensus.md`, `ADR/ADR-0028_frozen_seasonal_evaluation.md`).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -132,6 +133,10 @@ e1f scenario list                    # names, target counts, sums
 e1f scenario show core               # targets with fund names
 e1f rebalance --scenario core        # recall the saved basket (--months here overrides)
 e1f correlation --scenario core      # correlate the POST-rebalance portfolio it implies
+
+# Look up what a metric means (ADR-0034)
+e1f glossary                         # list every metric, grouped
+e1f glossary TWR                     # one term; e1f glossary "P&L" fans out to the P&L family
 
 # 10. Backtest contribution timing over one ETF's real history (ADR-0019)
 e1f backtest --isin IE00B3YLTY66                       # dip vs DCA + matched cash-drag/blind-even controls
