@@ -160,7 +160,10 @@ def test_worklist_drops_group_once_every_name_is_resolved():
 
 
 def test_weight_issue_flags_negative_and_over_100_but_not_valid():
+    assert overlap._weight_issue(float("nan")) is not None
     assert overlap._weight_issue(-0.01) is not None
+    assert overlap._weight_issue(-0.003) is not None
+    assert overlap._weight_issue(-1e-12) == "negative weight"
     assert overlap._weight_issue(1.5) is not None
     assert overlap._weight_issue(0.5) is None
     assert overlap._weight_issue(1.0) is None  # a 100% weight is a valid long weight
@@ -330,6 +333,20 @@ def test_report_discloses_unvaluable_fund(tmp_path, capsys):
     assert overlap.main(["--db", db, "--currency-meta", meta, "--as-of", "2024-12-31"]) == 0
     out = capsys.readouterr().out
     assert "excluded from overlap" in out and F2 in out
+
+
+def test_report_discloses_lookthrough_coverage_and_missing_snapshot(tmp_path, capsys):
+    db, meta = _seed(
+        tmp_path,
+        snapshots={F1: [_security("Apple Inc.", 0.05, 1)]},
+    )
+
+    assert overlap.main(["--db", db, "--currency-meta", meta, "--as-of", "2024-12-31"]) == 0
+
+    out = capsys.readouterr().out
+    assert "valuation coverage 100.0%" in out
+    assert "Look-through coverage: 50.0% of valued funds (1/2 snapshots)" in out
+    assert "valued funds with no look-through snapshot" in out and F2 in out
 
 
 def test_bad_as_of_is_exit_1(tmp_path, capsys):

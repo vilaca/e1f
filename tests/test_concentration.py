@@ -82,9 +82,18 @@ def test_cumulative_share_known_and_unknown():
 def test_dimension_issue_flags_unsound_weightings():
     assert conc.dimension_issue([("A", 0.6), ("B", 0.4)]) is None            # sound
     assert conc.dimension_issue([]) == "no weights"
+    assert conc.dimension_issue([("A", -1e-12), ("B", 1.0)]) == "contains negative weights"
     assert conc.dimension_issue([("A", 1.145), ("B", -0.145)]) == "contains negative weights"
     assert conc.dimension_issue([("A", 1.2), ("B", 0.0)]) == "a weight exceeds 100%"
     assert conc.dimension_issue([("A", 0.30)]).startswith("weights sum to")
+
+
+def test_security_issue_flags_invalid_partial_weights():
+    assert conc.security_issue([0.6, 0.4]) is None
+    assert conc.security_issue([float("nan")]) == "contains non-finite weights"
+    assert conc.security_issue([0.6, 0.5]) == "observed weights sum to 110%"
+    assert conc.security_issue([0.1, -0.001]) == "contains negative weights"
+    assert conc.security_issue([1.01]) == "a weight exceeds 100%"
 
 
 def test_dimension_weights_validity_properties():
@@ -474,6 +483,25 @@ def test_suspect_weighting_in_explain(tmp_path, capsys):
     assert conc.main(["--db", db, "--config", cfg, VWCE, "--explain"]) == 0
     out = capsys.readouterr().out
     assert "Position-type split" in out and "suspect: contains negative weights" in out
+
+
+def test_suspect_security_weights_withhold_hhi_and_show_source(tmp_path, capsys):
+    junk = [_security("Apple Inc.", 0.6, 1), _security("Microsoft Corp", 0.5, 2)]
+    db, cfg = _seed(
+        tmp_path,
+        held=[VWCE],
+        snapshots={VWCE: junk},
+        config={VWCE: {"name": "Broken source", "tickers": ["X"]}},
+    )
+
+    assert conc.main(["--db", db, "--config", cfg, VWCE]) == 0
+
+    out = capsys.readouterr().out
+    assert "observed weights sum to 110%" in out
+    assert "Apple Inc. 60.0%" in out and "Microsoft Corp 50.0%" in out
+    assert "Security HHI" in out and "[UNAVAILABLE]" in out
+    assert "0.6100" not in out
+    assert "fully observed" not in out
 
 
 def test_fully_observed_reports_no_bound(tmp_path, capsys):

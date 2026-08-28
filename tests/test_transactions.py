@@ -199,6 +199,14 @@ def test_missing_transaction_id_counts_as_error(tmp_path):
     assert summary.errors == 1
 
 
+def test_parse_float_enforces_required_field_contract():
+    assert transactions_mod._parse_float("0.5", "shares", required=True) == 0.5
+    with pytest.raises(ValueError, match=r"^shares is required$"):
+        transactions_mod._parse_float("", "shares", required=True)
+    with pytest.raises(ValueError, match=r"^shares must be positive$"):
+        transactions_mod._parse_float("0", "shares", required=True)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -504,13 +512,13 @@ def test_main_xtb_success(tmp_path, capsys):
 
 
 def test_parse_float_handles_finite_and_blank_values():
-    assert transactions_mod._parse_float("12.5") == pytest.approx(12.5)
-    assert transactions_mod._parse_float("") is None
-    assert transactions_mod._parse_float(None) is None
+    assert transactions_mod._parse_float("12.5", "amount") == pytest.approx(12.5)
+    assert transactions_mod._parse_float("", "amount") is None
+    assert transactions_mod._parse_float(None, "amount") is None
     with pytest.raises(ValueError, match="not numeric"):
-        transactions_mod._parse_float("n/a")
+        transactions_mod._parse_float("n/a", "amount")
     with pytest.raises(ValueError, match="must be finite"):
-        transactions_mod._parse_float("inf")
+        transactions_mod._parse_float("inf", "amount")
 
 
 def test_format_datetime_timestamp_and_plain_string():
@@ -524,8 +532,14 @@ def test_parse_xtb_id_variants():
     assert transactions_mod._parse_xtb_id(None) == ""
     assert transactions_mod._parse_xtb_id(float("nan")) == ""
     assert transactions_mod._parse_xtb_id(42.0) == "42"
+    assert transactions_mod._parse_xtb_id(float(2**53)) == ""
     assert transactions_mod._parse_xtb_id("") == ""
     assert transactions_mod._parse_xtb_id("100.0") == "100"
+    assert transactions_mod._parse_xtb_id("00100") == "00100"
+    assert transactions_mod._parse_xtb_id("9007199254740992") == "9007199254740992"
+    assert transactions_mod._parse_xtb_id("9007199254740993") == "9007199254740993"
+    assert transactions_mod._parse_xtb_id("9007199254740993.0") == "9007199254740993"
+    assert transactions_mod._parse_xtb_id("100.5") == "100.5"
     # Non-numeric text is preserved verbatim.
     assert transactions_mod._parse_xtb_id("ORDER-7") == "ORDER-7"
 

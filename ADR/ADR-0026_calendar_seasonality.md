@@ -288,7 +288,7 @@ A strategy comparison runs only when `--rule` is set. Two families, both
 | Rule | What it does |
 |---|---|
 | `avoid-month` | Stay invested. Skip the selected month's contribution; hold that `C` in cash; deploy it at the next monthly fill together with that next month's `C`. |
-| `sit-out-month` | Sell the entire position at the last fill on or before the selected month starts; hold cash through the month (earning `--cash-rate`); buy back at the next monthly fill after the month ends. |
+| `sit-out-month` | Sell the entire position at the selected month's fill (the first close on or after the 1st); hold cash through the month (earning `--cash-rate`); buy back at the next monthly fill. ADR-0028 freezes and reaffirms this convention. |
 
 `--month` (1–12) is required for both. `--cash-rate` is the same Actual/365
 idle-cash convention as ADR-0019 (default 0). `--contribution` follows the

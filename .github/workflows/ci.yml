@@ -47,3 +47,19 @@ jobs:
       # Pre-installed on ubuntu-latest.
       - name: Run actions gate
         run: ./scripts/check.sh actions
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies (locked)
+        run: uv sync --extra dev
+
+      - name: Run targeted financial mutation tests
+        run: ./scripts/check.sh mutation

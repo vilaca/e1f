@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from e1f.cli import COMMANDS
+from e1f.cli import COMMANDS, STABLE_COMMANDS
 from e1f.experimental.common import init_lookthrough_schema
 from e1f.fetch import DataExtractor
 from e1f.transactions import TradeRepublicImporter
@@ -44,6 +44,23 @@ def test_cli_commands_surface():
         "lookthrough",
         "seasonality",
     }
+
+
+def test_layer_contracts_cover_every_stable_command() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    contracts = {
+        contract["name"]: contract for contract in pyproject["tool"]["importlinter"]["contracts"]
+    }
+    expected = {f"e1f.{command}" for command in STABLE_COMMANDS}
+
+    command_layer = contracts["Module layers: cli -> command modules -> common"]["layers"][1]
+    assert {module.strip() for module in command_layer.split("|")} == expected
+    forbidden_sources = set(
+        contracts[
+            "Experimental tier is isolated: only cli may import it (ADR-0024)"
+        ]["source_modules"]
+    )
+    assert forbidden_sources == expected | {"e1f.common"}
 
 
 def test_readme_python_version_matches_pyproject():

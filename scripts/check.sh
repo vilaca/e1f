@@ -53,14 +53,11 @@ gate_types()  { uv run mypy src; }
 gate_dead()   { uv run vulture src/e1f --min-confidence 80; }
 gate_package() { uv run python scripts/package_smoke.py; }
 gate_mutation() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-        echo "targeted mutmut gate runs on Linux CI (native extensions are not fork-safe on macOS)"
-        return 0
-    fi
     uv run mutmut run --max-children 4 \
-        'e1f.common.rebalance.compute_rebalance*' \
-        'e1f.common.scenarios._validate_scenario*' \
-        'e1f.transactions._parse_float*'
+        'e1f.common.rebalance.x_compute_rebalance*' \
+        'e1f.common.scenarios.x__validate_scenario*' \
+        'e1f.transactions.x__parse_float*'
+    uv run python scripts/mutation_score.py
 }
 gate_test() {
     uv run pytest -q \

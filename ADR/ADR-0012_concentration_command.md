@@ -102,6 +102,17 @@ HHI_min      = HHI_observed + (R² / (N − 10)   if N known, else 0)
 HHI_max      = HHI_observed + R · w₁₀
 ```
 
+These bounds require finite, valid long NAV weights. If any observed security
+weight is non-finite or negative, any one exceeds 100%, or the observed total
+exceeds 100% beyond source rounding tolerance, security coverage and HHI are
+**UNAVAILABLE**. The raw source weights remain visible for diagnosis; they are
+never clamped or normalized into an apparently valid bound.
+
+The zero lower bound is exact and shared by security, sector, and asset-class
+weights. Source-rounding tolerance applies only to the upper bound and complete
+dimension total; even a tiny negative remains invalid and is disclosed without
+inferring whether its cause is rounding, a short leg, or another source artifact.
+
 - **Max uses the rank constraint.** Holdings are ordered by weight, so every
   unobserved security weighs `≤ w₁₀`; packing the tail at that cap gives
   `R·w₁₀` — a hard upper bound, not an estimate. The naïve `R²` (whole remainder

@@ -191,6 +191,11 @@ day, or no FX rate — the existing `value_on` contract). A `None`-valued fund i
 **excluded from the floor and disclosed** (a distinct coverage gap from the
 top-10 one).
 
+A valued fund with no look-through snapshot is different: its value remains in
+the valued denominator, but it contributes no observed weights. The report
+therefore states look-through snapshot coverage separately from valuation
+coverage and names every valued fund lacking a snapshot.
+
 **The `as_of` mismatch is documented, not reconciled.** The *weights* come from a
 look-through snapshot (its own `as_of`, possibly weeks old); the *€ value* comes
 from prices/positions as of the valuation date (default: latest/today). These are
@@ -211,12 +216,14 @@ negative weight                  → exclude + disclose
 weight > 100%                    → exclude + disclose
 ```
 
-A **negative** weight (a synthetic/swap short leg) is the dangerous case: folding
-it in as positive both inflates the floor *and* inverts the exposure it actually
-represents, making the number **wrong in direction** — the one outcome this design
-refuses. A **>100%** weight is not a legitimate NAV portfolio weight under
-`overlap`'s `Vf · w` contract (it would be a derivative notional, a different and
-unsupported concept). The `+ε` absorbs float / source-rounding noise only.
+A **negative** weight is unsupported regardless of whether its source is rounding,
+a short/synthetic leg, or another artifact; diagnostics disclose the value without
+classifying its cause. Folding a short in as positive would both inflate the floor
+and invert the exposure it represents, making the number **wrong in direction** —
+the one outcome this design refuses. A **>100%** weight is not a legitimate NAV
+portfolio weight under `overlap`'s `Vf · w` contract (it would be a derivative
+notional, a different and unsupported concept). The zero lower bound is exact;
+`+ε` absorbs source-rounding noise on the upper bound only.
 
 **Never clamp, never net, never infer.** No `max(0, w)` / `min(w, 1)` — clamping
 launders bad source data into apparently valid evidence. No netting of shorts

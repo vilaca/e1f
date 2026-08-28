@@ -303,6 +303,27 @@ def test_sit_out_skips_a_falling_month():
     assert sz.invariance_holds(sit, cash_rate=0.0)  # sit-out is exempt
 
 
+def test_sit_out_sells_at_selected_fill_and_reenters_at_next_fill():
+    dates = ["2024-01-02", "2024-02-01", "2024-03-01"]
+    closes = [10.0, 20.0, 40.0]
+    result = sz.simulate_seasonal(
+        dates,
+        closes,
+        contribution=100.0,
+        cash_rate=0.0,
+        kind=sz.DeployKind.SIT_OUT,
+        selected_month=2,
+        fills=[0, 1, 2],
+        label="sit-out February",
+    )
+
+    # Jan: 10 shares. Feb fill: sell at 20 + add 100 => 300 cash.
+    # Mar fill: add 100 and re-enter at 40 => 10 shares, terminal 400.
+    assert result.cash == 0.0
+    assert result.equity == pytest.approx(400.0)
+    assert result.terminal == pytest.approx(400.0)
+
+
 def test_cash_rate_grows_idle_cash():
     dates, closes, _returns, fills = _path_for_sim()
     flat = sz.simulate_seasonal(

@@ -83,7 +83,12 @@ pytest_add_cli_args_test_selection = [
     "tests/test_scenario.py",
     "tests/test_transactions.py",
 ]
-mutate_only_covered_lines = true
+# Covered-line filtering is deliberately disabled: its coverage-gathering pass
+# pops every test-loaded module out of sys.modules and re-imports them, which
+# makes numpy's C extension abort ("cannot load module more than once per
+# process"). The per-function CLI globs in scripts/check.sh already scope the
+# mutants that actually run, so covered-line filtering is redundant here.
+mutate_only_covered_lines = false
 
 [tool.importlinter]
 root_packages = ["e1f"]
@@ -93,7 +98,7 @@ name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.correlation | e1f.rebalance | e1f.scenario",
+    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.benchmark | e1f.deposits | e1f.correlation | e1f.rebalance | e1f.scenario | e1f.glossary",
     "e1f.common",
 ]
 
@@ -112,9 +117,12 @@ source_modules = [
     "e1f.transactions",
     "e1f.portfolio",
     "e1f.performance",
+    "e1f.benchmark",
+    "e1f.deposits",
     "e1f.correlation",
     "e1f.rebalance",
     "e1f.scenario",
+    "e1f.glossary",
     "e1f.common",
 ]
 forbidden_modules = ["e1f.experimental"]
