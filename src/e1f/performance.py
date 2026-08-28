@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import itertools
 import statistics
 import sys
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from e1f.common import (
     aggregate_value_series as _aggregate_series,
     build_series as _build_series,
     contribution_on as _contribution_on,
+    contribution_to_return,
     load_price_series,
     load_trades,
     position_asof as _position_asof,
@@ -163,7 +165,7 @@ class _DrawdownEpisode:
 
 @dataclass(frozen=True)
 class ExtendedMetrics:
-    """Drawdown-shape and daily-extreme metrics over a value/contribution series.
+    """Drawdown-shape, extreme-period, and trailing-window metrics over a series.
 
     ``max_drawdown`` equals ``risk_metrics``'s (same return series). Durations are
     **calendar days** between the dated wealth-index points; ``max_dd_ongoing``
@@ -189,6 +191,17 @@ class ExtendedMetrics:
     worst_day: float | None
     worst_day_date: str | None
     gain_loss_ratio: float | None
+    # Calendar-month buckets of the daily return series, chain-linked (partial first/
+    # last months included); labels are ``YYYY-MM``. None on an empty series.
+    best_month: float | None
+    best_month_label: str | None
+    worst_month: float | None
+    worst_month_label: str | None
+    # Trailing time-weighted returns over the 1/3/6-month windows ending at the latest
+    # valued day; None when the window's start predates inception (not enough history).
+    trailing_1m: float | None
+    trailing_3m: float | None
+    trailing_6m: float | None
 
 
 def _drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[_DrawdownEpisode]:
@@ -218,6 +231,58 @@ def _drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[_DrawdownEp
     if open_trough is not None:
         episodes.append(_DrawdownEpisode(peak_date, wealth_path[-1][0], False, open_trough))
     return episodes
+
+
+def _monthly_returns(returns: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Calendar-month returns ``(YYYY-MM, return)`` from dated daily sub-period returns.
+
+    Buckets the date-sorted daily time-weighted returns by the ``YYYY-MM`` of their date
+    and chain-links each month; partial first/last months are included as-is. Empty in,
+    empty out.
+    """
+    monthly: list[tuple[str, float]] = []
+    for month, group in itertools.groupby(returns, key=lambda dr: dr[0][:7]):
+        wealth = 1.0
+        for _day, period_return in group:
+            wealth *= 1.0 + period_return
+        monthly.append((month, wealth - 1.0))
+    return monthly
+
+
+def _subtract_months(anchor: date, months: int) -> date:
+    """``anchor`` shifted back ``months`` calendar months, clamping the day to the target
+    month's length (e.g. Mar 31 − 1 month → Feb 28)."""
+    month_index = anchor.year * 12 + (anchor.month - 1) - months
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    last_day = (next_month - timedelta(days=1)).day
+    return date(year, month, min(anchor.day, last_day))
+
+
+def _trailing_return(
+    wealth_path: list[tuple[str, float]], inception: str, months: int
+) -> float | None:
+    """Time-weighted return over the trailing ``months``-calendar-month window.
+
+    Anchored at the latest wealth-index day; ``None`` when there is no wealth path or the
+    window's start predates ``inception`` (not enough history). The base is the last
+    wealth-index value on/before the window start, defaulting to 1.0 (the inception seed)
+    when the start falls before the first defined return.
+    """
+    if not wealth_path:
+        return None
+    anchor_day, end_wealth = wealth_path[-1]
+    start = _subtract_months(date.fromisoformat(anchor_day), months).isoformat()
+    if start < inception:
+        return None
+    base = 1.0
+    for day, wealth in wealth_path:
+        if day <= start:
+            base = wealth
+        else:
+            break
+    return end_wealth / base - 1.0
 
 
 def extended_metrics(
@@ -282,6 +347,26 @@ def extended_metrics(
         None if twr is None or not max_drawdown else twr / abs(max_drawdown)
     )
 
+    best_month: float | None
+    worst_month: float | None
+    best_month_label: str | None
+    worst_month_label: str | None
+    monthly = _monthly_returns(returns)
+    if monthly:
+        best_month_label, best_month = max(monthly, key=lambda mr: mr[1])
+        worst_month_label, worst_month = min(monthly, key=lambda mr: mr[1])
+    else:
+        best_month = worst_month = None
+        best_month_label = worst_month_label = None
+
+    inception = points[0][0] if points else None
+    if inception is None:
+        trailing_1m = trailing_3m = trailing_6m = None
+    else:
+        trailing_1m = _trailing_return(wealth_path, inception, 1)
+        trailing_3m = _trailing_return(wealth_path, inception, 3)
+        trailing_6m = _trailing_return(wealth_path, inception, 6)
+
     return ExtendedMetrics(
         max_drawdown=max_drawdown,
         max_dd_duration_days=max_dd_duration,
@@ -296,6 +381,13 @@ def extended_metrics(
         worst_day=worst_day,
         worst_day_date=worst_day_date,
         gain_loss_ratio=gain_loss_ratio,
+        best_month=best_month,
+        best_month_label=best_month_label,
+        worst_month=worst_month,
+        worst_month_label=worst_month_label,
+        trailing_1m=trailing_1m,
+        trailing_3m=trailing_3m,
+        trailing_6m=trailing_6m,
     )
 
 
@@ -1221,10 +1313,21 @@ def _render_metrics(as_of: str, total: PerformanceRow, ext: ExtendedMetrics) -> 
         _metric_line("Underwater (total)", _fmt_duration(ext.underwater_days)),
         _metric_line("Recovery Factor", _fmt_ratio(ext.recovery_factor)),
         "",
-        "  Daily extremes",
+        "  Extremes",
         _metric_line("Best Day", _fmt_signed_pct(ext.best_day), note=ext.best_day_date or ""),
         _metric_line("Worst Day", _fmt_signed_pct(ext.worst_day), note=ext.worst_day_date or ""),
+        _metric_line(
+            "Best Month", _fmt_signed_pct(ext.best_month), note=ext.best_month_label or ""
+        ),
+        _metric_line(
+            "Worst Month", _fmt_signed_pct(ext.worst_month), note=ext.worst_month_label or ""
+        ),
         _metric_line("Max Gain / Max Loss", _fmt_ratio(ext.gain_loss_ratio)),
+        "",
+        "  Trailing returns (time-weighted)",
+        _metric_line("1 Month", _fmt_signed_pct(ext.trailing_1m)),
+        _metric_line("3 Months", _fmt_signed_pct(ext.trailing_3m)),
+        _metric_line("6 Months", _fmt_signed_pct(ext.trailing_6m)),
     ]
 
 
@@ -1291,7 +1394,87 @@ def _cmd_performance_metrics(
         "\nDurations are calendar days (peak → recovery); MaxDD Duration is the deepest "
         "drawdown's, Days Since High counts from the current running peak (0 = at a new "
         "high). Best/Worst Day are single time-weighted return periods on the "
-        "gap-bridged daily series."
+        "gap-bridged daily series; Best/Worst Month are calendar-month buckets of it "
+        "(partial first/last months included). Trailing returns are time-weighted over "
+        "each window ending at the latest valued day; a window predating inception shows "
+        "n/a."
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Return-contribution view (ADR-0033): --contrib — each holding's Cariño-linked
+# share of the book's time-weighted return, summing exactly to the TOTAL TWR.
+# ---------------------------------------------------------------------------
+
+
+_CONTRIB_HEADER = f"\n{'ISIN':<14} {'Fund':<28} {'TWR':>8} {'Weight':>8} {'Ctr%':>8}"
+_CONTRIB_RULE_WIDTH = len(_CONTRIB_HEADER.lstrip("\n"))
+
+
+def _format_contrib_row(
+    isin: str, name: str, twr: float | None, weight: float | None, contribution: float | None
+) -> str:
+    return (
+        f"{isin:<14} {name[:28]:<28} {_fmt_signed_pct(twr):>8} "
+        f"{_fmt_pct(weight, scaled=True):>8} {_fmt_signed_pct(contribution):>8}"
+    )
+
+
+def _cmd_performance_contrib(
+    db_path: str,
+    config_path: str,
+    *,
+    as_of: str,
+    sort_by: str = "isin",
+    reverse: bool = False,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+) -> int:
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
+    if not any(row.valuable for row in rows):
+        print(f"No priceable holdings as of {as_of}")
+        return 0
+
+    total = _total_row(rows, holdings, as_of, db_path)
+    valuable_series = [s for s in holdings if _value_on(s, as_of, db_path) is not None]
+    first_day = min((s.events[0].date for s in valuable_series), default=as_of)
+    contributions = contribution_to_return(valuable_series, first_day, as_of, db_path)
+
+    print(f"\nPer-holding return contribution as of {as_of} (EUR)")
+    print(_CONTRIB_HEADER)
+    print("-" * _CONTRIB_RULE_WIDTH)
+    valuable_rows = [row for row in rows if row.valuable]
+    for row in sort_rows(valuable_rows, sort_by=sort_by, reverse=reverse):
+        weight = (
+            100.0 * (row.market_value or 0.0) / total.market_value
+            if total.market_value
+            else None
+        )
+        contribution = None if contributions is None else contributions.get(row.isin)
+        print(_format_contrib_row(row.isin, row.name, row.twr, weight, contribution))
+
+    print("-" * _CONTRIB_RULE_WIDTH)
+    total_contribution = None if contributions is None else sum(contributions.values())
+    total_weight = 100.0 if total.market_value else None
+    print(_format_contrib_row("TOTAL", "", total.twr, total_weight, total_contribution))
+
+    excluded = [row.isin for row in rows if not row.valuable]
+    if excluded:
+        print(
+            f"\n⚠ excluded (no price/FX on or before {as_of}): " + ", ".join(sorted(excluded))
+        )
+    if contributions is None:
+        print("\nContribution unavailable: no priced sub-period, or a total loss (≤ −100%).")
+    print(
+        "\nCtr% is each holding's Cariño-linked share of the book's time-weighted return "
+        "(ADR-0033); the column sums to the TOTAL TWR. TWR is each holding's own "
+        "time-weighted return over its history; Weight is its current market-value share."
     )
     return 0
 
@@ -1400,11 +1583,17 @@ market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
 (Fee€/yr); holdings without TER metadata contribute 0 (dilutes).
 
 --metrics (ADR-0033) replaces the per-holding table with a portfolio-level
-extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, total
-underwater time, recovery factor, and the best/worst single-period returns.
-Durations are calendar days. Composes with --as-of; add --series N for one
-metrics row per trading day over the window (--reverse newest first); does not
-compose with --diff.
+extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, days since
+the current high, total underwater time, recovery factor, the best/worst
+single-period returns (day and calendar month), and trailing 1M/3M/6M
+time-weighted returns (a window predating inception shows n/a). Durations are
+calendar days. Composes with --as-of; add --series N for one metrics row per
+trading day over the window (--reverse newest first); does not compose with --diff.
+
+--contrib (ADR-0033) replaces the per-holding table with a return-contribution
+table: each holding's own TWR, current market-value weight, and Cariño-linked
+contribution (Ctr%) to the book's time-weighted return — the Ctr% column sums to
+the TOTAL TWR. Composes with --as-of/--sort/--reverse; not with --diff/--series/--metrics.
 
 Examples:
   e1f performance
@@ -1416,6 +1605,7 @@ Examples:
   e1f performance --as-of 2025-12-31 --series 30 --reverse
   e1f performance --metrics
   e1f performance --metrics --series 14
+  e1f performance --contrib --sort pnl --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -1478,6 +1668,14 @@ Examples:
         "with --as-of, and with --series N for one metrics row per trading day; not "
         "with --diff.",
     )
+    parser.add_argument(
+        "--contrib",
+        action="store_true",
+        help="Per-holding return-contribution table (each holding's Cariño-linked share "
+        "of the book's time-weighted return; the Ctr%% column sums to the TOTAL TWR) "
+        "instead of the default table. Composes with --as-of/--sort/--reverse; not with "
+        "--diff/--series/--metrics.",
+    )
     return parser
 
 
@@ -1511,6 +1709,17 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--diff and --series are mutually exclusive")
         if args.metrics and diff_n is not None:
             raise ValueError("--metrics does not compose with --diff")
+        if args.contrib and (diff_n is not None or series_n is not None or args.metrics):
+            raise ValueError("--contrib does not compose with --diff/--series/--metrics")
+        if args.contrib:
+            return _cmd_performance_contrib(
+                args.db,
+                args.config,
+                as_of=args.as_of,
+                sort_by=args.sort,
+                reverse=args.reverse,
+                currency_meta_path=args.currency_meta,
+            )
         if args.metrics and series_n is not None:
             return _cmd_performance_metrics_series(
                 args.db,

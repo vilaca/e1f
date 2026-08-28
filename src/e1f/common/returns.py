@@ -10,6 +10,7 @@ comparison never disagree on how a return is defined.
 """
 
 import itertools
+import math
 
 from .defaults import UNSUPPORTED_FX_CURRENCIES
 from .holdings import (
@@ -128,6 +129,87 @@ def eur_return_series(
         (day, cur / prev - 1.0)
         for (_prev_day, prev), (day, cur) in itertools.pairwise(eur_closes)
     ]
+
+
+_CARINO_EPSILON = 1e-12
+
+
+def _carino_coefficient(period_return: float) -> float:
+    """Cariño log-linking coefficient ``ln(1+r)/r``, with the ``r → 0`` limit of 1.0."""
+    if abs(period_return) < _CARINO_EPSILON:
+        return 1.0
+    return math.log1p(period_return) / period_return
+
+
+def contribution_to_return(
+    holdings: list[HoldingSeries], first_day: str, as_of: str, db_path: str
+) -> dict[str, float] | None:
+    """Each ISIN's Cariño-linked contribution to the book's total time-weighted return.
+
+    Uses the same value/contribution days and sub-period-return definition as
+    ``aggregate_value_series`` / ``wealth_and_returns`` (so the whole-book total equals
+    ``performance``'s TOTAL TWR), decomposes each day's portfolio return into
+    ``w_{i,prev} · r_{i,t}`` per holding — which sums to the day's portfolio return by
+    construction — and Cariño-links (ADR-0033) the daily arithmetic contributions so the
+    per-holding totals sum **exactly** to the multi-period portfolio return.
+
+    Returns ``{isin: contribution}`` over the given ``holdings``, or ``None`` when the
+    total return is undefined (no priced sub-period) or any sub-period wipes the book to
+    zero (a −100% period, where ``ln(1+r)`` is singular). Days where a currently-held
+    ISIN cannot be valued are dropped, exactly as ``aggregate_value_series`` drops them.
+    """
+    days: set[str] = {as_of}
+    for series in holdings:
+        days.update(d for d in series.price_dates if first_day <= d <= as_of)
+        days.update(e.date for e in series.events if first_day <= e.date <= as_of)
+
+    raw: dict[str, float] = {series.isin: 0.0 for series in holdings}
+    previous_value: dict[str, float] = {series.isin: 0.0 for series in holdings}
+    previous_total = 0.0
+    wealth = 1.0
+    saw_return = False
+
+    for day in sorted(days):
+        current: dict[str, float] = {}
+        cash_flow: dict[str, float] = {}
+        total_value = 0.0
+        total_contribution = 0.0
+        valuable = True
+        for series in holdings:
+            shares, _cost = position_asof(series.events, day)
+            if shares <= _SHARE_EPSILON:
+                current[series.isin] = 0.0
+                cash_flow[series.isin] = 0.0
+                continue
+            value = value_on(series, day, db_path)
+            if value is None:
+                valuable = False
+                break
+            current[series.isin] = value
+            cash_flow[series.isin] = contribution_on(series.events, day)
+            total_value += value
+            total_contribution += cash_flow[series.isin]
+        if not valuable:
+            continue
+
+        denominator = previous_total + total_contribution
+        if denominator > 0.0:
+            period_return = total_value / denominator - 1.0
+            if period_return <= -1.0:  # a sub-period wipeout — ln(1+r) is singular
+                return None
+            coefficient = _carino_coefficient(period_return)
+            for isin in raw:
+                daily = (current[isin] - (previous_value[isin] + cash_flow[isin])) / denominator
+                raw[isin] += coefficient * daily
+            wealth *= 1.0 + period_return
+            saw_return = True
+        previous_value = current
+        previous_total = total_value
+
+    if not saw_return:
+        return None
+    scale = _carino_coefficient(wealth - 1.0)
+    return {isin: value / scale for isin, value in raw.items()}
 
 
 def portfolio_return_series(

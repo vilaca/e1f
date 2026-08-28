@@ -8,7 +8,16 @@ import pytest
 import yaml
 
 from e1f import performance as perf
-from e1f.common import PositionEvent, close_asof, load_trades, position_timeline
+from e1f.common import (
+    PositionEvent,
+    aggregate_value_series,
+    build_series,
+    close_asof,
+    contribution_to_return,
+    load_trades,
+    position_timeline,
+    wealth_and_returns,
+)
 from e1f.performance import (
     HoldingSeries,
     annualize,
@@ -196,9 +205,59 @@ def test_extended_metrics_empty_series_is_all_none():
     assert ext.underwater_days is None
     assert ext.days_since_high is None
     assert ext.max_dd_ongoing is False
+    assert ext.best_month is None and ext.worst_month is None
+    assert ext.best_month_label is None and ext.worst_month_label is None
+    assert ext.trailing_1m is None and ext.trailing_3m is None and ext.trailing_6m is None
     assert ext.recovery_factor is None
     assert ext.best_day is None and ext.worst_day is None
     assert ext.gain_loss_ratio is None
+
+
+# A two-calendar-month path: Jan +10%, then Feb -20% then +5% (chain-linked -16%).
+_SPAN_POINTS = [
+    ("2024-01-01", 100.0, 100.0),  # r=0     (Jan)
+    ("2024-01-31", 110.0, 0.0),    # r=+0.10 (Jan) → Jan month +10%
+    ("2024-02-15", 88.0, 0.0),     # r=-0.20 (Feb)
+    ("2024-02-29", 92.4, 0.0),     # r=+0.05 (Feb) → Feb month -16%
+]
+
+
+def test_monthly_returns_chain_links_by_calendar_month():
+    _wealth, returns = perf._wealth_and_returns(_SPAN_POINTS)
+    monthly = perf._monthly_returns(returns)
+    assert monthly == [
+        ("2024-01", pytest.approx(0.10)),
+        ("2024-02", pytest.approx(-0.16)),
+    ]
+    assert perf._monthly_returns([]) == []
+
+
+def test_subtract_months_clamps_to_month_length():
+    from datetime import date
+
+    assert perf._subtract_months(date(2024, 3, 31), 1) == date(2024, 2, 29)  # leap clamp
+    assert perf._subtract_months(date(2024, 3, 15), 3) == date(2023, 12, 15)  # crosses year
+    assert perf._subtract_months(date(2024, 1, 15), 1) == date(2023, 12, 15)
+
+
+def test_trailing_return_windows_and_inception_gate():
+    wealth_path = [("2024-01-15", 1.05), ("2024-02-15", 1.10), ("2024-03-15", 1.20)]
+    # 1M: base = wealth on/before 2024-02-15 (1.10) → 1.20/1.10 − 1.
+    assert perf._trailing_return(wealth_path, "2024-01-01", 1) == pytest.approx(1.20 / 1.10 - 1)
+    # 2M: base = wealth on/before 2024-01-15 (1.05).
+    assert perf._trailing_return(wealth_path, "2024-01-01", 2) == pytest.approx(1.20 / 1.05 - 1)
+    # 3M: start 2023-12-15 predates inception → None.
+    assert perf._trailing_return(wealth_path, "2024-01-01", 3) is None
+    assert perf._trailing_return([], "2024-01-01", 1) is None
+
+
+def test_extended_metrics_monthly_and_trailing():
+    ext = extended_metrics(_SPAN_POINTS, risk_metrics(_SPAN_POINTS).twr)
+    assert ext.best_month == pytest.approx(0.10) and ext.best_month_label == "2024-01"
+    assert ext.worst_month == pytest.approx(-0.16) and ext.worst_month_label == "2024-02"
+    # anchor 2024-02-29; 1M start 2024-01-29 → base is inception seed 1.0 (no earlier day).
+    assert ext.trailing_1m == pytest.approx(0.924 - 1.0)
+    assert ext.trailing_3m is None and ext.trailing_6m is None
 
 
 # ---------------------------------------------------------------------------
@@ -1407,6 +1466,8 @@ def _ext_metrics(**overrides):
         max_dd_recovery_date="2024-01-02", max_dd_ongoing=False, underwater_days=1,
         days_since_high=0, recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
         worst_day=-0.1, worst_day_date="2024-01-01", gain_loss_ratio=1.0,
+        best_month=0.1, best_month_label="2024-01", worst_month=-0.1,
+        worst_month_label="2024-01", trailing_1m=0.05, trailing_3m=None, trailing_6m=None,
     )
     base.update(overrides)
     return perf.ExtendedMetrics(**base)
@@ -1444,6 +1505,9 @@ def test_main_metrics_report_renders(tmp_path, capsys):
     assert "Best Day" in out and "+44.44%" in out
     assert "Worst Day" in out and "-25.00%" in out
     assert "Max Gain / Max Loss" in out and "1.78" in out
+    assert "Best Month" in out and "2024-12" in out    # 13/9 − 1 in December
+    assert "Worst Month" in out and "2024-09" in out    # −25% in September
+    assert "Trailing returns" in out and "6 Months" in out and "+8.33%" in out  # 1.3/1.2 − 1
 
 
 def test_main_metrics_short_history_estimated_and_excluded_notes(tmp_path, capsys):
@@ -1579,3 +1643,126 @@ def test_main_metrics_series_no_priced_days(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "No priced trading days" in out
+
+
+# ---------------------------------------------------------------------------
+# Return contribution (ADR-0033): contribution_to_return + --contrib
+# ---------------------------------------------------------------------------
+
+_A, _B = "IE00A0000001", "IE00B0000001"
+
+# Fund A: +20% on day 2 then flat. Fund B: flat then +10% on day 3. Equal €100 buys.
+_CONTRIB_SEED = dict(
+    transactions=[_buy("a", "2024-01-01", _A, 10.0, 10.0), _buy("b", "2024-01-01", _B, 10.0, 10.0)],
+    prices=[
+        (_A, "2024-01-01", 10.0), (_A, "2024-01-02", 12.0), (_A, "2024-01-03", 12.0),
+        (_B, "2024-01-01", 10.0), (_B, "2024-01-02", 10.0), (_B, "2024-01-03", 11.0),
+    ],
+    currencies={_A: "EUR", _B: "EUR"},
+    names={_A: "Fund A", _B: "Fund B"},
+)
+
+
+def test_contribution_to_return_reconciles_with_twr(tmp_path):
+    db, _config, meta = _seed(tmp_path, **_CONTRIB_SEED)
+    timeline = position_timeline(load_trades(db))
+    holdings = [build_series(db, isin, timeline[isin], "2024-01-03", meta) for isin in (_A, _B)]
+    contributions = contribution_to_return(holdings, "2024-01-01", "2024-01-03", db)
+
+    _wp, returns = wealth_and_returns(
+        aggregate_value_series(holdings, "2024-01-01", "2024-01-03", db)
+    )
+    twr = 1.0
+    for _day, r in returns:
+        twr *= 1.0 + r
+    twr -= 1.0
+
+    assert contributions is not None
+    assert sum(contributions.values()) == pytest.approx(twr)  # Cariño: sums to the book TWR
+    # A's +20% move landed on a day it weighed 50% early; B's +10% later. Both positive.
+    assert contributions[_A] == pytest.approx(0.102291, abs=1e-5)
+    assert contributions[_B] == pytest.approx(0.047708, abs=1e-5)
+
+
+def test_contribution_to_return_none_when_no_priced_subperiod(tmp_path):
+    db, _config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )  # bought but never priced → no valuable day → no defined return
+    timeline = position_timeline(load_trades(db))
+    holdings = [build_series(db, EUR_ISIN, timeline[EUR_ISIN], "2024-01-03", meta)]
+    assert contribution_to_return(holdings, "2024-01-01", "2024-01-03", db) is None
+
+
+def test_contribution_to_return_none_on_total_loss(tmp_path):
+    db, _config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-01-02", 0.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )  # priced to zero → R = −100% → log-linking singular
+    timeline = position_timeline(load_trades(db))
+    holdings = [build_series(db, EUR_ISIN, timeline[EUR_ISIN], "2024-01-02", meta)]
+    assert contribution_to_return(holdings, "2024-01-01", "2024-01-02", db) is None
+
+
+def test_main_contrib_renders_and_reconciles(tmp_path, capsys):
+    # Two priced funds + a USD leg never priced (excluded from totals).
+    seed = dict(_CONTRIB_SEED)
+    seed["transactions"] = [*seed["transactions"], _buy("u", "2024-01-01", USD_ISIN, 10.0, 9.0)]
+    seed["currencies"] = {**seed["currencies"], USD_ISIN: "USD"}
+    seed["names"] = {**seed["names"], USD_ISIN: "Dollar Fund"}
+    db, config, meta = _seed(tmp_path, **seed)
+
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-01-03", "--contrib"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Per-holding return contribution as of 2024-01-03" in out
+    assert "Ctr%" in out and "TOTAL" in out
+    assert "Cariño-linked" in out
+    # TOTAL TWR and the summed Ctr% both read +15.00% — the reconciliation is visible.
+    assert out.count("+15.00%") == 2
+    assert "⚠ excluded" in out and USD_ISIN in out
+
+
+def test_main_contrib_total_loss_shows_unavailable(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-01-02", 0.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-01-02", "--contrib"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Contribution unavailable" in out  # None contributions → Ctr n/a
+
+
+def test_main_contrib_no_holdings(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    assert perf.main(_args(db, config, meta, "--contrib")) == 0
+    assert "No ETF holdings in database" in capsys.readouterr().out
+
+
+def test_main_contrib_no_priceable(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-01-02", "--contrib"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No priceable holdings as of 2024-01-02" in out
+
+
+def test_main_contrib_does_not_compose_with_metrics(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    code = perf.main(_args(db, config, meta, "--contrib", "--metrics"))
+    out = capsys.readouterr().out
+    assert code == 1 and "does not compose" in out
