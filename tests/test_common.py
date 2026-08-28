@@ -13,6 +13,7 @@ from e1f.common import (
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
+    DEFAULT_GLOSSARY,
     DEFAULT_SCENARIOS,
     DEFAULT_START_DATE,
     ConfigManager,
@@ -77,8 +78,17 @@ def test_default_paths_resolve_against_repo_root():
     assert str(root / "data" / "e1f.db") == DEFAULT_DB
     assert str(root / "data" / "currency_metadata.yaml") == DEFAULT_CURRENCY_META
     assert str(root / "data" / "scenarios.yaml") == DEFAULT_SCENARIOS
+    assert str(root / "data" / "glossary.md") == DEFAULT_GLOSSARY
     assert DEFAULT_START_DATE == "2000-01-01"
     assert BASE_CURRENCY == "EUR"
+
+
+def test_default_paths_fall_back_to_installed_share(tmp_path):
+    from e1f.common.defaults import _default_data_dir
+
+    module_file = tmp_path / "site-packages" / "e1f" / "common" / "defaults.py"
+    prefix = tmp_path / "venv"
+    assert _default_data_dir(str(module_file), str(prefix)) == prefix / "share" / "e1f"
 
 
 # ---------------------------------------------------------------------------

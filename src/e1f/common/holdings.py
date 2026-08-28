@@ -1,13 +1,11 @@
 """Trades, position timeline, FX conversion, and point-in-time EUR valuation."""
 
 import bisect
-import os
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 
-import yaml
-
+from .currency_metadata import CurrencyMetadata
 from .defaults import BASE_CURRENCY, DEFAULT_CURRENCY_META, UNSUPPORTED_FX_CURRENCIES
 
 
@@ -115,12 +113,8 @@ def pinned_quote_currency(isin: str, currency_meta_path: str = DEFAULT_CURRENCY_
     statement of a stored price's currency, never ``fund_currency`` (ADR-0010).
     ``None`` when the ISIN is not pinned, so a caller can treat it as unvaluable.
     """
-    if not os.path.exists(currency_meta_path):
-        return None
-    with open(currency_meta_path) as f:
-        meta = yaml.safe_load(f) or {}
-    entry = meta.get(isin)
-    if not isinstance(entry, dict):
+    entry = CurrencyMetadata.load(currency_meta_path).funds.get(isin)
+    if entry is None:
         return None
     currency = entry.get("currency")
     return str(currency) if currency else None
@@ -260,11 +254,19 @@ def value_on(series: HoldingSeries, day: str, db_path: str) -> float | None:
     shares, _cost = position_asof(series.events, day)
     if shares <= _SHARE_EPSILON:
         return 0.0
+    unit_value = unit_value_on(series, day, db_path)
+    return None if unit_value is None else shares * unit_value
+
+
+def unit_value_on(series: HoldingSeries, day: str, db_path: str) -> float | None:
+    """EUR value of one share on ``day`` using the canonical close and FX rules."""
+    if series.currency is None:
+        return None
     close = close_asof(series, day)
     if close is None:
         return None
     try:
-        return convert_to_eur(shares * close, series.currency, day, db_path)
+        return convert_to_eur(close, series.currency, day, db_path)
     except ValueError:
         return None
 

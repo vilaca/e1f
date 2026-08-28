@@ -16,18 +16,16 @@ Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
 
 import argparse
 import logging
-import os
 import sqlite3
 import sys
 import time
 import warnings
 from collections.abc import Mapping
 from contextlib import closing
-from typing import Any, cast
+from typing import cast
 
 import pandas as pd
 import requests
-import yaml
 import yfinance as yf
 from ftgo import get_historical_prices, get_xid
 
@@ -39,6 +37,7 @@ from e1f.common import (
     DEFAULT_START_DATE,
     UNSUPPORTED_FX_CURRENCIES,
     ConfigManager,
+    CurrencyMetadata,
     ETFDefinition,
     call_with_retry,
     fund_currency_from_name,
@@ -135,15 +134,11 @@ class DataExtractor:
             universe[isin] = ETFDefinition.from_config(isin, data)
         return universe
 
-    def _load_currency_meta(self) -> dict[str, Any]:
-        if os.path.exists(self.currency_meta_path):
-            with open(self.currency_meta_path) as f:
-                return yaml.safe_load(f) or {}
-        return {}
+    def _load_currency_meta(self) -> CurrencyMetadata:
+        return CurrencyMetadata.load(self.currency_meta_path)
 
     def _save_currency_meta(self) -> None:
-        with open(self.currency_meta_path, 'w') as f:
-            yaml.dump(self._ftgo_meta, f, default_flow_style=False, sort_keys=True)
+        self._ftgo_meta.save(self.currency_meta_path)
 
     @staticmethod
     def _symbol_currency(symbol: str) -> str:
@@ -160,8 +155,8 @@ class DataExtractor:
         The result is pinned and reused so the security can't drift as FT
         Markets search ordering changes. Raises ValueError if nothing matches.
         """
-        if isin in self._ftgo_meta:
-            return cast(dict[str, str], self._ftgo_meta[isin])
+        if isin in self._ftgo_meta.funds:
+            return cast(dict[str, str], self._ftgo_meta.funds[isin])
 
         matches = get_xid(isin, display_mode="all")  # raises if no matches
         currencies = matches['symbol'].map(self._symbol_currency)
@@ -176,7 +171,7 @@ class DataExtractor:
         symbol = str(row['symbol'])
         resolved = {'xid': str(row['xid']), 'symbol': symbol,
                     'currency': self._symbol_currency(symbol)}
-        self._ftgo_meta[isin] = resolved
+        self._ftgo_meta.funds[isin] = resolved
         self._save_currency_meta()
         logger.info(f"pinned ftgo resolution {isin} -> {symbol} (xid {resolved['xid']})")
         return resolved
@@ -399,7 +394,7 @@ class DataExtractor:
         ordering changes. Raises ValueError if ftgo has no spot pair for it.
         """
         pair = f"{base}{quote}"
-        fx_pairs = self._ftgo_meta.get("fx_pairs", {})
+        fx_pairs = self._ftgo_meta.fx_pairs
         if pair in fx_pairs:
             return cast(dict[str, str], fx_pairs[pair])
 
@@ -411,7 +406,6 @@ class DataExtractor:
             raise ValueError(f"No ftgo FX spot rate for {pair}")
         resolved = {"xid": str(spot.iloc[0]["xid"]), "symbol": pair}
         fx_pairs[pair] = resolved
-        self._ftgo_meta["fx_pairs"] = fx_pairs
         self._save_currency_meta()
         logger.info(f"pinned ftgo FX resolution {pair} -> xid {resolved['xid']}")
         return resolved
@@ -532,8 +526,8 @@ class DataExtractor:
         """
         quotes: set[str] = set()
         for isin in portfolio_isins(self.db_path):
-            pinned = self._ftgo_meta.get(isin)
-            currency = pinned.get("currency") if isinstance(pinned, dict) else None
+            pinned = self._ftgo_meta.funds.get(isin)
+            currency = pinned.get("currency") if pinned is not None else None
             if currency and currency != BASE_CURRENCY:
                 quotes.add(currency)
         return quotes
@@ -609,7 +603,7 @@ class DataExtractor:
                 # range is always start < end. The DO NOTHING upsert makes this safe.
                 since = existing.index.max()
 
-            fetched = None  # (source, label) on success
+            fetched: tuple[str, str | None] | None = None
             # ftgo resolves by ISIN (a single, pinned security), so try it once.
             df = self._fetch_ftgo(etf_isin, since)
             if df is not None and not df.empty:
@@ -617,7 +611,7 @@ class DataExtractor:
                     self._replace_prices(etf_isin, df)
                 else:
                     self._save_prices(etf_isin, df)
-                fetched = ("ftgo", self._ftgo_meta.get(etf_isin, {}).get('symbol'))
+                fetched = ("ftgo", self._ftgo_meta.funds.get(etf_isin, {}).get('symbol'))
             elif self.fallback:
                 # yfinance is ticker-based; try each configured ticker.
                 for i, ticker in enumerate(etf.tickers):
@@ -634,11 +628,11 @@ class DataExtractor:
                         break
 
             if fetched:
-                source, ticker = fetched
+                source, label = fetched
                 full = self._stored_series(etf_isin)
                 new, replaced = self._delta(existing, full, 'close')
                 logger.info(self._summary(
-                    etf_isin, etf.name, source, full, ticker, new, replaced))
+                    etf_isin, etf.name, source, full, label, new, replaced))
                 data_dict[etf_isin] = full['close']
             elif have_existing:
                 assert existing is not None

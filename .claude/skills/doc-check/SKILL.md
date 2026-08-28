@@ -99,7 +99,8 @@ and verify each still matches the code:
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
   `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
-  (currently `lint`, `layers`, `shell`, `actions`, `types`, `dead`, `test`) and
+  (currently `lint`, `layers`, `shell`, `actions`, `types`, `dead`, `package`,
+  `mutation`, `test`) and
   the gate names in the usage comment. Then verify:
   1. Every gate appears in `CLAUDE.md` Running checks examples/comments.
   2. `CLAUDE.md` does not list gates that `check.sh` no longer defines.

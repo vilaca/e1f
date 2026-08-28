@@ -581,7 +581,7 @@ def test_resolve_fx_pins_currencies_row(tmp_path, monkeypatch):
     monkeypatch.setattr(fetch_mod, 'get_xid', lambda q, display_mode: matches)
 
     assert ext._resolve_fx('EUR', 'USD') == {'xid': '617254', 'symbol': 'EURUSD'}
-    assert ext._ftgo_meta['fx_pairs']['EURUSD']['xid'] == '617254'
+    assert ext._ftgo_meta.fx_pairs['EURUSD']['xid'] == '617254'
 
     # Second call is served from the pin without touching ftgo.
     monkeypatch.setattr(fetch_mod, 'get_xid',
@@ -679,8 +679,8 @@ def test_is_fx_cached_when_stale(tmp_path):
 def test_needed_fx_quotes_from_pinned_currency_not_fund_currency(tmp_path):
     ext = make_extractor(tmp_path)
     # Pinned price currency is what matters; a divergent fund_currency is ignored.
-    ext._ftgo_meta['HELDUSD00001'] = {'currency': 'USD'}
-    ext._ftgo_meta['HELDEUR00001'] = {'currency': 'EUR'}
+    ext._ftgo_meta.funds['HELDUSD00001'] = {'currency': 'USD'}
+    ext._ftgo_meta.funds['HELDEUR00001'] = {'currency': 'EUR'}
     seed_held(ext, 'HELDUSD00001')
     seed_held(ext, 'HELDEUR00001')
     assert ext._needed_fx_quotes() == {'USD'}  # base EUR excluded
@@ -688,7 +688,7 @@ def test_needed_fx_quotes_from_pinned_currency_not_fund_currency(tmp_path):
 
 def test_refresh_fx_fails_loud_on_pence(tmp_path):
     ext = make_extractor(tmp_path)
-    ext._ftgo_meta['HELDGBX00001'] = {'currency': 'GBX'}
+    ext._ftgo_meta.funds['HELDGBX00001'] = {'currency': 'GBX'}
     seed_held(ext, 'HELDGBX00001')
     with pytest.raises(ValueError, match=r'GBX .*not supported'):
         ext._refresh_fx()
@@ -724,7 +724,7 @@ def test_refresh_fx_pair_uses_cache_without_network(tmp_path, monkeypatch):
 
 def test_fetch_auto_refreshes_fx_for_held_currency(tmp_path, monkeypatch):
     ext = make_extractor(tmp_path)
-    ext._ftgo_meta[ISIN] = {'currency': 'USD'}
+    ext._ftgo_meta.funds[ISIN] = {'currency': 'USD'}
     seed_held(ext, ISIN)
     monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([100.0, 101.0]))
     monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: close_df([1.16, 1.17]))
@@ -736,7 +736,7 @@ def test_fetch_auto_refreshes_fx_for_held_currency(tmp_path, monkeypatch):
 
 def test_fetch_single_isin_skips_fx(tmp_path, monkeypatch):
     ext = make_extractor(tmp_path)
-    ext._ftgo_meta[ISIN] = {'currency': 'USD'}
+    ext._ftgo_meta.funds[ISIN] = {'currency': 'USD'}
     seed_held(ext, ISIN)
     monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: close_df([100.0]))
     monkeypatch.setattr(ext, '_refresh_fx',

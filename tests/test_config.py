@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 import e1f.config as config_cmd
-from e1f.common import OpenFIGIResolver
+from e1f.common import CurrencyMetadata, OpenFIGIResolver
 
 ISIN_A = "AA0000000001"
 ISIN_B = "BB0000000002"
@@ -176,6 +176,41 @@ def test_remove_deletes_everywhere(paths, capsys):
         assert set(yaml.safe_load(f)) == {ISIN_B}
 
 
+def test_remove_rolls_back_all_stores_when_metadata_write_fails(paths, monkeypatch):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_meta(paths["meta"], [ISIN_A])
+    original_save = CurrencyMetadata.save
+    calls = 0
+
+    def fail_first_save(self, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("simulated metadata write failure")
+        return original_save(self, path)
+
+    monkeypatch.setattr(CurrencyMetadata, "save", fail_first_save)
+    with pytest.raises(OSError, match="simulated metadata write failure"):
+        config_cmd.main(
+            [
+                "--config",
+                paths["config"],
+                "remove",
+                ISIN_A,
+                "--db",
+                paths["db"],
+                "--currency-meta",
+                paths["meta"],
+            ]
+        )
+
+    assert read_config_isins(paths["config"]) == {ISIN_A}
+    assert read_db_isins(paths["db"]) == {ISIN_A}
+    with open(paths["meta"]) as stream:
+        assert set(yaml.safe_load(stream)) == {ISIN_A}
+
+
 def test_remove_without_db(paths):
     write_config(paths["config"], [ISIN_A])
     write_meta(paths["meta"], [])
@@ -217,6 +252,68 @@ def test_trim_keeps_intersection(paths, capsys):
     assert read_db_isins(paths["db"]) == {ISIN_B}
     with open(paths["meta"]) as f:
         assert set(yaml.safe_load(f)) == {ISIN_B}
+
+
+def test_trim_preserves_needed_fx_pair_metadata(paths):
+    write_config(paths["config"], [ISIN_A])
+    write_db(paths["db"], {ISIN_A: [100]})
+    write_meta(paths["meta"], [ISIN_A])
+    with open(paths["meta"]) as f:
+        metadata = yaml.safe_load(f)
+    metadata["fx_pairs"] = {"EURUSD": {"xid": "usd", "symbol": "EURUSD"}}
+    with open(paths["meta"], "w") as f:
+        yaml.dump(metadata, f)
+
+    assert config_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "trim",
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    ) == 0
+
+    with open(paths["meta"]) as f:
+        trimmed = yaml.safe_load(f)
+    assert set(trimmed) == {ISIN_A, "fx_pairs"}
+    assert trimmed["fx_pairs"] == {"EURUSD": {"xid": "usd", "symbol": "EURUSD"}}
+
+
+def test_trim_rolls_back_all_stores_when_metadata_write_fails(paths, monkeypatch):
+    write_config(paths["config"], [ISIN_A, ISIN_B])
+    write_db(paths["db"], {ISIN_B: [100], ISIN_C: [100]})
+    write_meta(paths["meta"], [ISIN_B, ISIN_C])
+    original_save = CurrencyMetadata.save
+    calls = 0
+
+    def fail_first_save(self, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("simulated metadata write failure")
+        return original_save(self, path)
+
+    monkeypatch.setattr(CurrencyMetadata, "save", fail_first_save)
+    with pytest.raises(OSError, match="simulated metadata write failure"):
+        config_cmd.main(
+            [
+                "--config",
+                paths["config"],
+                "trim",
+                "--db",
+                paths["db"],
+                "--currency-meta",
+                paths["meta"],
+            ]
+        )
+
+    assert read_config_isins(paths["config"]) == {ISIN_A, ISIN_B}
+    assert read_db_isins(paths["db"]) == {ISIN_B, ISIN_C}
+    with open(paths["meta"]) as stream:
+        assert set(yaml.safe_load(stream)) == {ISIN_B, ISIN_C}
 
 
 def test_trim_in_sync_is_noop(paths, capsys):

@@ -78,11 +78,19 @@ def test_get_missing_raises(tmp_path):
 @pytest.mark.parametrize(
     "body, match",
     [
+        ([], "root must be a mapping"),
         ({"scenarios": ["oops"]}, "must be a mapping of name"),
         ({"scenarios": {"core": []}}, "must be a mapping"),
         ({"scenarios": {"core": {}}}, "non-empty 'targets'"),
         ({"scenarios": {"core": {"targets": {A: "x"}}}}, "non-numeric percent"),
         ({"scenarios": {"core": {"targets": {A: 5}, "months": "x"}}}, "must be an integer"),
+        ({"scenarios": {"core": {"targets": {A: 0}}}}, "finite and in"),
+        ({"scenarios": {"core": {"targets": {A: float("nan")}}}}, "finite and in"),
+        (
+            {"scenarios": {"core": {"targets": {A: 60, B: 50}}}},
+            "must not exceed 100%",
+        ),
+        ({"scenarios": {"core": {"targets": {A: 50}, "months": 0}}}, "integer >= 1"),
     ],
 )
 def test_malformed_file_raises(tmp_path, body, match):
@@ -90,6 +98,11 @@ def test_malformed_file_raises(tmp_path, body, match):
     path.write_text(yaml.dump(body))
     with pytest.raises(ScenarioError, match=match):
         load_scenarios(str(path))
+
+
+def test_save_rejects_invalid_scenario(tmp_path):
+    with pytest.raises(ScenarioError, match="must not exceed 100%"):
+        save_scenario(Scenario("bad", {A: 60.0, B: 50.0}), str(tmp_path / "s.yaml"))
 
 
 # ---------------------------------------------------------------------------

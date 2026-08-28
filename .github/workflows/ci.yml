@@ -30,7 +30,7 @@ jobs:
       # Same script CI and developers run locally — the single definition of green.
       # actions runs in the actionlint job below (needs a separate install).
       - name: Run checks
-        run: ./scripts/check.sh lint layers shell types dead test
+        run: ./scripts/check.sh lint layers shell types dead package test
 
   actionlint:
     runs-on: ubuntu-latest
@@ -47,3 +47,19 @@ jobs:
       # Pre-installed on ubuntu-latest.
       - name: Run actions gate
         run: ./scripts/check.sh actions
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies (locked)
+        run: uv sync --extra dev
+
+      - name: Run targeted financial mutation tests
+        run: ./scripts/check.sh mutation

@@ -28,6 +28,14 @@ Add an `e1f transactions` command with **Trade Republic CSV** ingest and
   non-ETF trades are skipped.
 - Store ingested rows even when the ISIN is not yet in `etf_universe.yaml`.
   Ingest does **not** modify the ETF config.
+- Enforce the canonical financial row at the SQLite boundary: `side` is one of
+  `BUY` / `SELL` / `SAVINGS_PLAN`, and `shares` / `price` are finite positive
+  `REAL` values. The import parser rejects malformed rows before insertion; the
+  table constraints protect future importers and direct writes as well.
+- On opening a legacy unconstrained `transactions` table, migrate it
+  transactionally when every existing row satisfies those invariants. Refuse
+  migration and identify the first bad `(broker, transaction_id)` when it does
+  not; never discard or coerce source-of-truth rows.
 - **Ingest and list only** for this command: no P&L or mark-to-market (holdings
   derivation is `ADR-0005`; XTB Excel is `ADR-0006`).
 
@@ -48,6 +56,9 @@ Generic column mapping remains out of scope.
 
 - Re-importing the same CSV is safe: duplicate `(broker, transaction_id)` rows
   are skipped.
+- Existing valid databases are hardened in place on the next broker import.
+  Existing invalid rows must be repaired explicitly before another import; the
+  failed migration leaves the original table unchanged.
 - `transactions list` reads back ingested rows; it does not modify the DB.
 - Ingest does not modify `etf_universe.yaml`, but prints ISINs from ingested ETF
   trades that are absent from the config so the user can run `e1f config add`.

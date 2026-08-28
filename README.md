@@ -408,6 +408,6 @@ exponential backoff otherwise.
 
 ```bash
 uv sync --extra dev
-./scripts/check.sh          # full suite: lint, layers, shell, actions, types, dead, test + coverage
+./scripts/check.sh          # lint, layers, shell, actions, types, dead, package, mutation, test + coverage
 uv run pytest               # tests only
 ```

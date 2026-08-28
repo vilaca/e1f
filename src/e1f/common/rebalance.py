@@ -1,5 +1,6 @@
 """Buy-only rebalance core (ADR-0016), graduated so correlation can consume it."""
 
+import math
 from dataclasses import dataclass
 
 from .holdings import (
@@ -56,6 +57,18 @@ def compute_rebalance(
     Feasibility check order (first match wins, ADR-0016 decision 5):
       target_unvaluable → empty_portfolio → residual_full / residual_unallocable.
     """
+    if not targets:
+        raise ValueError("targets must be non-empty")
+    if any(
+        isinstance(target, bool)
+        or not math.isfinite(target)
+        or not 0.0 < target <= 1.0
+        for target in targets.values()
+    ):
+        raise ValueError("target fractions must be finite and in (0, 1]")
+    if sum(targets.values()) > 1.0 + _FLOAT_CLAMP:
+        raise ValueError("target fractions must sum to at most 1")
+
     # target_unvaluable: held targeted fund with no price/FX
     unvaluable_targets = sorted(
         isin for isin in targets if isin in held and values.get(isin) is None

@@ -5,6 +5,7 @@ split (ADR-0025) is an internal layout: one module per concern, re-exported
 here so existing import paths stay valid.
 """
 
+from .currency_metadata import CurrencyMetadata, CurrencyMetadataError
 from .defaults import (
     BASE_CURRENCY,
     DEFAULT_CONFIG,
@@ -31,6 +32,7 @@ from .holdings import (
     position_asof,
     position_timeline,
     price_date_asof,
+    unit_value_on,
     value_on,
 )
 from .metrics import (
@@ -85,6 +87,8 @@ __all__ = [
     "XTB_EXCHANGE_SUFFIX",
     "_FLOAT_CLAMP",
     "ConfigManager",
+    "CurrencyMetadata",
+    "CurrencyMetadataError",
     "ETFDefinition",
     "HoldingSeries",
     "MetricContract",
@@ -124,6 +128,7 @@ __all__ = [
     "post_rebalance_weights",
     "price_date_asof",
     "save_scenario",
+    "unit_value_on",
     "value_on",
     "wealth_and_returns",
     "xirr",

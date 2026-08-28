@@ -41,6 +41,15 @@ def _plan(targets, values, held=None) -> RebalancePlan:
     return compute_rebalance(targets, values, frozenset(held))
 
 
+@pytest.mark.parametrize(
+    "targets",
+    [{}, {A: False}, {A: True}, {A: 0.0}, {A: float("nan")}, {A: 0.60, B: 0.50}],
+)
+def test_compute_rebalance_rejects_invalid_targets(targets):
+    with pytest.raises(ValueError):
+        compute_rebalance(targets, {A: 6000.0, B: 4000.0}, frozenset({A, B}))
+
+
 # ---------------------------------------------------------------------------
 # Feasibility: whole-plan UNAVAILABLE reasons (ADR-0016 decision 5)
 # ---------------------------------------------------------------------------

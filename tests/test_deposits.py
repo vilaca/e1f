@@ -6,7 +6,8 @@ from contextlib import closing
 import pytest
 import yaml
 
-from e1f import deposits as dep
+from e1f import deposits as dep, performance as perf
+from e1f.common import load_trades, position_timeline
 from e1f.deposits import DepositImpact
 
 EUR_ISIN = "IE00EUR000001"
@@ -108,6 +109,37 @@ def test_deposit_usd_valued_via_fx(tmp_path):
     assert d.value == pytest.approx(1000.0)  # 10 × 120 / 1.2
 
 
+def test_reported_value_reconciles_with_performance_total_multi_currency(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-01-01", USD_ISIN, 5.0, 12.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (USD_ISIN, "2024-12-31", 120.0),
+        ],
+        fx=[("EUR", "USD", "2024-12-31", 1.2)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    as_of = "2024-12-31"
+    impacts = dep.deposit_impacts(db, config, meta, as_of)
+    summary = dep.summarize(impacts)
+    timeline = position_timeline(load_trades(db))
+    total = perf._snapshot_total(db, config, meta, timeline, as_of)
+
+    assert summary is not None
+    assert total is not None
+    assert summary.reported == pytest.approx(total.market_value)
+    assert summary.invested == pytest.approx(total.cost)
+    assert summary.organic_gain == pytest.approx(total.pnl)
+    assert sum(impact.value for impact in impacts if impact.value is not None) == pytest.approx(
+        summary.reported
+    )
+
+
 def test_deposit_unvaluable_excluded_from_summary(tmp_path):
     db, config, meta = _seed(
         tmp_path,
@@ -126,20 +158,35 @@ def test_deposit_unvaluable_excluded_from_summary(tmp_path):
     assert s.invested == pytest.approx(100.0)  # USD deposit excluded
 
 
-def test_deposit_impacts_skips_future_and_non_buys(tmp_path):
+def test_deposit_impacts_skips_future_trades(tmp_path):
     db, config, meta = _seed(
         tmp_path,
         transactions=[
             _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
             _buy("t2", "2025-06-01", EUR_ISIN, 10.0, 10.0),  # after as-of
-            ("tr", "t3", "2024-03-01", EUR_ISIN, "SELL", 5.0, 11.0, 0.0, 0.0),  # not a buy
+            ("tr", "t3", "2025-03-01", EUR_ISIN, "SELL", 5.0, 11.0, 0.0, 0.0),
         ],
         prices=[(EUR_ISIN, "2024-12-31", 14.0)],
         currencies={EUR_ISIN: "EUR"},
         names={EUR_ISIN: "Euro Fund"},
     )
     impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
-    assert [i.date for i in impacts] == ["2024-01-01"]  # future buy + SELL dropped
+    assert [i.date for i in impacts] == ["2024-01-01"]
+
+
+def test_deposit_impacts_refuses_book_with_sell(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            ("tr", "t2", "2024-03-01", EUR_ISIN, "SELL", 5.0, 11.0, 0.0, 0.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    with pytest.raises(ValueError, match=r"buy-and-hold book.*1 SELL"):
+        dep.deposit_impacts(db, config, meta, "2024-12-31")
 
 
 def test_assign_pnl_shares_none_when_total_zero():
@@ -180,6 +227,19 @@ def test_cmd_deposits_renders_summary_and_reconciles(tmp_path, capsys):
     assert "Organic gain (market)" in out and "+50.00" in out
     assert "ROIC" in out and "+31.2%" in out
     assert "Euro Fund" in out and "+80.0%" in out  # a deposit's P&L share
+
+
+def test_cmd_deposits_reports_sell_as_unsupported(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            ("tr", "t2", "2024-03-01", EUR_ISIN, "SELL", 5.0, 11.0, 0.0, 0.0),
+        ],
+    )
+    code = dep.main(_args(db, config, meta, "--as-of", "2024-12-31"))
+    assert code == 1
+    assert "requires a buy-and-hold book" in capsys.readouterr().out
 
 
 def test_cmd_deposits_unvaluable_warning(tmp_path, capsys):

@@ -6,7 +6,7 @@ gain on top (organic), reports ROIC (gain / invested), and attributes the total 
 to individual deposits: each buy's shares valued to the as-of date, its gain, its own
 return, and its share of the portfolio's P&L. The book is buy-and-hold (contributions
 only, ADR-0011), so per-deposit values sum to the portfolio market value exactly; a
-SELL — were there one — is disclosed as breaking that reconciliation.
+SELL makes the report unavailable because disposal attribution is not implemented.
 
 Usage:
     e1f deposits
@@ -23,10 +23,9 @@ from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     ConfigManager,
-    convert_to_eur,
-    load_price_series,
+    build_series,
     load_trades,
-    pinned_quote_currency,
+    unit_value_on,
 )
 
 SORT_FIELDS = ("date", "isin", "amount", "value", "gain", "ret")
@@ -80,16 +79,8 @@ def _unit_value_eur(
     db_path: str, isin: str, as_of: str, currency_meta_path: str
 ) -> float | None:
     """EUR value of a single share at ``as_of``; None when it cannot be valued."""
-    currency = pinned_quote_currency(isin, currency_meta_path)
-    if currency is None:
-        return None
-    dates, closes = load_price_series(db_path, isin, as_of)
-    if not dates:
-        return None
-    try:
-        return convert_to_eur(closes[-1], currency, as_of, db_path)  # nearest-prior close
-    except ValueError:
-        return None
+    series = build_series(db_path, isin, [], as_of, currency_meta_path)
+    return unit_value_on(series, as_of, db_path)
 
 
 def _assign_pnl_shares(impacts: list[DepositImpact]) -> None:
@@ -111,10 +102,24 @@ def deposit_impacts(
     be valued (no pinned currency, price, or FX) — such deposits are excluded from
     totals and P&L shares, never zero-valued.
     """
+    trades = load_trades(db_path)
+    sells = [
+        (str(dt)[:10], isin)
+        for _broker, dt, isin, side, _shares, _price, _fee in trades
+        if side == "SELL" and str(dt)[:10] <= as_of
+    ]
+    if sells:
+        first_day, first_isin = min(sells)
+        raise ValueError(
+            "deposit analysis requires a buy-and-hold book; "
+            f"found {len(sells)} SELL transaction(s) on or before {as_of} "
+            f"(first: {first_isin} on {first_day})"
+        )
+
     config = ConfigManager(config_path)
     unit_value: dict[str, float | None] = {}
     impacts: list[DepositImpact] = []
-    for _broker, dt, isin, side, shares, price, fee in load_trades(db_path):
+    for _broker, dt, isin, side, shares, price, fee in trades:
         day = str(dt)[:10]
         if side not in _BUY_SIDES or day > as_of:
             continue
@@ -274,7 +279,8 @@ date to show its gain, its own return, and its share of the portfolio's total P&
 
 The book is buy-and-hold (contributions only), so per-deposit values sum to the
 portfolio market value; a deposit whose fund has no price/FX is excluded (never
-zero-valued) and disclosed.
+zero-valued) and disclosed. If a SELL exists on or before the as-of date, the
+command refuses the report because disposal attribution is not implemented.
 
 Examples:
   e1f deposits

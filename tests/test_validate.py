@@ -117,6 +117,43 @@ def test_validate_rejects_malformed_quote_currency(paths, monkeypatch, capsys):
     assert "Validation failed" in out
 
 
+def test_validate_venue_mapping_excludes_reserved_fx_pairs(paths, monkeypatch):
+    write_config(paths["config"], [ISIN_A, ISIN_B])
+    write_db(
+        paths["db"],
+        {
+            ISIN_A: good_prices(ISIN_A, seed=1),
+            ISIN_B: good_prices(ISIN_B, seed=2),
+        },
+    )
+    write_meta(paths["meta"], [ISIN_A, ISIN_B])
+    with open(paths["meta"]) as stream:
+        metadata = yaml.safe_load(stream)
+    metadata["fx_pairs"] = {"EURUSD": {"xid": "fx", "symbol": "EURUSD"}}
+    with open(paths["meta"], "w") as stream:
+        yaml.dump(metadata, stream)
+    seen_venues = {}
+
+    def capture_venues(_price_df, venues):
+        seen_venues.update(venues)
+        return {}
+
+    monkeypatch.setattr(validate_cmd, "consensus_gaps", capture_venues)
+    rc = validate_cmd.main(
+        [
+            "--config",
+            paths["config"],
+            "--db",
+            paths["db"],
+            "--currency-meta",
+            paths["meta"],
+        ]
+    )
+
+    assert rc == 0
+    assert seen_venues == {ISIN_A: "LSE", ISIN_B: "LSE"}
+
+
 def test_quality_report_counts_missing_business_days():
     prices = pd.DataFrame(
         {
