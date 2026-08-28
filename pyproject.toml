@@ -7,7 +7,7 @@ name = "e1f"
 version = "0.1.0"
 description = "ETF universe config and price fetching into SQLite (ftgo / yfinance)."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
@@ -75,14 +75,21 @@ source_paths = ["src"]
 only_mutate = [
     "src/e1f/common/rebalance.py",
     "src/e1f/common/scenarios.py",
+    "src/e1f/common/fees.py",
+    "src/e1f/experimental/seasonality.py",
+    "src/e1f/glossary.py",
     "src/e1f/transactions.py",
 ]
 pytest_add_cli_args_test_selection = [
+    "tests/test_fees.py",
+    "tests/test_glossary_lookup.py",
     "tests/test_rebalance.py",
     "tests/test_rebalance_properties.py",
     "tests/test_scenario.py",
+    "tests/test_shift_schedule.py",
     "tests/test_transactions.py",
 ]
+on_dependency_change = "rerun"
 # Covered-line filtering is deliberately disabled: its coverage-gathering pass
 # pops every test-loaded module out of sys.modules and re-imports them, which
 # makes numpy's C extension abort ("cannot load module more than once per

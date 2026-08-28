@@ -1,5 +1,7 @@
 """CLI dispatch: routes the first token, forwards the rest to the subcommand."""
 
+import importlib
+
 import pytest
 
 from e1f import cli
@@ -37,22 +39,22 @@ def test_dispatch_propagates_return_code(monkeypatch):
     assert cli.main(['config', 'list']) == 1
 
 
-def test_real_commands_are_registered():
-    import e1f.autocomplete as autocomplete_mod
-    import e1f.config as config_mod
-    import e1f.fetch as fetch_mod
-    import e1f.portfolio as portfolio_mod
-    import e1f.transactions as transactions_mod
-    import e1f.validate as validate_mod
+def test_command_registries_are_complete_disjoint_partitions():
+    assert set(cli.STABLE_COMMANDS).isdisjoint(cli.EXPERIMENTAL_COMMANDS)
+    assert cli.COMMANDS == {**cli.STABLE_COMMANDS, **cli.EXPERIMENTAL_COMMANDS}
+    assert cli.PARSER_FACTORIES == {
+        **cli.STABLE_PARSER_FACTORIES,
+        **cli.EXPERIMENTAL_PARSER_FACTORIES,
+    }
+    assert set(cli.COMMANDS) == set(cli.PARSER_FACTORIES)
 
-    assert cli.PARSER_FACTORIES['autocomplete'] is autocomplete_mod._build_parser
-    assert cli.COMMANDS['config'] is config_mod.main
-    assert cli.COMMANDS['fetch'] is fetch_mod.main
-    assert cli.COMMANDS['validate'] is validate_mod.main
-    assert cli.COMMANDS['transactions'] is transactions_mod.main
-    assert cli.COMMANDS['portfolio'] is portfolio_mod.main
 
-    import e1f.glossary as glossary_mod
+@pytest.mark.parametrize("name", cli.COMMANDS)
+def test_real_commands_and_parsers_are_registered(name):
+    tier = "" if name in cli.STABLE_COMMANDS else "experimental."
+    module_name = f"e1f.{tier}{name}"
+    module = importlib.import_module(module_name)
+    command = cli._autocomplete_main if name == "autocomplete" else module.main
 
-    assert cli.COMMANDS['glossary'] is glossary_mod.main
-    assert cli.PARSER_FACTORIES['glossary'] is glossary_mod._build_parser
+    assert cli.PARSER_FACTORIES[name] is module._build_parser
+    assert cli.COMMANDS[name] is command

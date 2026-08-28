@@ -17,6 +17,7 @@ from .defaults import (
     UNSUPPORTED_FX_CURRENCIES,
     XTB_EXCHANGE_SUFFIX,
 )
+from .fees import annual_fee_estimate, weighted_ter_cost
 from .holdings import (
     HoldingSeries,
     PositionEvent,
@@ -25,6 +26,7 @@ from .holdings import (
     convert_to_eur,
     fund_eur_value,
     fx_rate_asof,
+    live_isins_among,
     load_price_series,
     load_trades,
     pinned_quote_currency,
@@ -101,6 +103,7 @@ __all__ = [
     "_explain_metric",
     "_limited_by",
     "aggregate_value_series",
+    "annual_fee_estimate",
     "assemble_rebalance_valuations",
     "build_series",
     "call_with_retry",
@@ -117,6 +120,7 @@ __all__ = [
     "fund_eur_value",
     "fx_rate_asof",
     "get_scenario",
+    "live_isins_among",
     "load_price_series",
     "load_scenarios",
     "load_trades",
@@ -131,5 +135,6 @@ __all__ = [
     "unit_value_on",
     "value_on",
     "wealth_and_returns",
+    "weighted_ter_cost",
     "xirr",
 ]

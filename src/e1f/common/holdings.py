@@ -1,7 +1,9 @@
 """Trades, position timeline, FX conversion, and point-in-time EUR valuation."""
 
 import bisect
+import os
 import sqlite3
+from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
 
@@ -147,6 +149,13 @@ def portfolio_isins(db_path: str) -> frozenset[str]:
             held[symbol] = max(0.0, prev - qty)
 
     return frozenset(sym for sym, qty in held.items() if qty > _SHARE_EPSILON)
+
+
+def live_isins_among(db_path: str, candidates: Iterable[str]) -> frozenset[str]:
+    """Candidate ISINs whose stored transactions still have a net-positive position."""
+    if not os.path.exists(db_path):
+        return frozenset()
+    return portfolio_isins(db_path) & frozenset(candidates)
 
 
 def fx_rate_asof(db_path: str, quote: str, date: str, base: str = BASE_CURRENCY) -> float:

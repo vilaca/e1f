@@ -6,8 +6,11 @@ import subprocess
 import sys
 
 TARGETS = (
+    "e1f.common.fees.x_weighted_ter_cost__mutmut_",
     "e1f.common.rebalance.x_compute_rebalance__mutmut_",
     "e1f.common.scenarios.x__validate_scenario__mutmut_",
+    "e1f.experimental.seasonality.x__shift_schedule_refusal__mutmut_",
+    "e1f.glossary.x_find_terms__mutmut_",
     "e1f.transactions.x__parse_float__mutmut_",
 )
 MINIMUM_SCORE = 70.5

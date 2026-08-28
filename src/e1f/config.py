@@ -27,6 +27,7 @@ from e1f.common import (
     DEFAULT_DB,
     ConfigManager,
     CurrencyMetadata,
+    live_isins_among,
 )
 
 
@@ -50,6 +51,34 @@ def _db_has_prices(db_path: str) -> bool:
         return False
     conn.close()
     return True
+
+
+def _live_holdings_blocked(
+    db_path: str,
+    candidates: set[str] | list[str],
+    *,
+    force: bool,
+    operation: str,
+) -> bool:
+    """Disclose live candidates and return whether a destructive operation must stop."""
+    live = sorted(live_isins_among(db_path, candidates))
+    if not live:
+        return False
+    if not force:
+        print(
+            f"✗ Refusing to {operation} live holding(s): "
+            + ", ".join(live)
+            + ". Sell them first or pass --force."
+        )
+        print("Transaction history is retained; forced removal makes valuation unavailable.")
+        return True
+    action = "removal" if operation == "remove" else operation
+    print(
+        f"⚠ forcing {action} of live holding(s): "
+        + ", ".join(live)
+        + "; transaction history will remain"
+    )
+    return False
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -99,6 +128,12 @@ Examples:
     remove_parser.add_argument('--db', default=DEFAULT_DB, help='SQLite DB path')
     remove_parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                                help='Currency metadata YAML path')
+    remove_parser.add_argument(
+        '--force',
+        '-f',
+        action='store_true',
+        help='Remove even when transactions still have a live position',
+    )
 
     trim_parser = subparsers.add_parser(
         'trim',
@@ -107,6 +142,12 @@ Examples:
     trim_parser.add_argument('--db', default=DEFAULT_DB, help='SQLite DB path')
     trim_parser.add_argument('--currency-meta', default=DEFAULT_CURRENCY_META,
                              help='Currency metadata YAML path')
+    trim_parser.add_argument(
+        '--force',
+        '-f',
+        action='store_true',
+        help='Trim even when transactions still have a live position',
+    )
 
     return parser
 
@@ -172,6 +213,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if success == len(isins) else 1
 
     if args.command == 'remove':
+        if _live_holdings_blocked(
+            args.db,
+            args.isins,
+            force=args.force,
+            operation="remove",
+        ):
+            return 1
         cm = ConfigManager(args.config)
         curr_meta = CurrencyMetadata.load(args.currency_meta)
         original_config = copy.deepcopy(cm.config)
@@ -244,6 +292,13 @@ def main(argv: list[str] | None = None) -> int:
         to_remove_config = sorted(config_isins - kept)
         to_remove_db = sorted(db_isins - kept)
         to_remove_curr = sorted(curr_isins - kept)
+        if _live_holdings_blocked(
+            args.db,
+            all_isins - kept,
+            force=args.force,
+            operation="trim",
+        ):
+            return 1
         original_config = copy.deepcopy(cm.config)
         original_meta = copy.deepcopy(curr_meta)
 

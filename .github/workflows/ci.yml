@@ -23,9 +23,8 @@ jobs:
       - name: Sync dependencies (locked)
         run: uv sync --extra dev
 
-      # shellcheck is pre-installed on ubuntu-latest; the gate skips gracefully
-      # if not available locally (install with: brew install shellcheck).
-      # actionlint is installed below in the dedicated job.
+      # shellcheck is pre-installed on ubuntu-latest. actionlint is installed
+      # below in the dedicated job; both gates fail when their tool is absent.
 
       # Same script CI and developers run locally — the single definition of green.
       # actions runs in the actionlint job below (needs a separate install).

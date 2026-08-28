@@ -124,11 +124,15 @@ def test_refresh_lookthrough_stores_and_dedupes(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(lt, "_fetch_lookthrough", lambda tickers: list(rows))
 
-    lt.refresh_lookthrough(db, config)
+    first = lt.refresh_lookthrough(db, config)
+    assert first.created_isins == (ISIN,)
+    assert first.unchanged_isins == ()
     snap = latest_lookthrough_snapshot(db, ISIN)
     assert snap is not None and snap.source == "yfinance" and snap.tier == "provider"
 
-    lt.refresh_lookthrough(db, config)  # identical re-observation -> no new snapshot
+    second = lt.refresh_lookthrough(db, config)  # identical re-observation -> no new snapshot
+    assert second.created_isins == ()
+    assert second.unchanged_isins == (ISIN,)
     with closing(sqlite3.connect(db)) as conn:
         count = conn.execute("SELECT COUNT(*) FROM holdings_snapshot").fetchone()[0]
     assert count == 1
@@ -140,15 +144,58 @@ def test_refresh_lookthrough_warns_when_no_data(tmp_path, monkeypatch, caplog):
     _hold_transaction(db, ISIN)
     monkeypatch.setattr(lt, "_fetch_lookthrough", lambda tickers: None)
     with caplog.at_level("WARNING"):
-        lt.refresh_lookthrough(db, config)
+        summary = lt.refresh_lookthrough(db, config)
+    assert summary.unavailable_isins == (ISIN,)
     assert any("no yfinance look-through" in r.message for r in caplog.records)
     assert latest_lookthrough_snapshot(db, ISIN) is None
+
+
+def test_refresh_lookthrough_discloses_skipped_funds_and_summary(tmp_path, monkeypatch, caplog):
+    db = str(tmp_path / "t.db")
+    no_ticker = "AA0000000002"
+    unconfigured = "AA0000000003"
+    config = _config(
+        tmp_path,
+        {
+            **UNIVERSE,
+            no_ticker: {"name": "No Ticker ETF", "tickers": [], "exchange": "", "figi": ""},
+        },
+    )
+    for isin in (ISIN, no_ticker, unconfigured):
+        _hold_transaction(db, isin)
+    rows = lt._lookthrough_rows(_FakeFundsData(top=_top_df([("Apple Inc.", 0.07)])))
+    monkeypatch.setattr(lt, "_fetch_lookthrough", lambda tickers: rows)
+
+    with caplog.at_level("INFO"):
+        summary = lt.refresh_lookthrough(db, config)
+
+    assert summary.held_isins == (ISIN, no_ticker, unconfigured)
+    assert summary.created_isins == (ISIN,)
+    assert summary.unchanged_isins == ()
+    assert summary.unavailable_isins == ()
+    assert summary.skipped_isins == (no_ticker, unconfigured)
+    outcomes = (
+        set(summary.created_isins)
+        | set(summary.unchanged_isins)
+        | set(summary.unavailable_isins)
+        | set(summary.skipped_isins)
+    )
+    assert outcomes == set(summary.held_isins)
+    messages = [record.message for record in caplog.records]
+    assert any(f"{unconfigured} — held fund is absent from the ETF config" in m for m in messages)
+    assert any(f"{no_ticker} No Ticker ETF — no configured ticker" in m for m in messages)
+    assert (
+        "Look-through refresh: held=3; new=1; unchanged=0; unavailable=0; skipped=2"
+        in messages
+    )
 
 
 def test_refresh_lookthrough_no_holdings(tmp_path, capsys):
     db = str(tmp_path / "empty.db")
     config = _config(tmp_path)
-    assert lt.refresh_lookthrough(db, config) == 0
+    assert lt.refresh_lookthrough(db, config) == lt.LookthroughRefreshSummary(
+        (), (), (), (), (),
+    )
     assert "No ETF holdings" in capsys.readouterr().out
 
 

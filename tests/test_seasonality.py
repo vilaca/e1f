@@ -901,6 +901,45 @@ def test_shift_september_matches_avoid_august():
     assert sz.invariance_holds(shift, cash_rate=0.0)
 
 
+def test_shift_refuses_year_without_named_redeploy_fill():
+    dates = ["2024-08-01", "2024-09-02"]
+    refusal = sz._shift_schedule_refusal(
+        {0: 8, 1: 9},
+        {0: 2024, 1: 2024},
+        8,
+        11,
+    )
+    assert refusal == sz.ShiftScheduleRefusal(
+        selected_month=8,
+        redeploy_month=11,
+        incomplete_years=(2024,),
+    )
+    with pytest.raises(
+        sz.SeasonalityError,
+        match=r"no Nov redeploy fill for year\(s\): 2024",
+    ):
+        sz.simulate_seasonal(
+            dates,
+            [100.0, 100.0],
+            100.0,
+            0.0,
+            sz.DeployKind.SHIFT,
+            8,
+            [0, 1],
+            "Aug->Nov",
+            11,
+        )
+
+
+def test_shift_schedule_refusal_partitions_complete_and_irrelevant_years():
+    assert sz._shift_schedule_refusal(
+        {0: 8, 1: 11, 2: 7},
+        {0: 2023, 1: 2023, 2: 2024},
+        8,
+        11,
+    ) is None
+
+
 def test_shift_october_holds_through_september_gain():
     dates, closes, _returns, fills = _path_for_sim(
         r_fn=lambda _y, m: 0.50 if m == 9 else 0.0,
