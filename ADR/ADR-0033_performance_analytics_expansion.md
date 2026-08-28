@@ -3,9 +3,10 @@
 **Scope:** expand `performance` with a battery of additional return/risk metrics
 and a benchmark-comparison mode, but admit **only metrics that are computable from
 data already in the DB with no convention choice and no risk-free rate** ("clean"
-metrics). Everything requiring €STR, a debatable definition, or a rolling series is
-recorded here as **deliberately deferred**, so a future session returns to a
-decision, not a blank page. Delivered in phases (A → B → C), each of which may take
+metrics). Everything requiring €STR, a debatable definition, a rolling series, a
+window the book is too young to fill, or data e1f does not hold is recorded here as
+**deliberately deferred**, so a future session returns to a decision, not a blank
+page. Delivered in phases (A → B → C), each of which may take
 its own follow-on ADR as it lands. This ADR is the roadmap and the deferral log;
 it does not itself add a metric.
 
@@ -49,7 +50,12 @@ data-backed today, and defer the rest **on the record** rather than approximatin
   new `performance --metrics` view, which composes with `--series N` to tabulate
   the same figures one row per trading day (cumulative since inception, the same
   contract as the plain `--series`; the trailing-window reading is the deferred
-  rolling family below, not this). Ships first.
+  rolling family below, not this). Ships first. **Later addition (same scope):**
+  Days Since High — calendar days since the *current* running peak (0 = the last
+  day is itself a new high), distinct from MaxDD Duration (which tracks the
+  *deepest* episode); the two coincide only while the deepest drawdown is also the
+  open one. Same own-return-series basis, no new data; surfaced in `--metrics` and
+  as the `SinceHi` column under `--series`.
 
 - **Phase B — benchmark comparison (needs the MSCI World fund):** Beta, R²,
   Tracking Error, Information Ratio, Relative Strength, against one or more
@@ -101,21 +107,29 @@ all-equity MSCI World mixes asset classes (EM, small-cap, bonds, REIT, sectors).
 
 ## Deferred / not implemented (with the reason — this is the return-to list)
 
-**Needs €STR (a risk-free rate; deliberately not faked — no rate data exists, and
-a flat assumption was rejected):**
+**Needs €STR / a MAR reference (a risk-free or minimum-acceptable-return term;
+deliberately not faked — no rate data exists and a flat assumption was rejected):**
 - Sharpe Ratio
 - Rolling Sharpe Ratio
 - Treynor Ratio — `(Rp − rf)/β`
 - Jensen's Alpha — `(Rp − rf) − β(Rm − rf)`; the `(1−β)·rf` term does not cancel,
   so it genuinely needs `rf` (there is no rf-free "alpha" that means the same thing)
+- Downside Deviation — RMS of returns below a MAR. A MAR=0 variant needs **no** rate
+  and is pure return-series math; nonetheless **postponed by decision** (this session)
+  so the whole MAR family ships once, consistently, on the risk-free reference —
+  rather than a one-off MAR=0 version now and a rate-based one later.
+- Sortino Ratio — `(Rp − MAR) / DownsideDeviation(MAR)`; same gate. MAR=rf is the
+  standard form once €STR lands; the MAR=0 form was buildable today but is held with
+  the family by the same decision.
 
-Unblocking these is its own decision: fetch daily €STR from the ECB into a new
-rate series, then a `--rf` source. Until then they are out of scope.
+Unblocking the whole group is one decision: fetch daily €STR from the ECB into a new
+rate series, then a `--rf` / MAR source. Until then they are out of scope — **all
+MAR/rf-dependent metrics gate on €STR together** (this session's call), even the ones
+a MAR=0 convention could deliver rate-free.
 
-**Convention choice (deferred to avoid a silent pick; revisit with a chosen
-definition):**
-- Sortino Ratio — MAR=0 vs MAR=rf. MAR=0 needs no rate but is a real convention
-  choice; postponed with the rest. When €STR lands, MAR=rf is the standard form.
+**Convention choice — code-ready, decision-blocked (deferred to avoid a silent
+pick; each is a pure statistic over series/benchmark legs the code already has —
+what's missing is a chosen definition, not data or a rate):**
 - Calmar Ratio — textbook 3-year window vs since-inception; most holdings have <3y
   history, so neither is clean today.
 - Average Drawdown — mean of drawdown *episodes* vs mean of the daily *underwater*
@@ -131,6 +145,32 @@ definition):**
 - Rolling 5-day return, Rolling Volatility, Rolling outperformance vs benchmark
   (Rolling Sharpe additionally needs €STR). A `performance --rolling N` view is a
   clean later increment once the scalar batteries are in.
+- Rolling 252-day metrics specifically are also **premature on a young book** — a
+  252-trading-day window cannot even form until the book is ~a year old, so shipping
+  the code now would only emit `n/a`. This is a window-length gate on top of the
+  deprioritization above (see the young-book note below), not a separate design.
+
+**Window too short — premature regardless of code (young-book gate, revisit as the
+book ages; no ADR needed, just enough history):**
+- Trailing-period returns **1M / 3M / 6M / 1Y / 2Y** — a table of point-to-point
+  return over each trailing calendar window. The 1M/3M/6M windows are computable
+  today; **1Y/2Y are meaningless on a book only a couple of months old** and would
+  render `n/a` (a window auto-skips when it predates inception). The metric itself
+  is unbuilt but unblocked — the reason it isn't shipped is that half the columns
+  would be empty; it earns its place once there is history to fill them. Distinct
+  from `--diff N` (signed change over N days) and `--series N`
+  (cumulative-since-inception per day), which already exist.
+
+**Blocked on data e1f does not hold (the genuinely hard one — not a convention, a
+rate, or a window, but a missing dataset):**
+- Attribution of return/exposure by **sector / region / factor**. e1f has no
+  security-level classification: region has been reported UNAVAILABLE since
+  ADR-0018 (portfolio-level country/region HHI is designed but not landed, needing a
+  reviewed sidecar), and there is **no sector or factor data at all**. Unblocking
+  this needs a look-through classification source and a review pipeline — a much
+  larger effort than any metric above, and out of scope for this analytics
+  expansion. Per-holding P&L (`performance`) and per-deposit P&L share (`deposits`)
+  are the contribution views that *are* possible without that data.
 
 ## Consequences
 
@@ -143,5 +183,11 @@ price rows stay in the gitignored DB). Phase C landed as a separate `deposits`
 command, reusing the same EUR valuation so its totals reconcile with the
 `performance` TOTAL to the cent. All three clean-scope phases are now shipped; the
 deferral list above is the authoritative record of what was intentionally left out
-and why — a future "let's add Sharpe" starts by fetching €STR, and a future "add
-Calmar" starts by picking a window, each already framed here.
+and why, sorted by what unblocks it: a future "let's add Sharpe/Sortino/downside
+deviation" starts by **fetching €STR** (the whole rate/MAR family gates on it
+together — no interim MAR=0 pick); "add Calmar / capture / win-rate" starts by
+**choosing a definition** (code is ready); "add 1Y/2Y or rolling-252" just needs the
+**book to age** (unbuilt but unblocked, would only emit `n/a` today); and
+sector/region/factor attribution needs a **look-through classification dataset** e1f
+does not have — the one genuinely hard gap. Each is already framed here so the return
+is to a decision, not a blank page.

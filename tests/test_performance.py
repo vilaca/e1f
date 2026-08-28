@@ -98,6 +98,7 @@ def test_extended_metrics_drawdown_recovery_and_extremes():
     assert ext.max_dd_ongoing is False
     assert ext.max_dd_duration_days == 2  # 01-02 → 01-04, calendar days
     assert ext.underwater_days == 2       # single episode
+    assert ext.days_since_high == 0       # 01-04 is a new high — back at peak
     # Recovery factor = TWR / |MaxDD| = 0.32 / 0.25.
     assert ext.recovery_factor == pytest.approx(0.32 / 0.25)
     assert ext.best_day == pytest.approx(132.0 / 90.0 - 1.0)
@@ -127,6 +128,7 @@ def test_extended_metrics_ongoing_drawdown_measured_to_last_day():
     assert ext.max_dd_recovery_date == "2024-01-05"  # last day, not a real recovery
     assert ext.max_dd_duration_days == 3
     assert ext.underwater_days == 3
+    assert ext.days_since_high == 3  # deepest episode is the open one — they coincide
     # TWR = -0.10 while still down 25% → a negative recovery factor.
     assert ext.recovery_factor == pytest.approx(-0.10 / 0.25)
 
@@ -144,6 +146,7 @@ def test_extended_metrics_no_drawdown_has_no_recovery_factor():
     assert ext.max_dd_ongoing is False
     assert ext.max_dd_peak_date is None and ext.max_dd_recovery_date is None
     assert ext.recovery_factor is None          # nothing to recover from
+    assert ext.days_since_high == 0             # monotonic up — every day a new high
     # Worst "day" is the +0% first return, so Max Gain / Max Loss is undefined.
     assert ext.gain_loss_ratio is None
 
@@ -164,6 +167,26 @@ def test_extended_metrics_deepest_of_several_episodes_wins():
     assert ext.max_dd_recovery_date == "2024-01-06"
     assert ext.max_dd_duration_days == 3
     assert ext.underwater_days == 5                   # 2 (A) + 3 (B)
+    assert ext.days_since_high == 0                   # recovers on 01-06 (a new high)
+
+
+def test_extended_metrics_days_since_high_tracks_current_not_deepest():
+    # Deepest drawdown (-20%) recovers, then a shallower (-10%) dip stays open at the
+    # end. MaxDD Duration still describes the deepest (recovered) episode, but Days
+    # Since High tracks the *current* running peak (01-05), not the deepest one.
+    points = [
+        ("2024-01-01", 100.0, 100.0),  # 1.00
+        ("2024-01-02", 80.0, 0.0),     # 0.80  -20% (episode A opens at peak 01-01)
+        ("2024-01-03", 100.0, 0.0),    # 1.00  recovers A (2 days), new peak 01-03
+        ("2024-01-05", 110.0, 0.0),    # 1.10  new peak 01-05
+        ("2024-01-15", 99.0, 0.0),     # 0.99  -10% off 01-05, still open at the end
+    ]
+    ext = extended_metrics(points, risk_metrics(points).twr)
+    assert ext.max_drawdown == pytest.approx(-0.20)   # deepest episode
+    assert ext.max_dd_ongoing is False                # deepest one recovered
+    assert ext.max_dd_peak_date == "2024-01-01"
+    assert ext.max_dd_duration_days == 2              # 01-01 → 01-03
+    assert ext.days_since_high == 10                 # 01-05 → 01-15, the current dip
 
 
 def test_extended_metrics_empty_series_is_all_none():
@@ -171,6 +194,7 @@ def test_extended_metrics_empty_series_is_all_none():
     assert ext.max_drawdown is None
     assert ext.max_dd_duration_days is None
     assert ext.underwater_days is None
+    assert ext.days_since_high is None
     assert ext.max_dd_ongoing is False
     assert ext.recovery_factor is None
     assert ext.best_day is None and ext.worst_day is None
@@ -1381,7 +1405,7 @@ def _ext_metrics(**overrides):
     base = dict(
         max_drawdown=-0.1, max_dd_duration_days=1, max_dd_peak_date="2024-01-01",
         max_dd_recovery_date="2024-01-02", max_dd_ongoing=False, underwater_days=1,
-        recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
+        days_since_high=0, recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
         worst_day=-0.1, worst_day_date="2024-01-01", gain_loss_ratio=1.0,
     )
     base.update(overrides)
@@ -1415,6 +1439,7 @@ def test_main_metrics_report_renders(tmp_path, capsys):
     assert "Max Drawdown" in out and "-25.0%" in out
     assert "MaxDD Duration" in out and "213d" in out
     assert "peak 2024-06-01 → recovery 2024-12-31" in out
+    assert "Days Since High" in out and "at high" in out  # recovered to a new high 12-31
     assert "Recovery Factor" in out and "1.20" in out
     assert "Best Day" in out and "+44.44%" in out
     assert "Worst Day" in out and "-25.00%" in out
@@ -1489,7 +1514,7 @@ def test_main_metrics_series_composes(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "Portfolio metrics series" in out
-    assert "MaxDD" in out and "DDdur" in out and "RecFac" in out
+    assert "MaxDD" in out and "DDdur" in out and "SinceHi" in out and "RecFac" in out
     for day in ("2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"):
         assert day in out
     assert "-25.0%" in out  # last day's cumulative MaxDD (the 12 → 9 trough)
