@@ -205,6 +205,172 @@ def test_sort_impacts_by_gain_desc():
 
 
 # ---------------------------------------------------------------------------
+# Grouping (deposit vintages: period × ISIN)
+# ---------------------------------------------------------------------------
+
+def test_group_impacts_by_year_sums_and_reconciles(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-03-01", EUR_ISIN, 10.0, 10.0),  # 2023: 100
+            _buy("t2", "2023-09-01", EUR_ISIN, 5.0, 8.0),    # 2023:  40  (15 sh total)
+            _buy("t3", "2024-02-01", EUR_ISIN, 5.0, 12.0),   # 2024:  60  ( 5 sh)
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    y2023, y2024 = dep.group_impacts(impacts, "year")
+    assert (y2023.date, y2023.isin) == ("2023", EUR_ISIN)
+    assert (y2023.amount, y2023.value, y2023.gain) == pytest.approx((140.0, 210.0, 70.0))
+    assert (y2024.date, y2024.amount, y2024.value) == ("2024", pytest.approx(60.0),
+                                                        pytest.approx(70.0))
+    # %P&L over the grouped rows: 70/80 and 10/80.
+    assert y2023.pnl_share == pytest.approx(87.5) and y2024.pnl_share == pytest.approx(12.5)
+    # Grouping is a partition: grouped totals equal the ungrouped summary.
+    summary = dep.summarize(impacts)
+    assert sum(g.value for g in (y2023, y2024)) == pytest.approx(summary.reported)
+    assert sum(g.amount for g in (y2023, y2024)) == pytest.approx(summary.invested)
+
+
+def test_group_impacts_by_month_keeps_funds_separate(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-05", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-01-20", USD_ISIN, 5.0, 12.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0), (USD_ISIN, "2024-12-31", 120.0)],
+        fx=[("EUR", "USD", "2024-12-31", 1.2)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    grouped = dep.group_impacts(impacts, "month")
+    # Same month, two funds → two rows (period × ISIN), not one merged row.
+    assert [(g.date, g.isin) for g in grouped] == [
+        ("2024-01", EUR_ISIN), ("2024-01", USD_ISIN)
+    ]
+
+
+def test_all_total_row_is_the_grand_total():
+    valuable_a = DepositImpact("2024", "A", "Fund A", amount=100.0, value=140.0)  # +40
+    unvaluable = DepositImpact("2024", "C", "Fund C", amount=50.0, value=None)
+    dep._assign_pnl_shares([valuable_a, unvaluable])
+    row = dep._total_row([valuable_a, unvaluable], label="── ALL ──")
+    assert row.name == "── ALL ──" and row.isin == ""
+    assert (row.amount, row.value, row.gain) == pytest.approx((100.0, 140.0, 40.0))
+    assert row.pnl_share == pytest.approx(100.0)  # unvaluable excluded, valuable sum = 100%
+
+
+def test_group_impacts_unvaluable_bucket_is_none(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-06-01", USD_ISIN, 10.0, 9.0),  # no price → unvaluable
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    grouped = {g.isin: g for g in dep.group_impacts(impacts, "year")}
+    assert grouped[USD_ISIN].value is None and grouped[USD_ISIN].pnl_share is None
+    assert grouped[EUR_ISIN].value == pytest.approx(140.0)
+
+
+def test_subtotal_row_sums_valuable_only():
+    valuable_a = DepositImpact("2024", "A", "Fund A", amount=100.0, value=140.0)  # +40
+    valuable_b = DepositImpact("2024", "B", "Fund B", amount=60.0, value=70.0)    # +10
+    unvaluable = DepositImpact("2024", "C", "Fund C", amount=50.0, value=None)
+    dep._assign_pnl_shares([valuable_a, valuable_b, unvaluable])  # 80% / 20% / —
+    sub = dep._subtotal_row([valuable_a, valuable_b, unvaluable])
+    assert sub.date == "" and sub.isin == ""  # period column blank in the total row
+    assert (sub.amount, sub.value, sub.gain) == pytest.approx((160.0, 210.0, 50.0))
+    assert sub.ret_pct == pytest.approx(31.25)  # 50 / 160
+    assert sub.pnl_share == pytest.approx(100.0)  # the whole (one-period) book
+
+
+def test_period_key_week_is_iso8601():
+    assert dep._period_key("2024-01-01", "week") == "2024-W01"
+    assert dep._period_key("2024-01-07", "week") == "2024-W01"  # Sunday, same week
+    assert dep._period_key("2024-01-08", "week") == "2024-W02"
+    # ISO week-numbering year, not the calendar year: Mon 2024-12-30 is 2025-W01.
+    assert dep._period_key("2024-12-29", "week") == "2024-W52"
+    assert dep._period_key("2024-12-30", "week") == "2025-W01"
+
+
+def test_group_impacts_by_week_sums_same_iso_week(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),  # W01 Mon: 100
+            _buy("t2", "2024-01-07", EUR_ISIN, 5.0, 8.0),    # W01 Sun:  40  (15 sh)
+            _buy("t3", "2024-01-08", EUR_ISIN, 5.0, 12.0),   # W02 Mon:  60  ( 5 sh)
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    w01, w02 = dep.group_impacts(impacts, "week")
+    assert (w01.date, w01.isin) == ("2024-W01", EUR_ISIN)
+    assert (w01.amount, w01.value, w01.gain) == pytest.approx((140.0, 210.0, 70.0))
+    assert (w02.date, w02.amount, w02.value) == ("2024-W02", pytest.approx(60.0),
+                                                    pytest.approx(70.0))
+    summary = dep.summarize(impacts)
+    assert sum(g.value for g in (w01, w02)) == pytest.approx(summary.reported)
+    assert sum(g.amount for g in (w01, w02)) == pytest.approx(summary.invested)
+
+
+def test_group_impacts_week_uses_iso_year_across_calendar_boundary(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-12-29", EUR_ISIN, 10.0, 10.0),  # Sun → 2024-W52
+            _buy("t2", "2024-12-31", EUR_ISIN, 5.0, 12.0),   # Tue → 2025-W01
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    w52, w01 = dep.group_impacts(impacts, "week")
+    assert (w52.date, w52.amount, w52.value) == ("2024-W52", pytest.approx(100.0),
+                                                   pytest.approx(140.0))
+    assert (w01.date, w01.amount, w01.value) == ("2025-W01", pytest.approx(60.0),
+                                                   pytest.approx(70.0))
+
+
+def test_group_subtotals_reconcile_across_periods(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-03-01", EUR_ISIN, 10.0, 10.0),  # 2023
+            _buy("t2", "2024-02-01", EUR_ISIN, 5.0, 12.0),   # 2024
+            _buy("t3", "2024-05-01", USD_ISIN, 5.0, 12.0),   # 2024 (USD 60 paid)
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0), (USD_ISIN, "2024-12-31", 120.0)],
+        fx=[("EUR", "USD", "2024-12-31", 1.2)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    grouped = dep.group_impacts(impacts, "year")
+    by_period: dict[str, list] = {}
+    for row in grouped:
+        by_period.setdefault(row.date, []).append(row)
+    subtotals = [dep._subtotal_row(m) for m in by_period.values()]
+    summary = dep.summarize(impacts)
+    # Value subtotals sum to the reported market value; %P&L subtotals sum to 100%.
+    assert sum(s.value for s in subtotals) == pytest.approx(summary.reported)
+    assert sum(s.amount for s in subtotals) == pytest.approx(summary.invested)
+    assert sum(s.pnl_share for s in subtotals) == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
 # Command
 # ---------------------------------------------------------------------------
 
@@ -227,6 +393,97 @@ def test_cmd_deposits_renders_summary_and_reconciles(tmp_path, capsys):
     assert "Organic gain (market)" in out and "+50.00" in out
     assert "ROIC" in out and "+31.2%" in out
     assert "Euro Fund" in out and "+80.0%" in out  # a deposit's P&L share
+
+
+def test_cmd_deposits_group_year_renders_period_rows(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-03-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-02-01", EUR_ISIN, 5.0, 12.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = dep.main(_args(db, config, meta, "--as-of", "2024-12-31", "--group", "year"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Per-year impact" in out
+    assert "2023" in out and "2024" in out  # each period is its own group heading
+    assert out.count("── total ──") == 2  # a subtotal per period
+    assert out.count("Amount€") == 2  # the header repeats at the start of each group
+    # The top summary block is dropped under --group; the grand total lives in the table.
+    assert "Invested (contributions)" not in out
+    assert "── ALL ──" in out and "160.00" in out  # grand total in-table
+
+
+def test_cmd_deposits_group_year_sort_gain_reverse_orders_periods_and_funds(
+    tmp_path, capsys
+):
+    # 2023: EUR +40. 2024: EUR +10, USD +440. --reverse → 2024 first; --sort gain
+    # → USD above EUR inside 2024.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-03-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-02-01", EUR_ISIN, 5.0, 12.0),
+            _buy("t3", "2024-05-01", USD_ISIN, 5.0, 12.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0), (USD_ISIN, "2024-12-31", 120.0)],
+        fx=[("EUR", "USD", "2024-12-31", 1.2)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    code = dep.main(_args(
+        db, config, meta, "--as-of", "2024-12-31",
+        "--group", "year", "--sort", "gain", "--reverse",
+    ))
+    out = capsys.readouterr().out
+    assert code == 0
+    i_2024, i_2023 = out.index("\n2024\n"), out.index("\n2023\n")
+    assert i_2024 < i_2023
+    section_2024 = out[i_2024:i_2023]
+    assert section_2024.index(USD_ISIN) < section_2024.index(EUR_ISIN)
+
+
+def test_cmd_deposits_group_skips_subtotal_when_period_has_no_valuable_fund(
+    tmp_path, capsys
+):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-03-01", USD_ISIN, 10.0, 9.0),  # unvaluable (no price)
+            _buy("t2", "2024-02-01", EUR_ISIN, 10.0, 10.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund"},
+    )
+    dep.main(_args(db, config, meta, "--as-of", "2024-12-31", "--group", "year"))
+    out = capsys.readouterr().out
+    assert "2023" in out and USD_ISIN in out  # unvaluable vintage still listed
+    assert out.count("── total ──") == 1  # only the 2024 (valuable) section
+
+
+def test_cmd_deposits_group_week_renders_iso_week_headings(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-01-08", EUR_ISIN, 5.0, 12.0),
+        ],
+        prices=[(EUR_ISIN, "2024-12-31", 14.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = dep.main(_args(db, config, meta, "--as-of", "2024-12-31", "--group", "week"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Per-week impact" in out
+    assert "2024-W01" in out and "2024-W02" in out
+    assert "Invested (contributions)" not in out
+    assert "── ALL ──" in out
 
 
 def test_cmd_deposits_reports_sell_as_unsupported(tmp_path, capsys):

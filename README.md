@@ -128,6 +128,8 @@ e1f benchmark --explain              # + provenance block
 e1f deposits                         # invested/reported/organic/ROIC + per-deposit table
 e1f deposits --sort gain --reverse   # biggest contributors to P&L first
 e1f deposits --as-of 2025-12-31      # value each deposit as of a past date
+e1f deposits --group year            # deposit vintages: one row per fund per year
+e1f deposits --group week            # same, per ISO week (YYYY-Www)
 
 # 5. Inspect within-fund concentration (experimental; look-through cached by `e1f lookthrough`)
 e1f lookthrough                      # refresh yfinance look-through snapshots first

@@ -243,7 +243,7 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
         ),
         (
             "deposits",
-            deposits._HEADER,
+            deposits._table_header("Date"),
             {
                 "Amount€": "Amount€",
                 "Value€": "Value€",

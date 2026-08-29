@@ -8,9 +8,15 @@ return, and its share of the portfolio's P&L. The book is buy-and-hold (contribu
 only, ADR-0011), so per-deposit values sum to the portfolio market value exactly; a
 SELL makes the report unavailable because disposal attribution is not implemented.
 
+``--group week|month|year`` (ADR-0036) collapses the per-buy table into deposit
+vintages (one row per calendar period × fund). Week labels are ISO-8601
+(``YYYY-Www``, Monday-start).
+
 Usage:
     e1f deposits
     e1f deposits --as-of 2025-12-31 --sort gain --reverse
+    e1f deposits --group year
+    e1f deposits --group week
 """
 
 import argparse
@@ -141,6 +147,60 @@ def deposit_impacts(
     return impacts
 
 
+GROUP_FIELDS = ("month", "year", "week")
+_AS_OF_TAIL = "valued to the as-of date; a total closes each valuable section"
+_GROUP_INTRO = {
+    "month": f"Per-month impact (each fund's deposits summed by month, {_AS_OF_TAIL}):",
+    "year": f"Per-year impact (each fund's deposits summed by year, {_AS_OF_TAIL}):",
+    "week": f"Per-week impact (each fund's deposits summed by ISO week, {_AS_OF_TAIL}):",
+}
+
+
+def _period_key(day: str, by: str) -> str:
+    """Calendar-period label for a ``YYYY-MM-DD`` buy date.
+
+    ``year`` / ``month`` are ISO-date prefixes (``YYYY`` / ``YYYY-MM``). ``week`` is
+    ISO-8601 ``YYYY-Www`` using the week-numbering year (Monday-start; a late-December
+    day can fall in week 1 of the next year). Week numbers are zero-padded so labels
+    sort lexicographically.
+    """
+    if by == "year":
+        return day[:4]
+    if by == "month":
+        return day[:7]
+    if by == "week":
+        iso = date.fromisoformat(day).isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    raise KeyError(by)
+
+
+def group_impacts(impacts: list[DepositImpact], by: str) -> list[DepositImpact]:
+    """Aggregate per-buy impacts into one row per (calendar period, ISIN).
+
+    ``by`` is "month" (``YYYY-MM``), "year" (``YYYY``), or "week" (ISO-8601
+    ``YYYY-Www``). Amounts and values sum within a bucket; a bucket is unvaluable
+    exactly when its ISIN is (all buys of one ISIN share the same unit value, so a
+    bucket never mixes valued and None). %P&L is reassigned across the grouped rows.
+    Grouping only partitions the same buys, so the summary totals and the
+    reconciliation with the portfolio market value are unchanged.
+    """
+    buckets: dict[tuple[str, str], list[DepositImpact]] = {}
+    for impact in impacts:
+        buckets.setdefault((_period_key(impact.date, by), impact.isin), []).append(impact)
+    grouped: list[DepositImpact] = []
+    for (period, isin), members in sorted(buckets.items()):
+        unvaluable = any(m.value is None for m in members)
+        grouped.append(DepositImpact(
+            date=period,
+            isin=isin,
+            name=members[0].name,
+            amount=sum(m.amount for m in members),
+            value=None if unvaluable else sum(m.value or 0.0 for m in members),
+        ))
+    _assign_pnl_shares(grouped)
+    return grouped
+
+
 def summarize(impacts: list[DepositImpact]) -> DepositSummary | None:
     """Organic-vs-reported decomposition over the valuable deposits, or None if none."""
     valuable = [i for i in impacts if i.valuable]
@@ -196,20 +256,87 @@ def _fmt_pct(value: float | None) -> str:
     return "—" if value is None else f"{value:+.1f}%"
 
 
-_HEADER = (
-    f"\n{'Date':<12} {'ISIN':<14} {'Fund':<24} {'Amount€':>10} {'Value€':>10} "
+_COLUMNS = (
+    f"{'ISIN':<14} {'Fund':<24} {'Amount€':>10} {'Value€':>10} "
     f"{'Gain€':>10} {'Ret%':>7} {'%P&L':>7}"
 )
-_RULE_WIDTH = len(_HEADER.lstrip("\n"))
 
 
-def _format_row(impact: DepositImpact) -> str:
+def _table_header(first_col: str) -> str:
+    return f"\n{first_col:<12} {_COLUMNS}"
+
+
+def _grouped_header() -> str:
+    """Column header for the grouped table — no date column (the period is a heading)."""
+    return _COLUMNS
+
+
+def _row_cells(impact: DepositImpact) -> str:
     return (
-        f"{impact.date:<12} {impact.isin:<14} {impact.name:<24} "
+        f"{impact.isin:<14} {impact.name:<24} "
         f"{_fmt_money(impact.amount):>10} {_fmt_money(impact.value):>10} "
         f"{_fmt_signed(impact.gain):>10} {_fmt_pct(impact.ret_pct):>7} "
         f"{_fmt_pct(impact.pnl_share):>7}"
     )
+
+
+def _format_row(impact: DepositImpact) -> str:
+    return f"{impact.date:<12} {_row_cells(impact)}"
+
+
+def _total_row(members: list[DepositImpact], *, label: str) -> DepositImpact:
+    """A total row over the *valuable* members (grand-summary rule, applied to a slice).
+
+    Amount/Value/Gain/Ret% and %P&L are computed over the valuable members only, so the
+    row is internally consistent (Gain = Value − Amount, Ret% = ROIC) and totals
+    reconcile: Value totals sum to the reported market value and %P&L totals sum to
+    100%, exactly as the grand summary excludes unvaluable deposits. Used for both the
+    per-period subtotal and the bottom ``── ALL ──`` grand total.
+    """
+    valuable = [m for m in members if m.valuable]
+    shares = [m.pnl_share for m in valuable if m.pnl_share is not None]
+    row = DepositImpact(
+        date="",
+        isin="",
+        name=label,
+        amount=sum(m.amount for m in valuable),
+        value=sum(m.value or 0.0 for m in valuable) if valuable else None,
+    )
+    row.pnl_share = sum(shares) if shares else None
+    return row
+
+
+def _subtotal_row(members: list[DepositImpact]) -> DepositImpact:
+    """Per-period subtotal — a ``── total ──`` total over the period's valuable funds."""
+    return _total_row(members, label="── total ──")
+
+
+def _render_grouped(
+    grouped: list[DepositImpact], *, sort_by: str, reverse: bool
+) -> None:
+    """Print grouped rows period by period.
+
+    Each period is its own section: a period heading, the column header, the fund
+    rows, then a ``── total ──`` subtotal when the period has at least one valuable
+    fund. There is no date column — the heading carries the period. Blank lines
+    separate the sections. ``--sort`` orders funds within each period; ``--reverse``
+    also flips period order.
+    """
+    by_period: dict[str, list[DepositImpact]] = {}
+    for row in grouped:
+        by_period.setdefault(row.date, []).append(row)
+    header = _grouped_header()
+    for period in sorted(by_period, reverse=reverse):
+        print(f"\n{period}")
+        print(header)
+        print("-" * len(header))
+        members = sort_impacts(by_period[period], sort_by=sort_by, reverse=reverse)
+        for member in members:
+            print(_row_cells(member))
+        # Omit the subtotal when nothing in the period is valuable — a 0.00/—
+        # row under detail amounts looks like a broken total (ADR-0036).
+        if any(m.valuable for m in members):
+            print(_row_cells(_subtotal_row(members)))
 
 
 def _render_summary(as_of: str, summary: DepositSummary) -> list[str]:
@@ -230,6 +357,7 @@ def _cmd_deposits(
     as_of: str,
     sort_by: str = "date",
     reverse: bool = False,
+    group: str | None = None,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
 ) -> int:
     impacts = deposit_impacts(db_path, config_path, currency_meta_path, as_of)
@@ -243,14 +371,23 @@ def _cmd_deposits(
         print(f"No priceable deposits as of {as_of} — fetch prices first (e1f fetch)")
         return 0
 
-    for line in _render_summary(as_of, summary):
-        print(line)
-
-    print("\nPer-deposit impact (each contribution's shares valued to the as-of date):")
-    print(_HEADER)
-    print("-" * _RULE_WIDTH)
-    for impact in sort_impacts(impacts, sort_by=sort_by, reverse=reverse):
-        print(_format_row(impact))
+    if group:
+        # No top summary block: the bottom ── ALL ── row carries the grand total.
+        grouped = group_impacts(impacts, group)
+        print(f"\n{_GROUP_INTRO[group]}")
+        _render_grouped(grouped, sort_by=sort_by, reverse=reverse)
+        print()
+        print(_row_cells(_total_row(grouped, label="── ALL ──")))
+    else:
+        for line in _render_summary(as_of, summary):
+            print(line)
+        print("\nPer-deposit impact (each contribution's shares valued to the "
+              "as-of date):")
+        header = _table_header("Date")
+        print(header)
+        print("-" * len(header.lstrip("\n")))
+        for impact in sort_impacts(impacts, sort_by=sort_by, reverse=reverse):
+            print(_format_row(impact))
 
     excluded = sorted({i.isin for i in impacts if not i.valuable})
     if excluded:
@@ -282,10 +419,20 @@ portfolio market value; a deposit whose fund has no price/FX is excluded (never
 zero-valued) and disclosed. If a SELL exists on or before the as-of date, the
 command refuses the report because disposal attribution is not implemented.
 
+With --group week|month|year the per-deposit table collapses to one row per
+calendar period × fund (deposit vintages) in per-period sections, each closed by a
+subtotal. Week uses ISO-8601 labels (YYYY-Www, Monday-start). Under --group the top
+summary block is dropped and a bottom ── ALL ── grand-total row carries the
+Invested/Reported/Organic-gain(Gain€)/ROIC(Ret%) figures instead. Grouping only
+partitions the same buys, so the totals and reconciliation are unchanged. --sort
+orders funds within each period; --reverse also flips period order.
+
 Examples:
   e1f deposits
   e1f deposits --as-of 2025-12-31
   e1f deposits --sort gain --reverse
+  e1f deposits --group year          # one row per fund per calendar year
+  e1f deposits --group week          # one row per fund per ISO week
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -302,6 +449,13 @@ Examples:
         default=datetime.now(UTC).date().isoformat(),
         metavar="YYYY-MM-DD",
         help="Value each deposit as of this date (default: today)",
+    )
+    parser.add_argument(
+        "--group",
+        choices=GROUP_FIELDS,
+        default=None,
+        help="Aggregate the table into deposit vintages: one row per period × fund "
+        "(week, month, or year)",
     )
     parser.add_argument(
         "--sort", choices=SORT_FIELDS, default="date", help="Sort column (default: date)"
@@ -326,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
             as_of=args.as_of,
             sort_by=args.sort,
             reverse=args.reverse,
+            group=args.group,
             currency_meta_path=args.currency_meta,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
