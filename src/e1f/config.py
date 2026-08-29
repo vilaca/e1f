@@ -19,6 +19,7 @@ import os
 import sqlite3
 import sys
 from contextlib import closing
+from typing import Any
 
 from e1f.common import (
     BASE_CURRENCY,
@@ -29,6 +30,9 @@ from e1f.common import (
     CurrencyMetadata,
     live_isins_among,
 )
+
+# Canonical tokens (ADR-0037): class=Asset class.
+SORT_FIELDS = ("isin", "name", "class", "ticker", "exchange")
 
 
 def _connect_prices_database(db_path: str) -> sqlite3.Connection | None:
@@ -81,6 +85,28 @@ def _live_holdings_blocked(
     return False
 
 
+def _list_sort_key(item: tuple[str, dict[str, Any]], sort_by: str) -> str:
+    isin, data = item
+    if sort_by == "isin":
+        return isin
+    if sort_by == "name":
+        return str(data.get("name", "")).lower()
+    if sort_by == "class":
+        return str(data.get("asset_class") or "").lower()
+    if sort_by == "ticker":
+        tickers = data.get("tickers") or []
+        return str(tickers[0] if tickers else "").lower()
+    if sort_by == "exchange":
+        return str(data.get("exchange") or "").lower()
+    raise ValueError(f"unsupported sort field: {sort_by}")
+
+
+def sort_etfs(
+    etfs: list[tuple[str, dict[str, Any]]], *, sort_by: str = "isin", reverse: bool = False
+) -> list[tuple[str, dict[str, Any]]]:
+    return sorted(etfs, key=lambda item: _list_sort_key(item, sort_by), reverse=reverse)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f config",
@@ -111,7 +137,16 @@ Examples:
     add_parser = subparsers.add_parser('add', help='Add ETF(s) by ISIN')
     add_parser.add_argument('isins', nargs='+', help='ISINs to add')
 
-    subparsers.add_parser('list', help='List all ETFs')
+    list_parser = subparsers.add_parser('list', help='List all ETFs')
+    list_parser.add_argument(
+        '--sort',
+        choices=SORT_FIELDS,
+        default='isin',
+        help='Sort column (default: isin)',
+    )
+    list_parser.add_argument(
+        '--reverse', '-r', action='store_true', help='Descending sort order',
+    )
 
     update_parser = subparsers.add_parser('update', help='Update ETF metadata')
     update_parser.add_argument(
@@ -162,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == 'list':
         config = ConfigManager(args.config)
-        etfs = config.list()
+        etfs = sort_etfs(config.list(), sort_by=args.sort, reverse=args.reverse)
 
         if not etfs:
             print("No ETFs in configuration")

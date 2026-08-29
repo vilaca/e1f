@@ -196,12 +196,22 @@ def test_assign_pnl_shares_none_when_total_zero():
     assert winner.pnl_share is None and loser.pnl_share is None  # net P&L 0
 
 
-def test_sort_impacts_by_gain_desc():
+def test_sort_impacts_by_pnl_desc():
     a = DepositImpact("2024-01-01", "A", "", amount=100.0, value=110.0)  # +10
     b = DepositImpact("2024-01-02", "B", "", amount=100.0, value=130.0)  # +30
     c = DepositImpact("2024-01-03", "C", "", amount=100.0, value=None)   # unvaluable
-    ordered = dep.sort_impacts([a, b, c], sort_by="gain", reverse=True)
+    ordered = dep.sort_impacts([a, b, c], sort_by="pnl", reverse=True)
     assert [i.isin for i in ordered] == ["B", "A", "C"]  # None sinks to the bottom
+
+
+def test_sort_impacts_by_name_and_pnl_ctr():
+    a = DepositImpact("d", "A", "Zeta", amount=100.0, value=110.0)
+    b = DepositImpact("d", "B", "Alpha", amount=100.0, value=130.0)
+    dep._assign_pnl_shares([a, b])
+    by_name = dep.sort_impacts([a, b], sort_by="name")
+    assert [i.isin for i in by_name] == ["B", "A"]
+    by_ctr = dep.sort_impacts([a, b], sort_by="pnl_ctr", reverse=True)
+    assert [i.isin for i in by_ctr] == ["B", "A"]  # +30 is the larger share
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +428,10 @@ def test_cmd_deposits_group_year_renders_period_rows(tmp_path, capsys):
     assert "── ALL ──" in out and "160.00" in out  # grand total in-table
 
 
-def test_cmd_deposits_group_year_sort_gain_reverse_orders_periods_and_funds(
+def test_cmd_deposits_group_year_sort_pnl_reverse_orders_periods_and_funds(
     tmp_path, capsys
 ):
-    # 2023: EUR +40. 2024: EUR +10, USD +440. --reverse → 2024 first; --sort gain
+    # 2023: EUR +40. 2024: EUR +10, USD +440. --reverse → 2024 first; --sort pnl
     # → USD above EUR inside 2024.
     db, config, meta = _seed(
         tmp_path,
@@ -437,7 +447,7 @@ def test_cmd_deposits_group_year_sort_gain_reverse_orders_periods_and_funds(
     )
     code = dep.main(_args(
         db, config, meta, "--as-of", "2024-12-31",
-        "--group", "year", "--sort", "gain", "--reverse",
+        "--group", "year", "--sort", "pnl", "--reverse",
     ))
     out = capsys.readouterr().out
     assert code == 0
@@ -526,3 +536,8 @@ def test_cmd_deposits_bad_as_of(tmp_path, capsys):
     db, config, meta = _seed(tmp_path, transactions=[])
     assert dep.main(_args(db, config, meta, "--as-of", "nope")) == 1
     assert "must be YYYY-MM-DD" in capsys.readouterr().out
+
+
+def test_retired_sort_token_gain_is_rejected():
+    with pytest.raises(SystemExit):
+        dep.main(["--sort", "gain"])

@@ -50,12 +50,17 @@ def test_completes_nested_commands_and_options(capsys):
         "broker",
         "isin",
         "name",
-        "weight",
-        "total",
-        "units",
-        "avg",
+        "class",
+        "ccy",
+        "dist",
         "ter",
         "fee_yr",
+        "weight",
+        "units",
+        "avg",
+        "last_px",
+        "cost",
+        "value",
     }
 
 

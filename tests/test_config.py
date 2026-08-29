@@ -124,6 +124,34 @@ def test_list_shows_all_etfs(paths, capsys):
     assert "Equity" in out
 
 
+def test_list_sort_by_name(paths, capsys):
+    with open(paths["config"], "w") as f:
+        yaml.dump(
+            {
+                "etfs": {
+                    ISIN_A: {**etf(ISIN_A), "name": "Zeta Fund"},
+                    ISIN_B: {**etf(ISIN_B), "name": "Alpha Fund"},
+                }
+            },
+            f,
+        )
+    assert config_cmd.main(["--config", paths["config"], "list", "--sort", "name"]) == 0
+    out = capsys.readouterr().out
+    assert out.index(ISIN_B) < out.index(ISIN_A)
+
+
+def test_sort_etfs_by_class_ticker_exchange():
+    etfs = [
+        ("B", {"name": "B", "asset_class": "Equity", "tickers": ["ZZ"], "exchange": "NA"}),
+        ("A", {"name": "A", "asset_class": "Bond", "tickers": ["AA"], "exchange": "LN"}),
+    ]
+    assert [i for i, _ in config_cmd.sort_etfs(etfs, sort_by="class")] == ["A", "B"]
+    assert [i for i, _ in config_cmd.sort_etfs(etfs, sort_by="ticker")] == ["A", "B"]
+    assert [i for i, _ in config_cmd.sort_etfs(etfs, sort_by="exchange")] == ["A", "B"]
+    with pytest.raises(ValueError, match="unsupported sort field"):
+        config_cmd.sort_etfs(etfs, sort_by="bogus")
+
+
 def test_add_and_update(paths, monkeypatch, capsys):
     write_config(paths["config"], [])
     mock_resolver(monkeypatch)

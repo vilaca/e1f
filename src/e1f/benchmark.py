@@ -56,6 +56,7 @@ _DEFAULT_BENCHMARK_LABELS = {
 }
 _DEFAULT_BENCHMARK = ",".join(_DEFAULT_BENCHMARK_LABELS)
 _NAME_WIDTH = 38  # fits the longest complete fund name plus the held '*' marker
+SORT_FIELDS = ("isin", "name", "n", "beta", "r2", "te", "ir", "relstr", "out")
 
 
 BENCHMARK_CONTRACT = MetricContract(
@@ -239,6 +240,29 @@ def _format_row(stats: BenchmarkStats) -> str:
     )
 
 
+def _sort_key(stats: BenchmarkStats, sort_by: str) -> str | float:
+    if sort_by == "isin":
+        return stats.isin
+    if sort_by == "name":
+        return stats.name.lower()
+    value = {
+        "n": float(stats.n),
+        "beta": stats.beta,
+        "r2": stats.r_squared,
+        "te": stats.tracking_error,
+        "ir": stats.information_ratio,
+        "relstr": stats.relative_strength,
+        "out": stats.outperformance,
+    }[sort_by]
+    return float("-inf") if value is None else value
+
+
+def sort_stats(
+    rows: list[BenchmarkStats], *, sort_by: str, reverse: bool = False
+) -> list[BenchmarkStats]:
+    return sorted(rows, key=lambda s: _sort_key(s, sort_by), reverse=reverse)
+
+
 def _render_explain(rows: list[BenchmarkStats]) -> list[str]:
     lines = ["\nProvenance (--explain) — reconstructed from source, not a log:"]
     for stats in rows:
@@ -276,6 +300,8 @@ def _cmd_benchmark(
     benchmarks: list[str],
     min_overlap: int = _MIN_OVERLAP,
     explain: bool = False,
+    sort_by: str | None = None,
+    reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
 ) -> int:
     port = portfolio_return_series(db_path, currency_meta_path, as_of)
@@ -293,6 +319,11 @@ def _cmd_benchmark(
             rows.append(_unavailable(isin, name, f"no return series (fetch {isin}?)"))
             continue
         rows.append(benchmark_stats(port, bench, isin, name, min_overlap=min_overlap))
+
+    if sort_by is not None:
+        rows = sort_stats(rows, sort_by=sort_by, reverse=reverse)
+    elif reverse:
+        rows = list(reversed(rows))
 
     print(f"\nPortfolio vs benchmarks as of {as_of} (EUR, time-weighted)")
     print(_HEADER)
@@ -357,6 +388,7 @@ Examples:
   e1f benchmark --against IE00B5BMR087,IE00B4K48X80
   e1f benchmark --as-of 2025-12-31
   e1f benchmark --explain
+  e1f benchmark --sort out --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -392,6 +424,15 @@ Examples:
         action="store_true",
         help="Add a provenance block (method/contract/limited-by; ADR-0014)",
     )
+    parser.add_argument(
+        "--sort",
+        choices=SORT_FIELDS,
+        default=None,
+        help="Sort rows by column (default: listed order)",
+    )
+    parser.add_argument(
+        "--reverse", "-r", action="store_true", help="Descending sort order"
+    )
     return parser
 
 
@@ -420,6 +461,8 @@ def main(argv: list[str] | None = None) -> int:
             benchmarks=benchmarks,
             min_overlap=args.min_overlap,
             explain=args.explain,
+            sort_by=args.sort,
+            reverse=args.reverse,
             currency_meta_path=args.currency_meta,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1

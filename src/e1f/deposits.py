@@ -14,7 +14,7 @@ vintages (one row per calendar period × fund). Week labels are ISO-8601
 
 Usage:
     e1f deposits
-    e1f deposits --as-of 2025-12-31 --sort gain --reverse
+    e1f deposits --as-of 2025-12-31 --sort pnl --reverse
     e1f deposits --group year
     e1f deposits --group week
 """
@@ -34,7 +34,8 @@ from e1f.common import (
     unit_value_on,
 )
 
-SORT_FIELDS = ("date", "isin", "amount", "value", "gain", "ret")
+# Canonical tokens (ADR-0037): cost=Amount€, pnl=Gain€, pnl_pct=Ret%, pnl_ctr=%P&L.
+SORT_FIELDS = ("date", "isin", "name", "cost", "value", "pnl", "pnl_pct", "pnl_ctr")
 _BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 
 
@@ -222,16 +223,19 @@ def summarize(impacts: list[DepositImpact]) -> DepositSummary | None:
 # ---------------------------------------------------------------------------
 
 
-def _sort_key(impact: DepositImpact, sort_by: str) -> tuple[float, str] | str | float:
+def _sort_key(impact: DepositImpact, sort_by: str) -> str | float:
     if sort_by == "isin":
         return impact.isin
+    if sort_by == "name":
+        return impact.name.lower()
     if sort_by == "date":
         return impact.date
     value = {
-        "amount": impact.amount,
+        "cost": impact.amount,
         "value": impact.value,
-        "gain": impact.gain,
-        "ret": impact.ret_pct,
+        "pnl": impact.gain,
+        "pnl_pct": impact.ret_pct,
+        "pnl_ctr": impact.pnl_share,
     }[sort_by]
     return float("-inf") if value is None else value
 
@@ -430,7 +434,7 @@ orders funds within each period; --reverse also flips period order.
 Examples:
   e1f deposits
   e1f deposits --as-of 2025-12-31
-  e1f deposits --sort gain --reverse
+  e1f deposits --sort pnl --reverse
   e1f deposits --group year          # one row per fund per calendar year
   e1f deposits --group week          # one row per fund per ISO week
         """,

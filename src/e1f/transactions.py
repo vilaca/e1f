@@ -26,6 +26,8 @@ from e1f.common import DEFAULT_CONFIG, DEFAULT_DB, XTB_EXCHANGE_SUFFIX, ConfigMa
 
 BROKER_TRADE_REPUBLIC = "trade_republic"
 BROKER_XTB = "xtb"
+# Canonical tokens (ADR-0037): isin=Symbol, date=Datetime, units=Shares.
+SORT_FIELDS = ("broker", "date", "isin", "side", "units", "price", "fee", "tax")
 _ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
 _MAX_SAFE_FLOAT_INTEGER = 2**53 - 1
 TR_ETF_TRADE_TYPES = frozenset({"BUY", "SELL", "SAVINGS_PLAN"})
@@ -609,8 +611,30 @@ class XtbImporter:
         )
 
 
-def _cmd_list(db_path: str) -> int:
-    rows = list_transaction_rows(db_path)
+def _list_sort_key(row: tuple[Any, ...], sort_by: str) -> str | float:
+    broker, dt, symbol, side, shares, price, fee, tax = row
+    if sort_by == "broker":
+        return str(broker)
+    if sort_by == "date":
+        return str(dt)
+    if sort_by == "isin":
+        return str(symbol)
+    if sort_by == "side":
+        return str(side)
+    value = {"units": shares, "price": price, "fee": fee, "tax": tax}[sort_by]
+    return float("-inf") if value is None else float(value)
+
+
+def sort_transaction_rows(
+    rows: list[tuple[Any, ...]], *, sort_by: str = "date", reverse: bool = False
+) -> list[tuple[Any, ...]]:
+    return sorted(rows, key=lambda row: _list_sort_key(row, sort_by), reverse=reverse)
+
+
+def _cmd_list(db_path: str, *, sort_by: str = "date", reverse: bool = False) -> int:
+    rows = sort_transaction_rows(
+        list_transaction_rows(db_path), sort_by=sort_by, reverse=reverse
+    )
     if not rows:
         print("No transactions in database")
         print("Ingest some: e1f transactions trade-republic path/to/transactions.csv")
@@ -690,6 +714,15 @@ Examples:
 
     list_parser = subparsers.add_parser("list", help="List stored transactions")
     list_parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
+    list_parser.add_argument(
+        "--sort",
+        choices=SORT_FIELDS,
+        default="date",
+        help="Sort column (default: date)",
+    )
+    list_parser.add_argument(
+        "--reverse", "-r", action="store_true", help="Descending sort order"
+    )
 
     tr_parser = subparsers.add_parser(
         "trade-republic",
@@ -731,7 +764,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "list":
-            return _cmd_list(args.db)
+            return _cmd_list(args.db, sort_by=args.sort, reverse=args.reverse)
         if args.command in {"trade-republic", "tr"}:
             return _cmd_trade_republic(args.csv_path, args.db, args.config)
         if args.command == "xtb":

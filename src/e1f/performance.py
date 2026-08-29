@@ -42,7 +42,11 @@ from e1f.common import (
     xirr,
 )
 
-SORT_FIELDS = ("isin", "name", "value", "cost", "pnl", "xirr")
+# Canonical tokens (ADR-0037); ctr/weight are --contrib columns, still accepted here.
+SORT_FIELDS = (
+    "isin", "name", "value", "cost", "pnl", "pnl_pct", "pnl_ctr",
+    "xirr", "twr", "vol", "maxdd", "cagr", "weight", "ctr",
+)
 _TRADING_DAYS = 252
 _SHARE_EPSILON = 1e-9
 _SHORT_HISTORY_DAYS = 365
@@ -703,25 +707,49 @@ def _diff_rows(
 # ---------------------------------------------------------------------------
 
 
-def _sort_key(row: PerformanceRow, sort_by: str) -> tuple[float, str] | str | float:
+def _sort_key(
+    row: PerformanceRow,
+    sort_by: str,
+    *,
+    ctr_by_isin: dict[str, float] | None = None,
+) -> str | float:
     if sort_by == "isin":
         return row.isin
     if sort_by == "name":
         return row.name.lower()
-    # Numeric fields: None sorts to the bottom regardless of direction.
-    value = {
-        "value": row.market_value,
-        "cost": row.cost,
-        "pnl": row.pnl,
-        "xirr": row.xirr,
-    }[sort_by]
+    # Numeric fields: None sorts to the bottom regardless of direction (−∞).
+    # weight is market-value share, so it shares value's order. ctr is --contrib.
+    if sort_by == "ctr":
+        value = None if ctr_by_isin is None else ctr_by_isin.get(row.isin)
+    else:
+        value = {
+            "value": row.market_value,
+            "cost": row.cost,
+            "pnl": row.pnl,
+            "pnl_pct": row.pnl_pct,
+            "pnl_ctr": row.pnl_contribution,
+            "xirr": row.xirr,
+            "twr": row.twr,
+            "vol": row.volatility,
+            "maxdd": row.max_drawdown,
+            "cagr": row.cagr,
+            "weight": row.market_value,
+        }[sort_by]
     return float("-inf") if value is None else value
 
 
 def sort_rows(
-    rows: list[PerformanceRow], *, sort_by: str = "isin", reverse: bool = False
+    rows: list[PerformanceRow],
+    *,
+    sort_by: str = "isin",
+    reverse: bool = False,
+    ctr_by_isin: dict[str, float] | None = None,
 ) -> list[PerformanceRow]:
-    return sorted(rows, key=lambda row: _sort_key(row, sort_by), reverse=reverse)
+    return sorted(
+        rows,
+        key=lambda row: _sort_key(row, sort_by, ctr_by_isin=ctr_by_isin),
+        reverse=reverse,
+    )
 
 
 def _assign_pnl_contributions(rows: list[PerformanceRow]) -> None:
@@ -1438,7 +1466,9 @@ def _cmd_performance_contrib(
     print(_CONTRIB_HEADER)
     print("-" * _CONTRIB_RULE_WIDTH)
     valuable_rows = [row for row in rows if row.valuable]
-    for row in sort_rows(valuable_rows, sort_by=sort_by, reverse=reverse):
+    for row in sort_rows(
+        valuable_rows, sort_by=sort_by, reverse=reverse, ctr_by_isin=contributions
+    ):
         weight = (
             100.0 * (row.market_value or 0.0) / total.market_value
             if total.market_value
@@ -1593,7 +1623,7 @@ Examples:
   e1f performance --as-of 2025-12-31 --series 30 --reverse
   e1f performance --metrics
   e1f performance --metrics --series 14
-  e1f performance --contrib --sort pnl --reverse
+  e1f performance --contrib --sort ctr --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
