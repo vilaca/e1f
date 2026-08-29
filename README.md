@@ -34,6 +34,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | How rough was the ride — worst drop, time underwater? | `e1f performance --metrics` | **MaxDD** (deepest fall), **SinceHi** (days off the current peak), **RecFac** (TWR ÷ that fall — >1 means it paid off) |
 | What changed over the last N days? | `e1f performance --diff N` | **ΔMktVal€ / ΔP&L€** — a **ΔCost€** spike is cash *in*, not a gain |
 | How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day (levels, not deltas) |
+| How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
 | Did I beat the market? | `e1f benchmark` | **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
 | Are my funds redundant — do they move alike? | `e1f correlation` | **ρ** (near 1 = a second helping of the same bet), the clusters, and **n** |
@@ -111,6 +112,7 @@ e1f performance --as-of 2025-12-31   # historical snapshot
 e1f performance --diff 7             # signed change over the last 7 calendar days (ADR-0029)
 e1f performance --as-of 2025-12-31 --diff 7  # change in the week ending Dec 31
 e1f performance --series 90          # portfolio TOTAL for each trading day, last 90 days (ADR-0030)
+e1f performance --series 60 --isin IE00B3VSSL01  # that holding's path only (ADR-0038)
 e1f performance --metrics            # portfolio-level extended risk report (ADR-0033)
 e1f performance --metrics --series 14 # that report tabulated per trading day, last 14 days
 e1f performance --contrib            # per-holding return contribution (sums to TOTAL TWR, ADR-0033)

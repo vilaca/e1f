@@ -1400,6 +1400,134 @@ def test_series_rows_totals_match_snapshot_total(tmp_path):
         )
 
 
+# --isin filter: restrict the book to one holding — ADR-0038
+
+_ISIN_SECOND = "IE00EUR000002"
+
+
+def _seed_two_fund_series(tmp_path):
+    """EUR on the Christmas-week closes; second fund has a unique 12-23 close."""
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", _ISIN_SECOND, 50.0, 20.0),
+        ],
+        prices=[
+            *_SERIES_PRICES,
+            (_ISIN_SECOND, "2024-12-23", 20.0),
+            (_ISIN_SECOND, "2024-12-31", 21.0),
+        ],
+        currencies={EUR_ISIN: "EUR", _ISIN_SECOND: "EUR"},
+        names={EUR_ISIN: "Euro Fund", _ISIN_SECOND: "Second Fund"},
+    )
+
+
+def test_normalize_isin_strips_and_uppers():
+    assert perf._normalize_isin(None) is None
+    assert perf._normalize_isin(" ie00eur000001 ") == "IE00EUR000001"
+    with pytest.raises(ValueError, match="non-empty"):
+        perf._normalize_isin("  ")
+
+
+def test_restrict_timeline_unknown_lists_holdings(tmp_path):
+    db, config, _meta = _seed_two_fund_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    with pytest.raises(ValueError, match="not a holding") as exc:
+        perf._restrict_timeline(timeline, "IE00NOTHELD01", config)
+    assert EUR_ISIN in str(exc.value) and _ISIN_SECOND in str(exc.value)
+
+
+def test_series_isin_uses_only_that_funds_trading_days(tmp_path, capsys):
+    db, config, meta = _seed_two_fund_series(tmp_path)
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--isin", EUR_ISIN)
+    )
+    assert _series_dates(capsys.readouterr().out) == _SERIES_TRADING_DAYS
+
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--isin", _ISIN_SECOND)
+    )
+    assert _series_dates(capsys.readouterr().out) == ["2024-12-23", "2024-12-31"]
+
+
+def test_series_isin_invariance_row_equals_as_of_isin_total(tmp_path, capsys):
+    """Each --series --isin X row equals --as-of D --isin X's TOTAL (two-fund book)."""
+    db, config, meta = _seed_two_fund_series(tmp_path)
+
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--isin", EUR_ISIN)
+    )
+    series_line = next(
+        ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("2024-12-27")
+    )
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-27", "--isin", EUR_ISIN))
+    total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
+
+    series_vals = _row_numbers(series_line)[:9]
+    total_vals = _row_numbers(total_line, drop_index=4)
+    assert len(series_vals) == len(total_vals)
+    for got, want in zip(series_vals, total_vals, strict=True):
+        if isinstance(want, float):
+            assert got == pytest.approx(want, abs=0.01)
+        else:
+            assert got == want
+
+
+def test_series_isin_banner_names_the_holding(tmp_path, capsys):
+    db, config, meta = _seed_two_fund_series(tmp_path)
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--isin", EUR_ISIN)
+    )
+    out = capsys.readouterr().out
+    assert f"Euro Fund ({EUR_ISIN}) performance series" in out
+    assert "Portfolio performance series" not in out
+    assert _ISIN_SECOND not in out
+
+
+def test_series_isin_accepts_lowercase(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--isin", EUR_ISIN.lower()
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _series_dates(out) == _SERIES_TRADING_DAYS
+    assert EUR_ISIN in out
+
+
+def test_series_isin_unknown_exits_1_and_lists_holdings(tmp_path, capsys):
+    db, config, meta = _seed_two_fund_series(tmp_path)
+    code = perf.main(
+        _args(db, config, meta, "--series", "10", "--isin", "IE00NOTHELD01")
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "not a holding" in out
+    assert EUR_ISIN in out and _ISIN_SECOND in out
+
+
+def test_series_isin_empty_book_still_says_no_holdings(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path)
+    code = perf.main(_args(db, config, meta, "--series", "10", "--isin", EUR_ISIN))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No ETF holdings in database" in out
+    assert "not a holding" not in out
+
+
+def test_snapshot_isin_hides_the_other_holding(tmp_path, capsys):
+    db, config, meta = _seed_two_fund_series(tmp_path)
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--isin", EUR_ISIN))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert EUR_ISIN in out and "Euro Fund" in out
+    assert _ISIN_SECOND not in out
+
+
 # --series weighted TER + estimated annual cost columns — ADR-0031
 
 _TER_SECOND = "IE00EUR000002"
