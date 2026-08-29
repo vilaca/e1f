@@ -976,3 +976,51 @@ def test_scenario_missing_name_errors(tmp_path):
     sf = _write_scenario(tmp_path, name="core", targets={A: 60.0})
     with pytest.raises(SystemExit):
         reb.main(_args(db, config, meta, "--scenario", "ghost", "--scenarios-file", sf))
+
+
+def test_sort_rows_by_value():
+    from e1f.common import Status
+    from e1f.rebalance import RebalanceRow
+
+    def row(isin: str, v: float) -> RebalanceRow:
+        return RebalanceRow(
+            isin=isin, name=isin, v=v, cur_pct=v / 10.0, t_pct=0.0, buy=0.0,
+            final_v=v, is_residual=False, is_binder=False, price_date=None,
+            estimated=False, status=Status.CALCULATED,
+        )
+
+    ordered = reb.sort_rows([row("A", 10.0), row("B", 50.0)], sort_by="value", reverse=True)
+    assert [r.isin for r in ordered] == ["B", "A"]
+    by_name = reb.sort_rows([row("B", 1.0), row("A", 1.0)], sort_by="name")
+    assert [r.isin for r in by_name] == ["A", "B"]
+    by_isin = reb.sort_rows([row("B", 1.0), row("A", 1.0)], sort_by="isin")
+    assert [r.isin for r in by_isin] == ["A", "B"]
+
+
+def test_main_sort_value_reverse_orders_plan_rows(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", A, 100.0, 60.0),
+            _buy("t2", "2024-01-01", B, 100.0, 30.0),
+            _buy("t3", "2024-01-01", C, 100.0, 10.0),
+        ],
+        prices=[
+            (A, "2024-01-01", 60.0),
+            (B, "2024-01-01", 30.0),
+            (C, "2024-01-01", 10.0),
+        ],
+        currencies={A: "EUR", B: "EUR", C: "EUR"},
+        names={A: "Fund A", B: "Fund B", C: "Fund C"},
+    )
+    code = reb.main(_args(
+        db, config, meta,
+        "--target", f"{A}:30", "--target", f"{B}:40",
+        "--as-of", "2024-01-01", "--sort", "value", "--reverse",
+    ))
+    out = capsys.readouterr().out
+    assert code == 0
+    lines = out.splitlines()
+    header = next(i for i, ln in enumerate(lines) if "Current€" in ln)
+    plan = [ln.split()[0] for ln in lines[header + 2:] if ln.startswith("IE00")]
+    assert plan == [A, B, C]

@@ -512,6 +512,22 @@ def test_sort_rows_by_isin_default():
     assert [r.isin for r in sort_rows(rows)] == ["A", "B", "C"]
 
 
+def test_sort_rows_by_twr_and_pnl_pct():
+    low = _perf_row("A", 110.0)   # pnl_pct = 10
+    high = _perf_row("B", 150.0)  # pnl_pct = 50
+    low.twr, high.twr = 0.05, 0.20
+    by_twr = [r.isin for r in sort_rows([low, high], sort_by="twr", reverse=True)]
+    assert by_twr == ["B", "A"]
+    by_pct = [r.isin for r in sort_rows([low, high], sort_by="pnl_pct", reverse=True)]
+    assert by_pct == ["B", "A"]
+
+
+def test_sort_rows_by_ctr_uses_contrib_map():
+    a, b = _perf_row("A", 100.0), _perf_row("B", 100.0)
+    ordered = sort_rows([a, b], sort_by="ctr", reverse=True, ctr_by_isin={"A": 0.02, "B": 0.10})
+    assert [r.isin for r in ordered] == ["B", "A"]
+
+
 def test_assign_pnl_contributions_shares_sum_to_100():
     # cost=100 each: pnl = +100, -50 -> net +50; shares 200% and -100%.
     rows = [_perf_row("A", 200.0), _perf_row("B", 50.0)]
@@ -1823,3 +1839,14 @@ def test_main_contrib_does_not_compose_with_metrics(tmp_path, capsys):
     code = perf.main(_args(db, config, meta, "--contrib", "--metrics"))
     out = capsys.readouterr().out
     assert code == 1 and "does not compose" in out
+
+
+def test_main_contrib_sort_ctr_ascending(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, **_CONTRIB_SEED)
+    code = perf.main(
+        _args(db, config, meta, "--as-of", "2024-01-03", "--contrib", "--sort", "ctr")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    # B's Ctr% is smaller than A's, so ascending puts B first.
+    assert out.index(_B) < out.index(_A)

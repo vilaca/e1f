@@ -126,7 +126,7 @@ e1f benchmark --explain              # + provenance block
 
 # Decompose contributions vs market gain, and rank each deposit's impact (ADR-0033)
 e1f deposits                         # invested/reported/organic/ROIC + per-deposit table
-e1f deposits --sort gain --reverse   # biggest contributors to P&L first
+e1f deposits --sort pnl --reverse    # biggest contributors to P&L first
 e1f deposits --as-of 2025-12-31      # value each deposit as of a past date
 e1f deposits --group year            # deposit vintages: one row per fund per year
 e1f deposits --group week            # same, per ISO week (YYYY-Www)

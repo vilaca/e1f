@@ -37,6 +37,7 @@ _NAME_W = 24   # name column width; " (resid)" (8 chars) fits within it
 _EUR_W = 12    # money columns: Current€, Buy€, Monthly€, Final€
 _PCT_W = 7     # percent columns: Cur%, Tgt%
 _STATUS_W = 11
+SORT_FIELDS = ("isin", "name", "value", "weight", "tgt", "buy", "final")
 
 
 REBALANCE_CONTRACT = MetricContract(
@@ -397,6 +398,27 @@ def _build_rows(
     return rows
 
 
+def _column_sort_key(row: RebalanceRow, sort_by: str) -> str | float:
+    if sort_by == "isin":
+        return row.isin
+    if sort_by == "name":
+        return row.name.lower()
+    return {
+        "value": row.v,
+        "weight": row.cur_pct,
+        "tgt": row.t_pct,
+        "buy": row.buy,
+        "final": row.final_v,
+    }[sort_by]
+
+
+def sort_rows(
+    rows: list[RebalanceRow], *, sort_by: str, reverse: bool = False
+) -> list[RebalanceRow]:
+    """Reorder plan rows by a column (ADR-0037); default order stays in `_build_rows`."""
+    return sorted(rows, key=lambda r: _column_sort_key(r, sort_by), reverse=reverse)
+
+
 # ---------------------------------------------------------------------------
 # Command.
 # ---------------------------------------------------------------------------
@@ -441,6 +463,8 @@ def _cmd_rebalance(
     as_of: str,
     show_status: bool,
     explain: bool,
+    sort_by: str | None = None,
+    reverse: bool = False,
 ) -> int:
     show_status = show_status or explain
 
@@ -464,6 +488,10 @@ def _cmd_rebalance(
         return 0
 
     rows = _build_rows(plan, targets, values, price_dates, config_path, as_of)
+    if sort_by is not None:
+        rows = sort_rows(rows, sort_by=sort_by, reverse=reverse)
+    elif reverse:
+        rows.reverse()
     stale_rows = [r for r in rows if r.estimated]
 
     for line in render_table(
@@ -568,6 +596,7 @@ Examples:
   e1f rebalance --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --as-of 2025-12-31
   e1f rebalance --scenario core
   e1f rebalance --scenario core --months 6 --explain
+  e1f rebalance --target IE00B4L5Y983:30 --sort buy --reverse
         """,
     )
     parser.add_argument(
@@ -625,6 +654,15 @@ Examples:
         help="Add one provenance block (implies --show-status); reconstructs V'_min, "
         "binding fund(s), and the residual split from source.",
     )
+    parser.add_argument(
+        "--sort",
+        choices=SORT_FIELDS,
+        default=None,
+        help="Sort plan rows by column (default: pinned by Tgt%%, then residual by Current€)",
+    )
+    parser.add_argument(
+        "--reverse", "-r", action="store_true", help="Descending sort order"
+    )
     return parser
 
 
@@ -672,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
             as_of=args.as_of,
             show_status=args.show_status,
             explain=args.explain,
+            sort_by=args.sort,
+            reverse=args.reverse,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

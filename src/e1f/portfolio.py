@@ -29,7 +29,11 @@ from e1f.common import (
 
 BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 _SHARE_EPSILON = 1e-9
-SORT_FIELDS = ("broker", "isin", "name", "weight", "total", "units", "avg", "ter", "fee_yr")
+# Canonical tokens (ADR-0037): cost=Total paid, value=Value€.
+SORT_FIELDS = (
+    "broker", "isin", "name", "class", "ccy", "dist", "ter", "fee_yr",
+    "weight", "units", "avg", "last_px", "cost", "value",
+)
 _STATUS_COL = 11
 
 
@@ -227,6 +231,8 @@ def _sort_key(
     config_path: str,
     total_invested: float,
     eur_values: dict[tuple[str, str], float | None],
+    last_prices: dict[str, float | None],
+    currency_meta_path: str,
 ) -> tuple[Any, ...] | str | float:
     if sort_by == "broker":
         return (holding.broker, holding.symbol)
@@ -234,22 +240,38 @@ def _sort_key(
         return holding.symbol
     if sort_by == "name":
         return _etf_name(config_path, holding.symbol).lower()
+    if sort_by == "class":
+        return _asset_class_label(
+            _fund_meta(config_path, holding.symbol, currency_meta_path)[0]
+        ).lower()
+    if sort_by == "ccy":
+        return _fund_meta(config_path, holding.symbol, currency_meta_path)[1].lower()
+    if sort_by == "dist":
+        return _distribution_label(
+            _fund_meta(config_path, holding.symbol, currency_meta_path)[2]
+        ).lower()
     if sort_by == "weight":
         return holding_weight_pct(holding, total_invested)
-    if sort_by == "total":
+    if sort_by == "cost":
         return holding.total_paid
     if sort_by == "units":
         return holding.shares
     if sort_by == "avg":
         return holding.avg_cost
+    if sort_by == "value":
+        value = eur_values.get((holding.broker, holding.symbol))
+        return float("-inf") if value is None else value
+    if sort_by == "last_px":
+        px = last_prices.get(holding.symbol)
+        return float("-inf") if px is None else px
     if sort_by == "ter":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
-        return float(ter) if isinstance(ter, (int, float)) else -1.0
+        return float(ter) if isinstance(ter, (int, float)) else float("-inf")
     if sort_by == "fee_yr":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
         ter_float = float(ter) if isinstance(ter, (int, float)) else None
         fee = yearly_fee_est(ter_float, eur_values.get((holding.broker, holding.symbol)))
-        return fee if fee is not None else -1.0
+        return fee if fee is not None else float("-inf")
     raise ValueError(f"unsupported sort field: {sort_by}")
 
 
@@ -261,8 +283,11 @@ def sort_holdings(
     config_path: str,
     total_invested: float,
     eur_values: dict[tuple[str, str], float | None],
+    last_prices: dict[str, float | None] | None = None,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
 ) -> list[Holding]:
     """Return holdings ordered by the requested column."""
+    prices = last_prices or {}
     return sorted(
         holdings,
         key=lambda holding: _sort_key(
@@ -271,6 +296,8 @@ def sort_holdings(
             config_path=config_path,
             total_invested=total_invested,
             eur_values=eur_values,
+            last_prices=prices,
+            currency_meta_path=currency_meta_path,
         ),
         reverse=reverse,
     )
@@ -357,6 +384,9 @@ def _cmd_portfolio(
         for holding in holdings
     }
     total_market_value = sum(v for v in eur_values.values() if v is not None)
+    last_prices = {
+        holding.symbol: _last_known_price(db_path, holding.symbol) for holding in holdings
+    }
     holdings = sort_holdings(
         holdings,
         sort_by=sort_by,
@@ -364,6 +394,8 @@ def _cmd_portfolio(
         config_path=config_path,
         total_invested=total_invested,
         eur_values=eur_values,
+        last_prices=last_prices,
+        currency_meta_path=currency_meta_path,
     )
 
     header = _table_header(
@@ -451,7 +483,7 @@ Examples:
   e1f portfolio
   e1f portfolio --db data/e1f.db --config data/etf_universe.yaml
   e1f portfolio --sort weight --reverse
-  e1f portfolio --sort total --reverse
+  e1f portfolio --sort value --reverse
   e1f portfolio --show-status
   e1f portfolio --explain
         """,

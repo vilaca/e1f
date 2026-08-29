@@ -233,3 +233,12 @@ def test_cmd_benchmark_marks_held_benchmark_with_star(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "My Fund*" in out
     assert "* also a current portfolio holding." in out
+
+
+def test_sort_stats_by_name_and_n():
+    alpha = bench._unavailable("IE00A", "Alpha", "no series", n=2)
+    zeta = bench._unavailable("IE00B", "Zeta", "no series", n=9)
+    by_name = bench.sort_stats([zeta, alpha], sort_by="name")
+    assert [s.isin for s in by_name] == ["IE00A", "IE00B"]
+    by_n = bench.sort_stats([alpha, zeta], sort_by="n", reverse=True)
+    assert [s.isin for s in by_n] == ["IE00B", "IE00A"]

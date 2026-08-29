@@ -362,3 +362,48 @@ def test_transactions_schema_contract(tmp_path: Path) -> None:
         "fee": {"type": "REAL", "notnull": False, "pk": 0},
         "tax": {"type": "REAL", "notnull": False, "pk": 0},
     }
+
+
+def test_canonical_sort_tokens_agree_across_commands() -> None:
+    """Same quantity → same --sort token (ADR-0037); retired nicknames are gone."""
+    from e1f import (
+        benchmark,
+        config,
+        deposits,
+        performance,
+        portfolio,
+        rebalance,
+        transactions,
+    )
+
+    identity = {"isin", "name"}
+    assert identity <= set(portfolio.SORT_FIELDS)
+    assert identity <= set(performance.SORT_FIELDS)
+    assert identity <= set(deposits.SORT_FIELDS)
+    assert identity <= set(benchmark.SORT_FIELDS)
+    assert identity <= set(rebalance.SORT_FIELDS)
+    assert identity <= set(config.SORT_FIELDS)
+    assert "isin" in transactions.SORT_FIELDS
+
+    money = {"value", "cost"}
+    assert money <= set(portfolio.SORT_FIELDS)
+    assert money <= set(performance.SORT_FIELDS)
+    assert money <= set(deposits.SORT_FIELDS)
+    assert "value" in rebalance.SORT_FIELDS
+
+    assert {"pnl", "pnl_pct", "pnl_ctr"} <= set(performance.SORT_FIELDS)
+    assert {"pnl", "pnl_pct", "pnl_ctr"} <= set(deposits.SORT_FIELDS)
+    assert "weight" in portfolio.SORT_FIELDS
+    assert "weight" in performance.SORT_FIELDS
+    assert "weight" in rebalance.SORT_FIELDS
+    assert "class" in portfolio.SORT_FIELDS
+    assert "class" in config.SORT_FIELDS
+    assert "units" in portfolio.SORT_FIELDS
+    assert "units" in transactions.SORT_FIELDS
+    assert "date" in deposits.SORT_FIELDS
+    assert "date" in transactions.SORT_FIELDS
+
+    assert "total" not in portfolio.SORT_FIELDS
+    assert "gain" not in deposits.SORT_FIELDS
+    assert "amount" not in deposits.SORT_FIELDS
+    assert "ret" not in deposits.SORT_FIELDS

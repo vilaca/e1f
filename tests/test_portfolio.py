@@ -269,7 +269,7 @@ def test_main_portfolio_corrupt_db_returns_error(tmp_path, capsys):
     assert "✗ Error:" in out
 
 
-@pytest.mark.parametrize("sort_by", ["broker", "isin", "units", "avg", "total"])
+@pytest.mark.parametrize("sort_by", ["broker", "isin", "units", "avg", "cost"])
 def test_sort_holdings_config_free_fields(sort_by):
     holdings = [
         Holding(BROKER_TRADE_REPUBLIC, "CCC", 3.0, 30.0, 90.0),
@@ -338,7 +338,7 @@ def test_sort_holdings_missing_ter_sorts_last_ascending(tmp_path):
         holdings, sort_by="ter", reverse=False,
         config_path=str(config), total_invested=200.0, eur_values={},
     )
-    assert [h.symbol for h in by_ter] == ["BBB", "AAA"]  # -1.0 sentinel sorts first
+    assert [h.symbol for h in by_ter] == ["BBB", "AAA"]  # missing (−∞) sorts first ascending
 
 
 def test_sort_holdings_unsupported_field_raises():
@@ -350,7 +350,67 @@ def test_sort_holdings_unsupported_field_raises():
         )
 
 
-def test_main_portfolio_sort_by_total(tmp_path, capsys):
+def test_sort_holdings_by_value_none_last_when_reversed():
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 1.0, 10.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "CCC", 1.0, 10.0, 100.0),
+    ]
+    values = {
+        (BROKER_TRADE_REPUBLIC, "AAA"): 50.0,
+        (BROKER_TRADE_REPUBLIC, "BBB"): 200.0,
+        (BROKER_TRADE_REPUBLIC, "CCC"): None,
+    }
+    result = sort_holdings(
+        holdings, sort_by="value", reverse=True,
+        config_path="unused", total_invested=300.0, eur_values=values,
+    )
+    assert [h.symbol for h in result] == ["BBB", "AAA", "CCC"]
+
+
+def test_sort_holdings_by_last_px_and_class(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.dump(
+            {
+                "etfs": {
+                    "AAA": {"name": "A", "asset_class": "Equity"},
+                    "BBB": {"name": "B", "asset_class": "Real Estate"},
+                }
+            }
+        )
+    )
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 10.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 1.0, 10.0, 100.0),
+    ]
+    by_px = sort_holdings(
+        holdings, sort_by="last_px", reverse=True,
+        config_path=str(config), total_invested=200.0, eur_values={},
+        last_prices={"AAA": 10.0, "BBB": 50.0},
+    )
+    assert [h.symbol for h in by_px] == ["BBB", "AAA"]
+
+    by_class = sort_holdings(
+        holdings, sort_by="class", reverse=False,
+        config_path=str(config), total_invested=200.0, eur_values={},
+    )
+    assert [h.symbol for h in by_class] == ["AAA", "BBB"]  # Eqty < REITs
+
+    by_dist = sort_holdings(
+        holdings, sort_by="dist", reverse=False,
+        config_path=str(config), total_invested=200.0, eur_values={},
+    )
+    assert [h.symbol for h in by_dist] == ["AAA", "BBB"]
+
+    by_ccy = sort_holdings(
+        holdings, sort_by="ccy", reverse=False,
+        config_path=str(config), total_invested=200.0, eur_values={},
+    )
+    assert {h.symbol for h in by_ccy} == {"AAA", "BBB"}
+
+
+def test_main_portfolio_sort_by_cost(tmp_path, capsys):
     db = tmp_path / "t.db"
     config = tmp_path / "config.yaml"
     config.write_text(yaml.dump({"etfs": {ISIN_ETF: {"name": "Test ETF"}}}))
@@ -372,7 +432,7 @@ def test_main_portfolio_sort_by_total(tmp_path, capsys):
         conn.commit()
 
     code = portfolio_mod.main(
-        ["--db", str(db), "--config", str(config), "--sort", "total", "--reverse"],
+        ["--db", str(db), "--config", str(config), "--sort", "cost", "--reverse"],
     )
     out = capsys.readouterr().out
 
@@ -591,6 +651,11 @@ def test_main_portfolio_help(capsys):
     assert "--show-cost-basis" in out
     assert "--show-status" in out
     assert "--explain" in out
+
+
+def test_retired_sort_token_total_is_rejected():
+    with pytest.raises(SystemExit):
+        portfolio_mod.main(["--sort", "total"])
 
 
 # ---------------------------------------------------------------------------

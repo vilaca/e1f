@@ -366,6 +366,17 @@ def test_main_list_after_import(tmp_path, capsys):
     assert "Total: 1 transactions" in out
 
 
+def test_sort_transaction_rows_by_isin_and_date():
+    rows = [
+        ("tr", "2024-01-02", "BBB", "BUY", 1.0, 10.0, 0.0, 0.0),
+        ("tr", "2024-01-01", "AAA", "BUY", 2.0, 20.0, 0.0, 0.0),
+    ]
+    by_isin = transactions_mod.sort_transaction_rows(rows, sort_by="isin")
+    assert [r[2] for r in by_isin] == ["AAA", "BBB"]
+    by_date = transactions_mod.sort_transaction_rows(rows, sort_by="date", reverse=True)
+    assert [r[2] for r in by_date] == ["BBB", "AAA"]
+
+
 def test_build_ticker_to_isin_uses_listings(tmp_path):
     config_path = tmp_path / "config.yaml"
     isin = "IE00BDBRDM35"
