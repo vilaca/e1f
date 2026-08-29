@@ -1143,20 +1143,21 @@ def _cmd_performance(
 
 _SERIES_HEADER = (
     f"\n{'Date':<12} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Vol':>8} {'MaxDD':>8} {'CAGR':>8} "
-    f"{'WTER':>8} {'Fee€/yr':>10}"
+    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Daily TWR':>10} {'Vol':>8} {'MaxDD':>8} "
+    f"{'CAGR':>8} {'WTER':>8} {'Fee€/yr':>10}"
 )
 _SERIES_RULE_WIDTH = len(_SERIES_HEADER.lstrip("\n"))
 
 
 @dataclass
 class SeriesPoint:
-    """One trading day's portfolio TOTAL plus its cost-of-ownership columns (ADR-0031)."""
+    """One trading day's portfolio TOTAL plus series-only columns (ADR-0031, ADR-0040)."""
 
     day: str
     total: PerformanceRow
     weighted_ter: float | None  # market-value-weighted TER, in percent
     annual_cost: float | None  # estimated EUR/yr in fees at that day's MktVal
+    daily_twr: float | None  # that day's time-weighted sub-period return (ADR-0040)
 
 
 def _ter_by_isin(config_path: str, isins: list[str]) -> dict[str, float | None]:
@@ -1182,6 +1183,26 @@ def _weighted_ter_cost(
     )
 
 
+def _daily_twr(
+    holdings: list[HoldingSeries], day: str, db_path: str
+) -> float | None:
+    """The book's time-weighted sub-period return dated ``day``, or None.
+
+    Same ``wealth_and_returns`` series cumulative TWR chain-links (ADR-0040).
+    """
+    valuable = [series for series in holdings if _value_on(series, day, db_path) is not None]
+    if not valuable:
+        return None
+    first_day = min(series.events[0].date for series in valuable)
+    _wealth, returns = _wealth_and_returns(
+        _aggregate_series(valuable, first_day, day, db_path)
+    )
+    for dated, ret in reversed(returns):
+        if dated == day:
+            return ret
+    return None
+
+
 def _format_series_row(point: SeriesPoint) -> str:
     """One dated TOTAL row; ~ flags a carried-forward close, * a short history."""
     row = point.total
@@ -1192,6 +1213,7 @@ def _format_series_row(point: SeriesPoint) -> str:
         f"{_fmt_money(row.cost):>13} {_fmt_money(row.pnl):>13} "
         f"{_fmt_pct(row.pnl_pct, scaled=True):>8} "
         f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.twr):>8} "
+        f"{_fmt_signed_pct(point.daily_twr):>10} "
         f"{_fmt_pct(row.volatility, flag=flag):>8} {_fmt_pct(row.max_drawdown):>8} "
         f"{_fmt_pct(row.cagr, flag=flag):>8} "
         f"{_fmt_ter(point.weighted_ter):>8} {_fmt_money(point.annual_cost):>10}"
@@ -1239,7 +1261,13 @@ def _series_point(
         return None
     total = _total_row(rows, holdings, day, db_path)
     weighted_ter, annual_cost = _weighted_ter_cost(rows, ter_by_isin)
-    return SeriesPoint(day=day, total=total, weighted_ter=weighted_ter, annual_cost=annual_cost)
+    return SeriesPoint(
+        day=day,
+        total=total,
+        weighted_ter=weighted_ter,
+        annual_cost=annual_cost,
+        daily_twr=_daily_twr(holdings, day, db_path),
+    )
 
 
 def _series_rows(
@@ -1304,6 +1332,11 @@ def _cmd_performance_series(
         print(
             "\n~ MktVal carried forward from an earlier close on flagged days "
             "(no close on the day itself — fetch to refresh)."
+        )
+    if any(point.daily_twr is not None for point in rows):
+        print(
+            "\nDaily TWR is that day's time-weighted return (the increment that "
+            "compounds into TWR); a gap-bridged period, not always one calendar day."
         )
     if any(point.weighted_ter is not None for point in rows):
         print(
@@ -1653,10 +1686,12 @@ provenance blocks and implies --show-status.
 last N calendar days — one row per day, cumulative-since-inception metrics,
 identical to running --as-of on each of those days. Trading days come from the
 price data (weekends/holidays with no close drop out); --reverse shows newest
-first. Mutually exclusive with --diff. Two trailing columns (ADR-0031) add the
-market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
-(Fee€/yr); holdings without TER metadata contribute 0 (dilutes). Add --isin X
-(ADR-0038) to restrict the book to one holding; every view composes with it.
+first. Mutually exclusive with --diff. Daily TWR (ADR-0040) is that day's
+time-weighted increment (the print that compounds into TWR). Two trailing
+columns (ADR-0031) add the market-value-weighted TER (WTER) and estimated annual
+fee at that day's MktVal (Fee€/yr); holdings without TER metadata contribute 0
+(dilutes). Add --isin X (ADR-0038) to restrict the book to one holding; every
+view composes with it.
 
 --metrics (ADR-0033) replaces the per-holding table with a portfolio-level
 extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, days since

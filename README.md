@@ -33,7 +33,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | Which holdings actually drove the return? | `e1f performance --contrib` | **Ctr%** — each holding's share of the book's TWR (sums to TOTAL), beside its **TWR** and value **Weight**; for the euro share **P&Lctr**, see the plain `e1f performance` table |
 | How rough was the ride — worst drop, time underwater? | `e1f performance --metrics` | **MaxDD** (deepest fall), **SinceHi** (days off the current peak), **RecFac** (TWR ÷ that fall — >1 means it paid off) |
 | What changed over the last N days? | `e1f performance --diff N` | **ΔMktVal€ / ΔP&L€** — a **ΔCost€** spike is cash *in*, not a gain |
-| How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day (levels, not deltas) |
+| How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day, plus **Daily TWR** (that day's increment) |
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
 | Did I beat the market? | `e1f benchmark` | **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
