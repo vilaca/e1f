@@ -207,7 +207,7 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
         (
             "performance",
             performance._SERIES_HEADER,
-            {"WTER": "WTER", "Fee€/yr": "Fee€/yr"},
+            {"Daily TWR": "Daily TWR", "WTER": "WTER", "Fee€/yr": "Fee€/yr"},
         ),
         (
             "performance",

@@ -23,7 +23,7 @@ A quick map before the detail:
 | Family | Core question | Key metrics |
 |---|---|---|
 | Personal return | What did my cash earn? | XIRR |
-| Investment return | What did the holdings earn? | TWR, CAGR |
+| Investment return | What did the holdings earn? | TWR, Daily TWR, CAGR |
 | Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€ |
 | Attribution | Which holdings drove the return? | Ctr%, P&Lctr |
 | Allocation | Where is capital/risk? | Weight |
@@ -105,8 +105,26 @@ XIRR is what your cash earned; TWR is what the holdings earned. CAGR is TWR per 
   strips out the effect of *when* your money arrived.
 - **Read with:** CAGR (this number per year — compare *that* to XIRR, both
   annualized: the gap *is* timing). XIRR (your personal money-weighted rate).
-  MaxDD and Vol (what it cost to earn). Ctr% (which holdings produced it). Out% /
-  RelStr (the same TWR versus a benchmark).
+  Daily TWR (each day's increment that compounds into this). MaxDD and Vol (what
+  it cost to earn). Ctr% (which holdings produced it). Out% / RelStr (the same
+  TWR versus a benchmark).
+
+### Daily TWR
+- **Where:** `performance --series` (`Daily TWR`)
+- **Type:** time-weighted, single period
+- **Definition:** The time-weighted sub-period return dated that row's day:
+  `r_t = V_t/(V_prev+CF_t) − 1`. Same series cumulative TWR chain-links; a
+  weekend or missing FX close is one period (gap-bridged, not filled). `n/a`
+  when no return is dated that day.
+- **Useful for:** seeing how the book (or `--isin` fund) moved *that day*
+  without subtracting adjacent TWR cells — the print `--metrics` Best/Worst Day
+  pick as their extrema.
+- **Don't:** treat a Friday-to-Monday gap as a single calendar-day headline, or
+  reconstruct TWR by multiplying only the printed window (Daily TWR is since
+  the previous valued day, which may sit before the `--series N` start).
+- **Read with:** TWR (the compound of these increments since inception). Best /
+  Worst Day (the record prints of this same series). Vol (how typical a day
+  this size is).
 
 ### CAGR
 - **Where:** `performance` table, `--series`, `--metrics`
@@ -350,10 +368,11 @@ Tails of the same TWR series. A "day" is a gap-bridged period, not always a cale
   when comparing to a news headline.
 - **Don't:** compare a gap-bridged "day" directly to a single calendar-day
   headline from a news source — a Friday-to-Monday gap is reported as one period.
-- **Read with:** Best/Worst Month (the same tails, chain-linked inside a
-  `YYYY-MM` — steadier). G/L (|best| ÷ |worst| of this pair). Vol / MaxDD (how
-  typical vs how deep the path is around those prints). Trailing 1M (recent, not
-  the record).
+- **Read with:** Daily TWR (the same series, every printed day, not just the
+  record). Best/Worst Month (the same tails, chain-linked inside a `YYYY-MM` —
+  steadier). G/L (|best| ÷ |worst| of this pair). Vol / MaxDD (how typical vs
+  how deep the path is around those prints). Trailing 1M (recent, not the
+  record).
 
 ### Best Month / Worst Month
 - **Where:** `performance --metrics`

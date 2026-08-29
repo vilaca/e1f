@@ -16,6 +16,7 @@ from e1f.common import (
     close_asof,
     contribution_to_return,
     load_trades,
+    portfolio_return_series,
     position_timeline,
     wealth_and_returns,
 )
@@ -1288,9 +1289,10 @@ def test_series_main_invariance_row_equals_as_of_total(tmp_path, capsys):
     total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
 
     # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops;
-    # the series adds WTER + Fee€/yr trailing columns the snapshot lacks. Compare
-    # the nine shared columns (MktVal … CAGR).
-    series_vals = _row_numbers(series_line)[:9]
+    # the series adds Daily TWR (index 6) plus WTER + Fee€/yr the snapshot lacks.
+    # Compare the nine shared columns (MktVal … TWR, Vol … CAGR).
+    series_vals = _row_numbers(series_line)
+    series_vals = series_vals[:6] + series_vals[7:10]
     total_vals = _row_numbers(total_line, drop_index=4)
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
@@ -1400,6 +1402,41 @@ def test_series_rows_totals_match_snapshot_total(tmp_path):
         )
 
 
+# --series Daily TWR — ADR-0040
+
+
+def test_series_daily_twr_is_hand_computed_close_to_close(tmp_path, capsys):
+    """2024-12-27 Daily TWR is 11.8/11.5 − 1 (no contribution that day)."""
+    db, config, meta = _seed_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    rows = perf._series_rows(db, config, meta, timeline, start="2024-12-21", end="2024-12-31")
+    by_day = {point.day: point for point in rows}
+    assert by_day["2024-12-24"].daily_twr is None  # first close; no prior EUR value
+    assert by_day["2024-12-26"].daily_twr == pytest.approx(11.5 / 11.0 - 1)
+    assert by_day["2024-12-27"].daily_twr == pytest.approx(11.8 / 11.5 - 1)
+
+    perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "10"))
+    out = capsys.readouterr().out
+    assert "Daily TWR" in out
+    assert "increment that compounds into TWR" in out
+    line = next(ln for ln in out.splitlines() if ln.startswith("2024-12-27"))
+    assert _row_numbers(line)[6] == pytest.approx(2.61, abs=0.01)
+
+
+def test_series_daily_twr_reconciles_with_portfolio_return_series(tmp_path):
+    """Each printed Daily TWR equals the shared book's return dated that day."""
+    db, config, meta = _seed_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    by_day = dict(portfolio_return_series(db, meta, "2024-12-31"))
+    for point in perf._series_rows(
+        db, config, meta, timeline, start="2024-12-21", end="2024-12-31"
+    ):
+        if point.daily_twr is None:
+            assert point.day not in by_day
+        else:
+            assert point.daily_twr == pytest.approx(by_day[point.day])
+
+
 # --isin filter: restrict the book to one holding — ADR-0038
 
 _ISIN_SECOND = "IE00EUR000002"
@@ -1465,7 +1502,8 @@ def test_series_isin_invariance_row_equals_as_of_isin_total(tmp_path, capsys):
     perf.main(_args(db, config, meta, "--as-of", "2024-12-27", "--isin", EUR_ISIN))
     total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
 
-    series_vals = _row_numbers(series_line)[:9]
+    series_vals = _row_numbers(series_line)
+    series_vals = series_vals[:6] + series_vals[7:10]
     total_vals = _row_numbers(total_line, drop_index=4)
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
@@ -1565,8 +1603,8 @@ def test_series_ter_columns_are_market_value_weighted(tmp_path, capsys):
     perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "1"))
     out = capsys.readouterr().out
     vals = _last_series_values(out)
-    assert vals[9] == pytest.approx(0.400)   # WTER %
-    assert vals[10] == pytest.approx(16.0)   # Fee€/yr = 0.5%*3000 + 0.1%*1000
+    assert vals[10] == pytest.approx(0.400)   # WTER %
+    assert vals[11] == pytest.approx(16.0)   # Fee€/yr = 0.5%*3000 + 0.1%*1000
     assert "0.300%" not in out               # not cost-weighted
     assert "market-value-weighted TER" in out
 
@@ -1576,8 +1614,8 @@ def test_series_ter_missing_metadata_dilutes(tmp_path, capsys):
     db, config, meta = _seed_ter(tmp_path, ters={EUR_ISIN: 0.5}, second_close=10.0)
     perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--series", "1"))
     vals = _last_series_values(capsys.readouterr().out)
-    assert vals[10] == pytest.approx(15.0)   # 0.5%*3000 only
-    assert vals[9] == pytest.approx(0.375)   # 100*15/4000, diluted below 0.5%
+    assert vals[11] == pytest.approx(15.0)   # 0.5%*3000 only
+    assert vals[10] == pytest.approx(0.375)   # 100*15/4000, diluted below 0.5%
 
 
 def test_series_ter_na_when_no_metadata(tmp_path, capsys):
@@ -1586,7 +1624,7 @@ def test_series_ter_na_when_no_metadata(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "WTER" in out  # header still present
     vals = _last_series_values(out)
-    assert vals[9] == "n/a" and vals[10] == "n/a"
+    assert vals[10] == "n/a" and vals[11] == "n/a"
     assert "market-value-weighted TER" not in out  # footnote suppressed
 
 
