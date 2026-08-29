@@ -211,6 +211,7 @@ def test_unavailable_helper_shape():
 
 def test_bench_name_friendly_label_for_defaults_else_config(tmp_path):
     assert bench._bench_name("/no/config", "IE00B4L5Y983") == "iShares Core MSCI World (Acc)"
+    assert bench._bench_name("/no/config", "IE00B3YLTY66") == "SPDR MSCI ACWI IMI (Acc)"
     config = tmp_path / "c.yaml"
     config.write_text(yaml.dump({"etfs": {"IE00XX": {"name": "Custom Fund"}}}))
     assert bench._bench_name(str(config), "IE00XX") == "Custom Fund"        # config fallback

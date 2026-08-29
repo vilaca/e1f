@@ -10,7 +10,7 @@ disclosed per row (ADR-0033). Metrics needing a risk-free rate (Sharpe, Treynor,
 Jensen alpha) are deliberately out of scope until €STR is fetched.
 
 Usage:
-    e1f benchmark                                    # vs the six broad benchmarks
+    e1f benchmark                                    # vs the seven broad benchmarks
     e1f benchmark --against IE00B5BMR087,IE00B4K48X80
     e1f benchmark --as-of 2025-12-31 --explain
 """
@@ -42,7 +42,7 @@ _TRADING_DAYS = 252
 _MIN_OVERLAP = 2
 _VARIANCE_FLOOR = 1e-12
 
-# The default benchmark set: the six broad indices, each an accumulating (≈ total
+# The default benchmark set: seven broad indices, each an accumulating (≈ total
 # return) UCITS fund already in the universe (all USD/EUR, EUR/USD FX present),
 # shown by its complete fund name (the raw config names are cryptic — "SS SPD MS
 # AL CO WO UC" etc.). Order is preserved in the output.
@@ -52,6 +52,7 @@ _DEFAULT_BENCHMARK_LABELS = {
     "IE0003XJA0J9": "Amundi Prime All Country World (Acc)",  # WEBN
     "IE00B5BMR087": "iShares Core S&P 500 (Acc)",           # CSPX / SXR8
     "IE00B44Z5B48": "SPDR MSCI ACWI (Acc)",                 # SPYY / ACWI
+    "IE00B3YLTY66": "SPDR MSCI ACWI IMI (Acc)",             # SPYI / IMID
     "IE00BK5BQT80": "Vanguard FTSE All-World (Acc)",        # VWCE / VWRA
 }
 _DEFAULT_BENCHMARK = ",".join(_DEFAULT_BENCHMARK_LABELS)
@@ -404,8 +405,8 @@ Examples:
         "--against",
         default=_DEFAULT_BENCHMARK,
         metavar="ISIN[,ISIN...]",
-        help="Comma-separated benchmark ISINs (default: the six broad benchmarks — "
-        "MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, FTSE All-World)",
+        help="Comma-separated benchmark ISINs (default: the seven broad benchmarks — "
+        "MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, MSCI ACWI IMI, FTSE All-World)",
     )
     parser.add_argument(
         "--as-of",
