@@ -121,7 +121,7 @@ e1f performance --show-status        # + per-holding provenance Status column (A
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)
 
 # Benchmark the book against broad indices (EUR, time-weighted; ADR-0033)
-e1f benchmark                        # vs the six defaults (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, FTSE All-World)
+e1f benchmark                        # vs the seven defaults (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, ACWI IMI, FTSE All-World)
 e1f benchmark --against IE00B5BMR087,IE00B4K48X80  # a custom benchmark set by ISIN
 e1f benchmark --min-overlap 60       # demand ~a quarter-year of shared history
 e1f benchmark --explain              # + provenance block
