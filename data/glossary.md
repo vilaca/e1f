@@ -439,6 +439,15 @@ Ctr% uses beginning-of-period weights along the full path, not today's weight.
 ## Deposits & capital
 
 The same TOTAL P&L as performance, sliced by contribution instead of by holding.
+The per-deposit table is one row per buy by default; `deposits --group week|month|year`
+aggregates it into one row per calendar period × fund (deposit vintages) in per-period
+sections — same Amount€/Value€/Gain€/Ret%/%P&L columns, no date column — each closed
+by a `── total ──` subtotal over its valuable funds (a period with none omits the
+subtotal). Week labels are ISO-8601 (`YYYY-Www`, Monday-start). Under `--group` the
+labelled summary block is dropped and a bottom `── ALL ──` grand-total row carries
+the same Invested/Reported/Organic-gain (Gain€)/ROIC (Ret%) figures; %P&L subtotals
+and the ALL row foot to 100%, and the totals reconcile with the `performance` TOTAL
+exactly as ungrouped (ADR-0036).
 
 ### Invested
 - **Where:** `deposits`
@@ -502,11 +511,12 @@ The same TOTAL P&L as performance, sliced by contribution instead of by holding.
 ### Amount€
 - **Where:** `deposits` per-deposit table
 - **Type:** money, historical contribution
-- **Definition:** EUR cost of one buy: shares × execution price + transaction
-  fee. It is the lot-level input to Invested and excludes the lot when its
-  shares cannot be valued at the report date.
-- **Useful for:** seeing how much capital each purchase put at risk and
-  separating a large contribution from a high-return one.
+- **Definition:** EUR cost of the row — one buy, or under `--group` the buys in
+  that period × fund: shares × execution price + transaction fee. It is the
+  input to Invested and excludes the row when its shares cannot be valued at
+  the report date.
+- **Useful for:** seeing how much capital each purchase (or vintage) put at risk
+  and separating a large contribution from a high-return one.
 - **Don't:** read Amount€ as current value or market performance — it is the
   historical amount paid.
 - **Read with:** Value€ (what those shares are worth now). Gain€ (the euro
@@ -519,8 +529,8 @@ The same TOTAL P&L as performance, sliced by contribution instead of by holding.
 - **Definition:** EUR market value of the displayed shares at the report date,
   using the nearest-prior close and FX rate. An unpriceable row is unavailable,
   not zero.
-- **Useful for:** comparing a lot or holding's current size with what was paid
-  and reconciling the valuable rows with the report total.
+- **Useful for:** comparing a lot, vintage, or holding's current size with what
+  was paid and reconciling the valuable rows with the report total.
 - **Don't:** treat an unavailable Value€ as a zero-value investment, or assume
   it is fresh when its close was carried forward.
 - **Read with:** Amount€ for a deposit or Total paid for a holding. Gain€ and
@@ -530,44 +540,46 @@ The same TOTAL P&L as performance, sliced by contribution instead of by holding.
 ### Gain€ (per deposit)
 - **Where:** `deposits` per-deposit table
 - **Type:** money
-- **Definition:** Value€ − Amount€ for one buy. Across valuable deposits it
-  sums to Organic gain and the performance TOTAL P&L€.
-- **Useful for:** seeing which purchases generated the actual euros of profit
-  or loss, independent of their percentage return.
-- **Don't:** rank lots by Gain€ alone without considering Amount€ — large buys
+- **Definition:** Value€ − Amount€ for the row (one buy, or under `--group` that
+  period × fund). Across valuable deposits it sums to Organic gain and the
+  performance TOTAL P&L€.
+- **Useful for:** seeing which purchases (or vintages) generated the actual
+  euros of profit or loss, independent of their percentage return.
+- **Don't:** rank rows by Gain€ alone without considering Amount€ — large buys
   naturally dominate euro outcomes.
-- **Read with:** Ret% (gain relative to this lot's amount). %P&L (share of the
+- **Read with:** Ret% (gain relative to this row's amount). %P&L (share of the
   book's total gain). Organic gain (the reconciled total).
 
 ### Ret% (per deposit)
 - **Where:** `deposits` per-deposit table
 - **Type:** money-weighted return, buy-and-hold
-- **Definition:** How much one buy's shares have grown: (Value€ − Amount€) ÷
-  Amount€.
-- **Useful for:** spotting which *purchases* did well or badly — "the March
-  dip-buy vs the September top-up." An early lot can show a huge Ret% while the
-  fund's TWR is modest, because the lot's own entry date and price differ from
-  the whole holding period; that's lot luck, not a reason to overweight the fund
-  further without looking at Ctr%.
-- **Don't:** attribute a strong lot-level Ret% to fund quality — it reflects one
-  buy's entry date and price, not the fund's time-weighted return (TWR
-  neutralizes contribution timing, so later buys don't dilute it).
-- **Read with:** TWR (the fund's time-weighted path). %P&L (this lot's share of
+- **Definition:** How much the row's shares have grown: (Value€ − Amount€) ÷
+  Amount€. One buy by default; under `--group`, the money-weighted return of
+  that period × fund.
+- **Useful for:** spotting which *purchases* (or vintages) did well or badly —
+  "the March dip-buy vs the September top-up." An early lot can show a huge
+  Ret% while the fund's TWR is modest, because the lot's own entry date and
+  price differ from the whole holding period; that's lot luck, not a reason to
+  overweight the fund further without looking at Ctr%.
+- **Don't:** attribute a strong lot-level Ret% to fund quality — it reflects
+  entry date and price, not the fund's time-weighted return (TWR neutralizes
+  contribution timing, so later buys don't dilute it).
+- **Read with:** TWR (the fund's time-weighted path). %P&L (this row's share of
   *euros*, not its own return). XIRR (the whole-book rate those lots jointly
   produced). Organic gain (the TOTAL they sum to).
 
 ### %P&L (per deposit)
 - **Where:** `deposits` per-deposit table
 - **Type:** money-weighted share
-- **Definition:** One buy's share of the portfolio's total P&L. Undefined when
-  net P&L is zero.
-- **Useful for:** which specific deposits made (or lost) the money — two buys of
-  the same ISIN can have very different %P&L if one was larger or earlier. Use
-  it to audit contribution timing; use P&Lctr when you care about the fund, not
-  the lot.
+- **Definition:** The row's share of the portfolio's total P&L (one buy, or
+  under `--group` that period × fund). Undefined when net P&L is zero.
+- **Useful for:** which specific deposits (or vintages) made (or lost) the money
+  — two buys of the same ISIN can have very different %P&L if one was larger or
+  earlier. Use it to audit contribution timing; use P&Lctr when you care about
+  the fund, not the lot.
 - **Don't:** compare lots of different sizes by Ret% alone — %P&L shows how much
-  of the book's total gain a lot actually represents.
-- **Read with:** P&Lctr (same idea by holding). Ret% (this lot's own return).
+  of the book's total gain a row actually represents.
+- **Read with:** P&Lctr (same idea by holding). Ret% (this row's own return).
   Organic gain (the TOTAL). Ctr% (time-weighted, not euros).
 
 ## Fees
