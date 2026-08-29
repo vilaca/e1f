@@ -8,6 +8,7 @@ held ISIN and for the portfolio as a whole: XIRR (money-weighted, headline), TWR
 Usage:
     e1f performance
     e1f performance --as-of 2025-12-31 --sort value --reverse
+    e1f performance --series 60 --isin IE00B3VSSL01
 """
 
 import argparse
@@ -637,6 +638,50 @@ def _snapshot_total(
     return _total_row(rows, holdings, as_of, db_path)
 
 
+def _normalize_isin(raw: str | None) -> str | None:
+    """Strip/upper an optional ``--isin``; empty after strip is rejected."""
+    if raw is None:
+        return None
+    key = raw.strip().upper()
+    if not key:
+        raise ValueError("--isin must be a non-empty ISIN")
+    return key
+
+
+def _restrict_timeline(
+    timeline: dict[str, list[PositionEvent]], isin: str, config_path: str
+) -> dict[str, list[PositionEvent]]:
+    """Keep one holding, or raise with the held list (ADR-0038)."""
+    if isin not in timeline:
+        held = "\n".join(
+            f"  {key}  {_etf_name(config_path, key)}" for key in sorted(timeline)
+        )
+        raise ValueError(f"--isin {isin}: not a holding. Held:\n{held}")
+    return {isin: timeline[isin]}
+
+
+def _require_timeline(
+    db_path: str, config_path: str, isin: str | None
+) -> dict[str, list[PositionEvent]] | None:
+    """Load holdings, optionally restricted to ``isin``. None = empty book (message printed)."""
+    timeline = position_timeline(load_trades(db_path))
+    if not timeline:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return None
+    if isin is None:
+        return timeline
+    return _restrict_timeline(timeline, isin, config_path)
+
+
+def _subject_phrase(config_path: str, isin: str | None, *, default: str = "Portfolio") -> str:
+    """Banner noun: ``default`` (usually ``Portfolio``) or ``Name (ISIN)``."""
+    if isin is None:
+        return default
+    name = _etf_name(config_path, isin)
+    return f"{name} ({isin})" if name else isin
+
+
 # ---------------------------------------------------------------------------
 # Diff-mode merge (pure, no DB — the primary test seam for --diff).
 # ---------------------------------------------------------------------------
@@ -947,12 +992,11 @@ def _cmd_performance_diff(
     show_status: bool = False,
     explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
     show_status = show_status or explain
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     start_rows = _build_endpoint_rows(db_path, config_path, currency_meta_path, timeline, start)
@@ -982,7 +1026,10 @@ def _cmd_performance_diff(
 
     excluded = [r.isin for r in rows if not r.valuable]
 
-    print(f"\nPerformance change {start} → {end} (EUR)")
+    print(
+        f"\n{_subject_phrase(config_path, isin, default='Performance')} change "
+        f"{start} → {end} (EUR)"
+    )
     print(_diff_header(show_status))
     print("-" * _diff_rule_width(show_status))
     for row in rows:
@@ -1019,12 +1066,11 @@ def _cmd_performance(
     show_status: bool = False,
     explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
@@ -1039,7 +1085,7 @@ def _cmd_performance(
     total = _total_row(rows, holdings, as_of, db_path)
     total.pnl_contribution = None if not total.pnl else 100.0
 
-    print(f"\nPortfolio performance as of {as_of} (EUR)")
+    print(f"\n{_subject_phrase(config_path, isin)} performance as of {as_of} (EUR)")
     print(_header(show_status))
     print("-" * _rule_width(show_status))
     for row in rows:
@@ -1229,11 +1275,10 @@ def _cmd_performance_series(
     n: int,
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     start = (date.fromisoformat(as_of) - timedelta(days=n)).isoformat()
@@ -1244,7 +1289,10 @@ def _cmd_performance_series(
     if reverse:
         rows = list(reversed(rows))
 
-    print(f"\nPortfolio performance series {start} → {as_of} (EUR, cumulative since inception)")
+    print(
+        f"\n{_subject_phrase(config_path, isin)} performance series "
+        f"{start} → {as_of} (EUR, cumulative since inception)"
+    )
     print(_SERIES_HEADER)
     print("-" * _SERIES_RULE_WIDTH)
     for point in rows:
@@ -1298,10 +1346,16 @@ def _maxdd_duration_note(ext: ExtendedMetrics) -> str:
     return f"peak {ext.max_dd_peak_date} → recovery {ext.max_dd_recovery_date}"
 
 
-def _render_metrics(as_of: str, total: PerformanceRow, ext: ExtendedMetrics) -> list[str]:
+def _render_metrics(
+    as_of: str,
+    total: PerformanceRow,
+    ext: ExtendedMetrics,
+    *,
+    subject: str = "Portfolio",
+) -> list[str]:
     """The portfolio metrics report as a list of printable lines (pure, testable)."""
     return [
-        f"\nPortfolio metrics as of {as_of} (EUR)",
+        f"\n{subject} metrics as of {as_of} (EUR)",
         "",
         "  Value",
         _metric_line("MktVal€", _fmt_money(total.market_value, flag=total.estimated)),
@@ -1378,11 +1432,10 @@ def _cmd_performance_metrics(
     *,
     as_of: str,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     snapshot = _metrics_snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
@@ -1391,7 +1444,7 @@ def _cmd_performance_metrics(
         return 0
     rows, total, ext = snapshot
 
-    for line in _render_metrics(as_of, total, ext):
+    for line in _render_metrics(as_of, total, ext, subject=_subject_phrase(config_path, isin)):
         print(line)
 
     if total.short_history:
@@ -1445,11 +1498,10 @@ def _cmd_performance_contrib(
     sort_by: str = "isin",
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     rows, holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, as_of)
@@ -1462,7 +1514,10 @@ def _cmd_performance_contrib(
     first_day = min((s.events[0].date for s in valuable_series), default=as_of)
     contributions = contribution_to_return(valuable_series, first_day, as_of, db_path)
 
-    print(f"\nPer-holding return contribution as of {as_of} (EUR)")
+    print(
+        f"\n{_subject_phrase(config_path, isin, default='Per-holding')} return "
+        f"contribution as of {as_of} (EUR)"
+    )
     print(_CONTRIB_HEADER)
     print("-" * _CONTRIB_RULE_WIDTH)
     valuable_rows = [row for row in rows if row.valuable]
@@ -1529,11 +1584,10 @@ def _cmd_performance_metrics_series(
     n: int,
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    isin: str | None = None,
 ) -> int:
-    timeline = position_timeline(load_trades(db_path))
-    if not timeline:
-        print("No ETF holdings in database")
-        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+    timeline = _require_timeline(db_path, config_path, isin)
+    if timeline is None:
         return 0
 
     start = (date.fromisoformat(as_of) - timedelta(days=n)).isoformat()
@@ -1549,7 +1603,10 @@ def _cmd_performance_metrics_series(
     if reverse:
         points = list(reversed(points))
 
-    print(f"\nPortfolio metrics series {start} → {as_of} (EUR, cumulative since inception)")
+    print(
+        f"\n{_subject_phrase(config_path, isin)} metrics series "
+        f"{start} → {as_of} (EUR, cumulative since inception)"
+    )
     print(_METRICS_SERIES_HEADER)
     print("-" * _METRICS_SERIES_RULE_WIDTH)
     for day, total, ext in points:
@@ -1598,7 +1655,8 @@ identical to running --as-of on each of those days. Trading days come from the
 price data (weekends/holidays with no close drop out); --reverse shows newest
 first. Mutually exclusive with --diff. Two trailing columns (ADR-0031) add the
 market-value-weighted TER (WTER) and estimated annual fee at that day's MktVal
-(Fee€/yr); holdings without TER metadata contribute 0 (dilutes).
+(Fee€/yr); holdings without TER metadata contribute 0 (dilutes). Add --isin X
+(ADR-0038) to restrict the book to one holding; every view composes with it.
 
 --metrics (ADR-0033) replaces the per-holding table with a portfolio-level
 extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, days since
@@ -1620,6 +1678,7 @@ Examples:
   e1f performance --show-status
   e1f performance --explain
   e1f performance --series 90
+  e1f performance --series 60 --isin IE00B3VSSL01
   e1f performance --as-of 2025-12-31 --series 30 --reverse
   e1f performance --metrics
   e1f performance --metrics --series 14
@@ -1676,7 +1735,14 @@ Examples:
         default=None,
         help="List the portfolio TOTAL for each trading day over the last N calendar "
         "days (cumulative-since-inception metrics; composes with --as-of; --reverse "
-        "shows newest first). Mutually exclusive with --diff. N ≥ 1.",
+        "shows newest first). Mutually exclusive with --diff. Add --isin to restrict "
+        "to one holding. N ≥ 1.",
+    )
+    parser.add_argument(
+        "--isin",
+        default=None,
+        metavar="ISIN",
+        help="Restrict every view to one holding (ADR-0038). Must be a held ISIN.",
     )
     parser.add_argument(
         "--metrics",
@@ -1721,6 +1787,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         _validate_as_of(args.as_of)
+        isin = _normalize_isin(args.isin)
         diff_n = _validate_positive_int(args.diff, "--diff")
         series_n = _validate_positive_int(args.series, "--series")
         if diff_n is not None and series_n is not None:
@@ -1737,6 +1804,7 @@ def main(argv: list[str] | None = None) -> int:
                 sort_by=args.sort,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
+                isin=isin,
             )
         if args.metrics and series_n is not None:
             return _cmd_performance_metrics_series(
@@ -1746,6 +1814,7 @@ def main(argv: list[str] | None = None) -> int:
                 n=series_n,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
+                isin=isin,
             )
         if args.metrics:
             return _cmd_performance_metrics(
@@ -1753,6 +1822,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.config,
                 as_of=args.as_of,
                 currency_meta_path=args.currency_meta,
+                isin=isin,
             )
         if series_n is not None:
             return _cmd_performance_series(
@@ -1762,6 +1832,7 @@ def main(argv: list[str] | None = None) -> int:
                 n=series_n,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
+                isin=isin,
             )
         if diff_n is not None:
             end = args.as_of
@@ -1776,6 +1847,7 @@ def main(argv: list[str] | None = None) -> int:
                 show_status=args.show_status,
                 explain=args.explain,
                 currency_meta_path=args.currency_meta,
+                isin=isin,
             )
         return _cmd_performance(
             args.db,
@@ -1786,6 +1858,7 @@ def main(argv: list[str] | None = None) -> int:
             show_status=args.show_status,
             explain=args.explain,
             currency_meta_path=args.currency_meta,
+            isin=isin,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
