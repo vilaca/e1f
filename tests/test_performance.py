@@ -1289,10 +1289,10 @@ def test_series_main_invariance_row_equals_as_of_total(tmp_path, capsys):
     total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
 
     # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops;
-    # the series adds Daily TWR (index 6) plus WTER + Fee€/yr the snapshot lacks.
-    # Compare the nine shared columns (MktVal … TWR, Vol … CAGR).
+    # the series adds Daily TWR (index 7) plus WTER + Fee€/yr the snapshot lacks.
+    # Compare the nine shared columns (MktVal … TWR, Vol, MaxDD).
     series_vals = _row_numbers(series_line)
-    series_vals = series_vals[:6] + series_vals[7:10]
+    series_vals = series_vals[:7] + series_vals[8:10]
     total_vals = _row_numbers(total_line, drop_index=4)
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
@@ -1420,7 +1420,7 @@ def test_series_daily_twr_is_hand_computed_close_to_close(tmp_path, capsys):
     assert "Daily TWR" in out
     assert "increment that compounds into TWR" in out
     line = next(ln for ln in out.splitlines() if ln.startswith("2024-12-27"))
-    assert _row_numbers(line)[6] == pytest.approx(2.61, abs=0.01)
+    assert _row_numbers(line)[7] == pytest.approx(2.61, abs=0.01)
 
 
 def test_series_daily_twr_reconciles_with_portfolio_return_series(tmp_path):
@@ -1503,7 +1503,7 @@ def test_series_isin_invariance_row_equals_as_of_isin_total(tmp_path, capsys):
     total_line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL"))
 
     series_vals = _row_numbers(series_line)
-    series_vals = series_vals[:6] + series_vals[7:10]
+    series_vals = series_vals[:7] + series_vals[8:10]
     total_vals = _row_numbers(total_line, drop_index=4)
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):

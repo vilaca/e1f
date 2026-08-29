@@ -827,8 +827,8 @@ def _fmt_pct(value: float | None, *, scaled: bool = False, flag: bool = False) -
 
 _HEADER = (
     f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>10} {'Cost€':>10} {'P&L€':>10} "
-    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'TWR':>7} {'Vol':>7} {'MaxDD':>7} "
-    f"{'CAGR':>8}"
+    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'CAGR':>8} {'TWR':>7} {'Vol':>7} "
+    f"{'MaxDD':>7}"
 )
 _RULE_WIDTH = 14 + 28 + 10 * 3 + 7 * 5 + 7 + 8 + 11
 _STATUS_COL = 11
@@ -854,9 +854,9 @@ def _format_row(row: PerformanceRow, *, show_status: bool = False) -> str:
         f"{_fmt_money(row.market_value, flag=row.estimated):>10} {_fmt_money(row.cost):>10} "
         f"{_fmt_money(row.pnl):>10} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
         f"{_fmt_pct(row.pnl_contribution, scaled=True):>7} "
-        f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.twr):>7} "
-        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>7} "
-        f"{_fmt_pct(row.cagr, flag=flag):>8}"
+        f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.cagr, flag=flag):>8} "
+        f"{_fmt_pct(row.twr):>7} "
+        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>7}"
     )
     if show_status:
         base += f" {row_status(row).value:>{_STATUS_COL}}"
@@ -903,7 +903,7 @@ def render_row_explain(row: PerformanceRow) -> list[str]:
         else ""
     )
     ret_result = (
-        f"XIRR {_fmt_pct(row.xirr)} ; TWR {_fmt_pct(row.twr)} ; CAGR {_fmt_pct(row.cagr)} ; "
+        f"XIRR {_fmt_pct(row.xirr)} ; CAGR {_fmt_pct(row.cagr)} ; TWR {_fmt_pct(row.twr)} ; "
         f"Vol {_fmt_pct(row.volatility)} ; MaxDD {_fmt_pct(row.max_drawdown)}{extrapolated}"
     )
     lines.extend(_explain_metric(
@@ -911,7 +911,7 @@ def render_row_explain(row: PerformanceRow) -> list[str]:
         ret_status,
         ret_result,
         "dated contribution series + terminal EUR value",
-        "XIRR money-weighted ; TWR chain-linked ; CAGR = annualized TWR ; "
+        "XIRR money-weighted ; CAGR = annualized TWR ; TWR chain-linked ; "
         "Vol = stdev(daily r)×√252 ; MaxDD on the wealth index",
         RETURN_CONTRACT,
     ))
@@ -1143,8 +1143,8 @@ def _cmd_performance(
 
 _SERIES_HEADER = (
     f"\n{'Date':<12} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>8} {'XIRR':>8} {'TWR':>8} {'Daily TWR':>10} {'Vol':>8} {'MaxDD':>8} "
-    f"{'CAGR':>8} {'WTER':>8} {'Fee€/yr':>10}"
+    f"{'P&L%':>8} {'XIRR':>8} {'CAGR':>8} {'TWR':>8} {'Daily TWR':>10} "
+    f"{'Vol':>8} {'MaxDD':>8} {'WTER':>8} {'Fee€/yr':>10}"
 )
 _SERIES_RULE_WIDTH = len(_SERIES_HEADER.lstrip("\n"))
 
@@ -1212,10 +1212,9 @@ def _format_series_row(point: SeriesPoint) -> str:
         f"{_fmt_money(row.market_value, flag=row.estimated):>13} "
         f"{_fmt_money(row.cost):>13} {_fmt_money(row.pnl):>13} "
         f"{_fmt_pct(row.pnl_pct, scaled=True):>8} "
-        f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.twr):>8} "
-        f"{_fmt_signed_pct(point.daily_twr):>10} "
+        f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.cagr, flag=flag):>8} "
+        f"{_fmt_pct(row.twr):>8} {_fmt_signed_pct(point.daily_twr):>10} "
         f"{_fmt_pct(row.volatility, flag=flag):>8} {_fmt_pct(row.max_drawdown):>8} "
-        f"{_fmt_pct(row.cagr, flag=flag):>8} "
         f"{_fmt_ter(point.weighted_ter):>8} {_fmt_money(point.annual_cost):>10}"
     )
 
@@ -1397,8 +1396,8 @@ def _render_metrics(
         "",
         "  Return",
         _metric_line("XIRR (money-weighted)", _fmt_pct(total.xirr)),
-        _metric_line("TWR (time-weighted)", _fmt_pct(total.twr)),
         _metric_line("CAGR", _fmt_pct(total.cagr, flag=total.short_history)),
+        _metric_line("TWR (time-weighted)", _fmt_pct(total.twr)),
         "",
         "  Risk / drawdown",
         _metric_line("Volatility (ann.)", _fmt_pct(total.volatility, flag=total.short_history)),
@@ -1668,8 +1667,8 @@ def _build_parser() -> argparse.ArgumentParser:
 Metrics (all EUR, base currency per ADR-0010):
   P&Lctr this holding's share of the portfolio's total unrealized P&L (sums to 100%)
   XIRR   money-weighted annualized return (headline — accounts for when you paid in)
-  TWR    time-weighted cumulative return (contribution timing neutralized)
   CAGR   annualized TWR
+  TWR    time-weighted cumulative return (contribution timing neutralized)
   Vol    annualized volatility of daily returns (x sqrt(252))
   MaxDD  deepest peak-to-trough decline of the time-weighted wealth index
 
