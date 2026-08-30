@@ -88,8 +88,9 @@ XIRR is what your cash earned; TWR is what the holdings earned. CAGR is TWR per 
   rate was earned on).
 
 ### TWR
-- **Where:** `performance`, `--metrics`, `--series`, `--contrib`; `benchmark`
-  (used on both legs internally to derive RelStr/Out% — not shown as a column)
+- **Where:** `performance`, `--metrics`, `--series`, `--contrib`; `benchmark`; `funds`
+  (`benchmark` TWR is the book's return over that row's shared window;
+  `funds` TWR is the fund's own return over `--from` → `--as-of`)
 - **Type:** time-weighted, cumulative
 - **Definition:** Chain-linked product of daily sub-period returns
   `r_t = V_t/(V_prev+CF_t) − 1`, so deposits don't inflate or flatten it.
@@ -106,8 +107,8 @@ XIRR is what your cash earned; TWR is what the holdings earned. CAGR is TWR per 
 - **Read with:** CAGR (this number per year — compare *that* to XIRR, both
   annualized: the gap *is* timing). XIRR (your personal money-weighted rate).
   Daily TWR (each day's increment that compounds into this). MaxDD and Vol (what
-  it cost to earn). Ctr% (which holdings produced it). Out% / RelStr (the same
-  TWR versus a benchmark).
+  it cost to earn). Ctr% (which holdings produced it). bTWR / Out% / RelStr (the
+  same TWR versus a benchmark, over that row's overlap).
 
 ### Daily TWR
 - **Where:** `performance --series` (`Daily TWR`)
@@ -260,7 +261,7 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
 From the TWR wealth index, not the euro line (deposits would paper over a hole). DDdur is the worst hole's length; SinceHi is how long you've been off the current peak.
 
 ### Volatility (Vol)
-- **Where:** `performance` table (`Vol`), `--series`, `--metrics`
+- **Where:** `performance` table (`Vol`), `--series`, `--metrics`; `funds`
 - **Type:** time-weighted, annualized
 - **Definition:** Standard deviation of daily TWR returns × √252. Flagged `*` on
   short history or when the first stored close is after the first trade.
@@ -274,7 +275,7 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
   CAGR (different year-length: 365 calendar days vs 252 trading days).
 
 ### Max Drawdown (MaxDD)
-- **Where:** `performance` table (`MaxDD`), `--series`, `--metrics`
+- **Where:** `performance` table (`MaxDD`), `--series`, `--metrics`; `funds`
 - **Type:** time-weighted
 - **Definition:** The deepest peak-to-trough decline of the time-weighted wealth
   index, `min(wealth_t / peak_t − 1)` over the path (sampled daily), where
@@ -612,7 +613,7 @@ reported TWR or CAGR as "gross" unless you know what the fund factsheet embeds; 
 describe it as "after-tax net" either — e1f has no tax model.
 
 ### TER (per fund)
-- **Where:** `portfolio` per-fund table
+- **Where:** `portfolio` per-fund table; `funds`
 - **Type:** annual percentage, fund metadata
 - **Definition:** The fund's total expense ratio from configuration metadata.
   It is charged within the fund and is therefore already reflected in NAV
@@ -728,6 +729,19 @@ grows. A high value on thin n is still thin n.
   doesn't void IR — it means the gap is measured against a benchmark you don't
   resemble). n. TWR (the book return IR is not a substitute for).
 
+### bTWR
+- **Where:** `benchmark` (`bTWR`)
+- **Type:** time-weighted, cumulative, over the window
+- **Definition:** The benchmark ETF's cumulative TWR over the same shared dates
+  as that row's `TWR`. Chain-linked daily EUR returns, net of the fund's TER.
+  `n/a` when the row is UNAVAILABLE.
+- **Useful for:** seeing what the peer actually did in the window you are
+  comparing — RelStr and Out% are just this number and the book's TWR combined.
+- **Don't:** compare bTWR across rows without checking n — each benchmark's
+  overlap with the book can start and end on different days.
+- **Read with:** TWR (the book, same window). Out% (`TWR − bTWR`). RelStr
+  (`(1+TWR)/(1+bTWR)`). n.
+
 ### Relative Strength (RelStr)
 - **Where:** `benchmark`
 - **Type:** compounded ratio, over the window
@@ -758,19 +772,58 @@ grows. A high value on thin n is still thin n.
   drift). n (mandatory). R² (right mirror?). TWR (both legs).
 
 ### n (observations)
-- **Where:** `benchmark`, `correlation`
+- **Where:** `benchmark`, `correlation`; `funds`
 - **Type:** count
-- **Definition:** Number of shared daily-return observations the statistic was
-  estimated from.
-- **Useful for:** trust. A young book gives small n — Beta, IR, and ρ are
-  preliminary until it grows. Raising `--min-overlap` *hides* thin rows; it does
-  not make a short history true. When two benchmarks print very different n,
-  their Out%/IR are not comparable.
+- **Definition:** Number of daily-return observations the statistic was
+  estimated from. On `benchmark` / `correlation` that is the inner-join
+  (shared dates). On `funds` it is this fund's own gap-bridged EUR returns
+  in the `--from` → `--as-of` window — not calendar days, and not shared
+  with another series.
+- **Useful for:** trust. A young book or a young fund gives small n — Beta,
+  IR, ρ, and a fund TWR are preliminary until it grows. Raising
+  `--min-overlap` *hides* thin `benchmark` / `correlation` rows; it does
+  not make a short history true. When two `funds` rows print very different
+  n, their TWR/Vol are not comparable (read From).
 - **Don't:** raise `--min-overlap` thinking it makes a short history more
-  reliable — it only hides thin rows; the underlying n is unchanged.
+  reliable — it only hides thin rows; the underlying n is unchanged. Don't
+  treat `funds` n as calendar days — a bridged hole is still one return.
 - **Read with:** whatever column you're about to believe (Beta, IR, ρ, Out%,
-  RelStr). R² (a high R² on tiny n is still tiny n). SinceHi / TWR window (how
-  long the *book* has been alive — n is shared days, which can be shorter).
+  RelStr, TWR, Vol). R² (a high R² on tiny n is still tiny n). From / Gap
+  (on `funds`: how late the series starts, and how many consensus days it
+  skipped). SinceHi / TWR window (how long the *book* has been alive — n on
+  `benchmark` is shared days, which can be shorter).
+
+### From (window start)
+- **Where:** `funds` (`From`)
+- **Type:** date
+- **Definition:** The first EUR close actually used for that row's TWR / Vol /
+  MaxDD / n. When `--from` is omitted, this is the fund's first stored EUR
+  close. When `--from` is set and the fund listed later, From is after
+  `--from` — the series is short, not missing.
+- **Useful for:** seeing whether two TWR numbers cover the same stretch of
+  calendar. A 2024 From next to a 2012 From means the TWRs are not comparable
+  unless you re-run with a later `--from`.
+- **Don't:** read a late From as a data hole — that is Gap. Don't compare
+  since-inception TWRs across rows with different From dates.
+- **Read with:** n (how many returns that start produced). Gap (holes *after*
+  this date). `--from` (the window you asked for; From is what the fund could
+  give).
+
+### Gap (missing days)
+- **Where:** `funds` (`Gap`)
+- **Type:** count
+- **Definition:** Interior missing trading days: venue-consensus days this
+  fund's history spans but has no close (same vote as `validate`). Days
+  before listing, weekends, and genuine exchange holidays are not Gap.
+  Those missing closes are *bridged* into n (one fat return), never filled.
+- **Useful for:** discounting Vol (and any ×√252 figure) when a series has
+  holes. A Gap of 0 with a late From is a young fund; a Gap of 12 with a
+  long From is a fetch to repair (`e1f fetch <isin> --force`).
+- **Don't:** treat Gap as "days before this fund existed" — those show up as
+  a later From and a smaller n. Don't treat Gap as a 5/7 weekday fill-rate.
+- **Read with:** n (the return count those holes were bridged into). From
+  (where the series actually starts). TWR / Vol / MaxDD (the numbers Gap
+  qualifies).
 
 ## Correlation
 

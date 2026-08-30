@@ -25,32 +25,6 @@ etfs:
     distribution: Accumulating
     ter: 0.14
     asset_class: Equity
-  IE00B3RBWM25:
-    name: VANG FTSE AW USDD
-    tickers:
-    - VWRD
-    - VWRL
-    - VGWL
-    - VFPEF
-    exchange: LN
-    figi: BBG0032420Z1
-    listings:
-    - ticker: VWRD
-      exchange: LN
-    - ticker: VWRL
-      exchange: LN
-    - ticker: VGWL
-      exchange: GR
-    - ticker: VWRL
-      exchange: NA
-    - ticker: VFPEF
-      exchange: US
-    resolved_at: '2026-08-15T22:43:55.245882+00:00'
-    source: OpenFIGI
-    fund_currency: USD
-    distribution: Distributing
-    ter: 0.14
-    asset_class: Equity
   IE0003XJA0J9:
     name: AMUNDI PRME ALL CTRY WLD ACC
     tickers:
@@ -557,3 +531,309 @@ etfs:
     distribution: Accumulating
     ter: 0.2
     asset_class: Equity
+  LU1900068328:
+    name: AM MSCI AC APAC EX JPN-ETF A
+    tickers:
+    - AEJ
+    - AEJL
+    - 1700546D
+    - LASP
+    exchange: FP
+    figi: BBG00N8SF8S5
+    listings:
+    - ticker: AEJ
+      exchange: LN
+    - ticker: AEJL
+      exchange: LN
+    - ticker: 1700546D
+      exchange: US
+    - ticker: LASP
+      exchange: GR
+    resolved_at: '2026-08-30T00:10:18.575773+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.6
+    asset_class: Equity
+  LU2023678282:
+    name: AMND GBL MRY CHP UCI ETF-UEA
+    tickers:
+    - DRUP
+    - DTEC
+    - UNIC
+    exchange: GR
+    figi: BBG00TC98T10
+    listings:
+    - ticker: DRUP
+      exchange: GR
+    - ticker: DTEC
+      exchange: LN
+    - ticker: UNIC
+      exchange: LN
+    resolved_at: '2026-08-30T00:11:20.396430+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.45
+    asset_class: Equity
+  IE00BK5BQZ41:
+    name: VANG FTSEAPXJ USDA
+    tickers:
+    - VAPU
+    - VDPG
+    - VGEK
+    - VFPAF
+    exchange: LN
+    figi: BBG00QB6X0R0
+    listings:
+    - ticker: VAPU
+      exchange: LN
+    - ticker: VDPG
+      exchange: LN
+    - ticker: VGEK
+      exchange: GR
+    - ticker: VFPAF
+      exchange: US
+    resolved_at: '2026-08-30T00:13:17.076410+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.15
+    asset_class: Equity
+  IE00BZ0PKT83:
+    name: ISH STO WOR EQT MU UC ET-USD
+    tickers:
+    - IFSW
+    - FSWD
+    - IBCZ
+    - EMSWF
+    exchange: LN
+    figi: BBG009T9GD85
+    listings:
+    - ticker: IFSW
+      exchange: LN
+    - ticker: FSWD
+      exchange: LN
+    - ticker: IBCZ
+      exchange: GR
+    - ticker: EMSWF
+      exchange: US
+    resolved_at: '2026-08-30T00:15:04.958775+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.3
+    asset_class: Equity
+  IE0001UQQ933:
+    name: L&G GERD KOMMER ACC ETF
+    tickers:
+    - GERD
+    - G3RD
+    exchange: GR
+    figi: BBG01GY4D645
+    listings:
+    - ticker: GERD
+      exchange: GR
+    - ticker: GERD
+      exchange: LN
+    - ticker: G3RD
+      exchange: LN
+    resolved_at: '2026-08-30T00:15:24.505509+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.45
+    asset_class: Equity
+  IE00BYZK4883:
+    name: ISHARES DIGITALISATION
+    tickers:
+    - DGTL
+    - DGIT
+    - 2B79
+    - ISXVF
+    exchange: LN
+    figi: BBG00DQFYFT7
+    listings:
+    - ticker: DGTL
+      exchange: LN
+    - ticker: DGIT
+      exchange: LN
+    - ticker: 2B79
+      exchange: GR
+    - ticker: ISXVF
+      exchange: US
+    - ticker: DGTL
+      exchange: NA
+    resolved_at: '2026-08-30T00:18:39.743211+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.4
+    asset_class: Equity
+  IE00B6R52259:
+    name: ISHARES MSCI ACWI
+    tickers:
+    - ISAC
+    - SSAC
+    - IUSQ
+    - ISVVF
+    exchange: LN
+    figi: BBG00265DDD0
+    listings:
+    - ticker: ISAC
+      exchange: LN
+    - ticker: SSAC
+      exchange: LN
+    - ticker: IUSQ
+      exchange: GR
+    - ticker: ISVVF
+      exchange: US
+    - ticker: SSAC
+      exchange: NA
+    resolved_at: '2026-08-30T00:25:33.166132+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.2
+    asset_class: Equity
+  IE00BP3QZ825:
+    name: ISHR EDGE MSCI WRLD MOMENTUM
+    tickers:
+    - IWMO
+    - IWFM
+    - IS3R
+    - IEMMF
+    exchange: LN
+    figi: BBG0078NSF47
+    listings:
+    - ticker: IWMO
+      exchange: LN
+    - ticker: IWFM
+      exchange: LN
+    - ticker: IS3R
+      exchange: GR
+    - ticker: IEMMF
+      exchange: US
+    resolved_at: '2026-08-30T00:26:17.534774+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BQN1K562:
+    name: ISH EDGE MSCI ERP QUALITY
+    tickers:
+    - IEFQ
+    - CEMQ
+    exchange: LN
+    figi: BBG007X15X43
+    listings:
+    - ticker: IEFQ
+      exchange: LN
+    - ticker: CEMQ
+      exchange: GR
+    resolved_at: '2026-08-30T00:26:46.927404+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00B3VWN393:
+    name: ISHARES USD TREASURY 3-7YR
+    tickers:
+    - SXRL
+    - CBU7
+    - CU71
+    - ISZXF
+    - SXRLEUR
+    exchange: GR
+    figi: BBG000BYMP93
+    listings:
+    - ticker: SXRL
+      exchange: GR
+    - ticker: CBU7
+      exchange: LN
+    - ticker: CU71
+      exchange: LN
+    - ticker: CBU7
+      exchange: NA
+    - ticker: ISZXF
+      exchange: US
+    - ticker: SXRLEUR
+      exchange: GR
+    resolved_at: '2026-08-30T00:27:11.978171+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.07
+    asset_class: Bonds
+  IE00B3VTML14:
+    name: ISHARES EUR GOVT 3-7Y ACC
+    tickers:
+    - SXRP
+    - CE71
+    - CBE7
+    exchange: GR
+    figi: BBG000BYNS96
+    listings:
+    - ticker: SXRP
+      exchange: GR
+    - ticker: CE71
+      exchange: LN
+    - ticker: CBE7
+      exchange: NA
+    resolved_at: '2026-08-30T00:27:48.336748+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.15
+    asset_class: Bonds
+  LU0908508731:
+    name: X GLOBAL GOV BOND 5C
+    tickers:
+    - XG7S
+    - XGGB
+    exchange: GR
+    figi: BBG0055FJQP4
+    listings:
+    - ticker: XG7S
+      exchange: GR
+    - ticker: XG7S
+      exchange: LN
+    - ticker: XGGB
+      exchange: LN
+    resolved_at: '2026-08-30T00:28:26.355298+00:00'
+    source: OpenFIGI
+    fund_currency: EUR
+    distribution: Accumulating
+    ter: 0.2
+    asset_class: Bonds
+  IE00B4ND3602:
+    name: ISHARES PHYSICAL GOLD ETC
+    tickers:
+    - IGLN
+    - SGLN
+    - PHYMF
+    - PPFB
+    - EGLN
+    exchange: LN
+    figi: BBG001M8D7W0
+    listings:
+    - ticker: IGLN
+      exchange: LN
+    - ticker: SGLN
+      exchange: LN
+    - ticker: PHYMF
+      exchange: US
+    - ticker: PPFB
+      exchange: GR
+    - ticker: EGLN
+      exchange: LN
+    - ticker: SGLN
+      exchange: NA
+    resolved_at: '2026-08-30T00:29:05.188238+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.12
+    asset_class: Precious Metals

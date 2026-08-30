@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from e1f import benchmark, deposits, glossary, performance, portfolio
+from e1f import benchmark, deposits, funds, glossary, performance, portfolio
 from e1f.common import DEFAULT_GLOSSARY
 from e1f.cli import (
     EXPERIMENTAL_COMMANDS,
@@ -261,8 +261,23 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
                 "R2": "R2",
                 "TE": "TE",
                 "IR": "IR",
+                "TWR": "TWR",
+                "bTWR": "bTWR",
                 "RelStr": "RelStr",
                 "Out%": "Out%",
+            },
+        ),
+        (
+            "funds",
+            funds._HEADER,
+            {
+                "TER": "TER",
+                "From": "From",
+                "n": "n",
+                "Gap": "Gap",
+                "TWR": "TWR",
+                "Vol": "Vol",
+                "MaxDD": "MaxDD",
             },
         ),
     ]
@@ -300,6 +315,8 @@ def test_shipped_glossary_column_aliases_resolve():
     assert names("Best") == best_worst
     assert names("Worst") == best_worst
     assert names("n") == ["n (observations)"]
+    assert names("From") == ["From (window start)"]
+    assert names("Gap") == ["Gap (missing days)"]
 
     # R2 (ASCII, as the benchmark table prints its column) resolves to the R² term.
     assert names("R2") == names("R²") == ["R²"]

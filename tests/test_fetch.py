@@ -425,7 +425,7 @@ def test_incremental_fetch_overlaps_last_stored_date(tmp_path, monkeypatch):
     # ftgo returns empty when start == end (same-day range). The incremental
     # fetch must pass start = last_stored_date (not +1 day) so the range is
     # always start < end, while the DO NOTHING upsert keeps it idempotent.
-    yesterday = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+    yesterday = pd.Timestamp.now().normalize() - pd.offsets.BDay(1)
     ext = make_extractor(tmp_path)
     ext._save_prices(ISIN, close_df([100.0], end=yesterday.strftime('%Y-%m-%d')))
 

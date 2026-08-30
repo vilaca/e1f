@@ -57,7 +57,7 @@ _DEFAULT_BENCHMARK_LABELS = {
 }
 _DEFAULT_BENCHMARK = ",".join(_DEFAULT_BENCHMARK_LABELS)
 _NAME_WIDTH = 38  # fits the longest complete fund name plus the held '*' marker
-SORT_FIELDS = ("isin", "name", "n", "beta", "r2", "te", "ir", "relstr", "out")
+SORT_FIELDS = ("isin", "name", "n", "beta", "r2", "te", "ir", "twr", "btwr", "relstr", "out")
 
 
 BENCHMARK_CONTRACT = MetricContract(
@@ -67,7 +67,10 @@ BENCHMARK_CONTRACT = MetricContract(
         "a benchmark price + FX series (an accumulating ETF ≈ total return)",
     ),
     does_not_require=("a risk-free rate", "look-through holdings"),
-    supports=("beta", "R²", "tracking error", "information ratio", "relative strength"),
+    supports=(
+        "beta", "R²", "tracking error", "information ratio",
+        "TWR", "relative strength",
+    ),
     limitations=(
         "returns are time-weighted daily on the gap-bridged EUR series; every "
         "×√252 annualization treats them as uniform daily",
@@ -227,7 +230,7 @@ def _fmt_pct(value: float | None) -> str:
 
 _HEADER = (
     f"\n{'Benchmark':<{_NAME_WIDTH}} {'n':>4} {'Beta':>6} {'R2':>6} {'TE':>7} {'IR':>6} "
-    f"{'RelStr':>7} {'Out%':>7}"
+    f"{'TWR':>7} {'bTWR':>7} {'RelStr':>7} {'Out%':>7}"
 )
 _RULE_WIDTH = len(_HEADER.lstrip("\n"))
 
@@ -236,7 +239,8 @@ def _format_row(stats: BenchmarkStats) -> str:
     return (
         f"{stats.name:<{_NAME_WIDTH}} {stats.n:>4} {_fmt_ratio(stats.beta):>6} "
         f"{_fmt_ratio(stats.r_squared):>6} {_fmt_pct(stats.tracking_error):>7} "
-        f"{_fmt_ratio(stats.information_ratio):>6} {_fmt_ratio(stats.relative_strength):>7} "
+        f"{_fmt_ratio(stats.information_ratio):>6} {_fmt_pct(stats.port_twr):>7} "
+        f"{_fmt_pct(stats.bench_twr):>7} {_fmt_ratio(stats.relative_strength):>7} "
         f"{_fmt_pct(stats.outperformance):>7}"
     )
 
@@ -252,6 +256,8 @@ def _sort_key(stats: BenchmarkStats, sort_by: str) -> str | float:
         "r2": stats.r_squared,
         "te": stats.tracking_error,
         "ir": stats.information_ratio,
+        "twr": stats.port_twr,
+        "btwr": stats.bench_twr,
         "relstr": stats.relative_strength,
         "out": stats.outperformance,
     }[sort_by]
@@ -272,6 +278,7 @@ def _render_explain(rows: list[BenchmarkStats]) -> list[str]:
                 f"  {stats.isin}  {stats.name}: {stats.start} → {stats.end}, n={stats.n} ; "
                 f"β={_fmt_ratio(stats.beta)} R²={_fmt_ratio(stats.r_squared)} "
                 f"TE={_fmt_pct(stats.tracking_error)} IR={_fmt_ratio(stats.information_ratio)} "
+                f"TWR={_fmt_pct(stats.port_twr)} bTWR={_fmt_pct(stats.bench_twr)} "
                 f"RelStr={_fmt_ratio(stats.relative_strength)} Out={_fmt_pct(stats.outperformance)}"
             )
         else:
@@ -345,8 +352,9 @@ def _cmd_benchmark(
 
     print(
         "\nBeta/R2/TE/IR vs the benchmark's daily EUR returns over each pair's shared "
-        "window (n); Out% = portfolio − benchmark cumulative return, RelStr = growth "
-        "ratio. Benchmarks are investable ETFs net of TER, not raw indices. Metrics "
+        "window (n); TWR / bTWR = book and benchmark cumulative return over that "
+        "window; Out% = TWR − bTWR, RelStr = growth ratio. Benchmarks are investable "
+        "ETFs net of TER, not raw indices. Metrics "
         "needing €STR (Sharpe, Treynor, alpha) are out of scope (ADR-0033). --explain "
         "lists each benchmark's window."
     )
@@ -373,8 +381,10 @@ Metrics (EUR, time-weighted daily returns aligned on shared trading days):
   R²      share of the book's variance the benchmark explains: corr(rp,rb)²
   TE      tracking error — stdev(rp − rb), annualized ×√252
   IR      information ratio — mean(rp − rb)/stdev(rp − rb), annualized
-  RelStr  relative strength — (1+port return)/(1+benchmark return) over the window
-  Out%    portfolio − benchmark cumulative return over the shared window
+  TWR     book's cumulative time-weighted return over the shared window
+  bTWR    benchmark's cumulative time-weighted return over the same window
+  RelStr  relative strength — (1+TWR)/(1+bTWR) over the window
+  Out%    TWR − bTWR (portfolio − benchmark cumulative return)
 
 Benchmarks are investable ETFs (net of their TER, ≈ total return for accumulating
 share classes), not raw indices. There is no minimum-history floor by default: a

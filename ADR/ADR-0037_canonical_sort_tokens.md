@@ -2,7 +2,7 @@
 
 **Scope:** the `--sort` / `--reverse` flags on every stable command that prints
 a reorderable row table (`portfolio`, `performance`, `deposits`, `benchmark`,
-`rebalance`, `transactions list`, `config list`). Does not change any metric
+`funds`, `rebalance`, `transactions list`, `config list`). Does not change any metric
 definition, valuation, or default row order except where a previous `--sort`
 token is renamed to the canonical one.
 
@@ -46,8 +46,9 @@ token. The contract is pinned by `tests/test_contracts.py`, not a shared
 
 Command-specific tokens (`avg`, `last_px`, `ccy`, `dist`, `tgt`, `buy`,
 `final`, `n`, `beta`, `r2`, `te`, `ir`, `relstr`, `out`, `side`, `price`,
-`fee`, `tax`, `ticker`, `exchange`) stay local — they name a column that
-command alone prints.
+`fee`, `tax`, `ticker`, `exchange`, `from`, `gap`) stay local — they name a
+column that command alone prints. `from` / `gap` are the `funds` window-start
+and interior-missing-day columns (ADR-0042); `from` is not `date`.
 
 **Renames (no aliases).** `portfolio total` → `cost`; `deposits amount` →
 `cost`; `deposits gain` → `pnl`; `deposits ret` → `pnl_pct`. Old tokens are

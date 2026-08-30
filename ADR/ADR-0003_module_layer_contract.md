@@ -19,8 +19,8 @@ The module graph is stratified into three layers, enforced by import-linter
 e1f.cli
   ↓
 stable command modules:
-  autocomplete, benchmark, config, correlation, deposits, fetch, glossary,
-  performance, portfolio, rebalance, scenario, transactions, validate
+  autocomplete, benchmark, config, correlation, deposits, fetch, funds,
+  glossary, performance, portfolio, rebalance, scenario, transactions, validate
   ↓
 e1f.common
 ```
