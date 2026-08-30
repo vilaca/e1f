@@ -26,8 +26,9 @@ fund/FX values fail closed instead of flowing into command-specific casts.
 Writes use a fully flushed temporary file followed by atomic replacement.
 
 Resolution logic prefers the listing quoted in the fund's own share-class currency
-(parsed from the fund name, e.g. `"iShares … USD (Acc)"` → `USD`), falling back
-to the first match when the currency cannot be determined.
+(parsed from the fund name, e.g. `"iShares … USD (Acc)"` → `USD`). When the
+currency cannot be determined, listing preference is ADR-0043 (EUR then USD),
+not first-match.
 
 ## Rationale
 

@@ -12,11 +12,16 @@ Jensen alpha) are deliberately out of scope until €STR is fetched.
 Usage:
     e1f benchmark                                    # vs the seven broad benchmarks
     e1f benchmark --against IE00B5BMR087,IE00B4K48X80
+    e1f benchmark --all                              # vs every ISIN in the price DB
     e1f benchmark --as-of 2025-12-31 --explain
 """
 
 import argparse
+import os
+import sqlite3
+import statistics
 import sys
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
@@ -57,7 +62,10 @@ _DEFAULT_BENCHMARK_LABELS = {
 }
 _DEFAULT_BENCHMARK = ",".join(_DEFAULT_BENCHMARK_LABELS)
 _NAME_WIDTH = 38  # fits the longest complete fund name plus the held '*' marker
-SORT_FIELDS = ("isin", "name", "n", "beta", "r2", "te", "ir", "twr", "btwr", "relstr", "out")
+SORT_FIELDS = (
+    "isin", "name", "n", "beta", "r2", "te", "ir", "vol", "maxdd", "twr",
+    "relstr", "out",
+)
 
 
 BENCHMARK_CONTRACT = MetricContract(
@@ -69,7 +77,7 @@ BENCHMARK_CONTRACT = MetricContract(
     does_not_require=("a risk-free rate", "look-through holdings"),
     supports=(
         "beta", "R²", "tracking error", "information ratio",
-        "TWR", "relative strength",
+        "TWR", "Vol", "MaxDD", "relative strength",
     ),
     limitations=(
         "returns are time-weighted daily on the gap-bridged EUR series; every "
@@ -102,15 +110,17 @@ class BenchmarkStats:
     tracking_error: float | None  # annualized
     information_ratio: float | None  # annualized
     relative_strength: float | None  # (1+port_twr)/(1+bench_twr) over the window
-    port_twr: float | None  # portfolio cumulative TWR over the shared window
+    port_twr: float | None  # overlap book TWR — feeds Out% / RelStr, not a column
     bench_twr: float | None  # benchmark cumulative TWR over the same window
+    bench_vol: float | None  # benchmark annualized vol over the shared window
+    bench_maxdd: float | None  # benchmark wealth-index MaxDD over the same window
 
     @property
     def outperformance(self) -> float | None:
-        """Portfolio minus benchmark cumulative return over the shared window."""
+        """ETF minus book cumulative return over the shared window."""
         if self.port_twr is None or self.bench_twr is None:
             return None
-        return self.port_twr - self.bench_twr
+        return self.bench_twr - self.port_twr
 
 
 def _align(
@@ -140,11 +150,58 @@ def _cumulative(returns: list[float]) -> float:
     return wealth - 1.0
 
 
+def _ann_vol(returns: list[float]) -> float | None:
+    """Sample stdev ×√252; None unless there are at least two returns."""
+    if len(returns) < 2:
+        return None
+    return float(statistics.stdev(returns) * (_TRADING_DAYS ** 0.5))
+
+
+def _max_drawdown(returns: list[float]) -> float | None:
+    """Wealth-index peak-to-trough; 0.0 if never below the running peak."""
+    if not returns:
+        return None
+    wealth = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    for period_return in returns:
+        wealth *= 1.0 + period_return
+        peak = max(peak, wealth)
+        max_dd = min(max_dd, wealth / peak - 1.0)
+    return max_dd
+
+
+@dataclass(frozen=True)
+class BookSummary:
+    """The book's own return/risk over its full history (not a row overlap)."""
+
+    n: int
+    start: str
+    end: str
+    twr: float
+    volatility: float | None
+    max_drawdown: float | None
+
+
+def book_summary(port: list[tuple[str, float]]) -> BookSummary:
+    """TWR / Vol / MaxDD of the portfolio return series (ADR-0045)."""
+    returns = [r for _day, r in port]
+    return BookSummary(
+        n=len(returns),
+        start=port[0][0],
+        end=port[-1][0],
+        twr=_cumulative(returns),
+        volatility=_ann_vol(returns),
+        max_drawdown=_max_drawdown(returns),
+    )
+
+
 def _unavailable(isin: str, name: str, reason: str, n: int = 0) -> BenchmarkStats:
     return BenchmarkStats(
         isin=isin, name=name, status=Status.UNAVAILABLE, reason=reason, n=n,
         start=None, end=None, beta=None, r_squared=None, tracking_error=None,
         information_ratio=None, relative_strength=None, port_twr=None, bench_twr=None,
+        bench_vol=None, bench_maxdd=None,
     )
 
 
@@ -204,12 +261,28 @@ def benchmark_stats(
         beta=beta, r_squared=r_squared, tracking_error=tracking_error,
         information_ratio=information_ratio, relative_strength=relative_strength,
         port_twr=port_twr, bench_twr=bench_twr,
+        bench_vol=_ann_vol(b), bench_maxdd=_max_drawdown(b),
     )
 
 
 # ---------------------------------------------------------------------------
 # Rendering.
 # ---------------------------------------------------------------------------
+
+
+def _priced_isins(db_path: str) -> list[str]:
+    """Distinct ISINs in ``prices``, sorted; empty when the table is missing."""
+    if not os.path.exists(db_path):
+        return []
+    with closing(sqlite3.connect(db_path)) as conn:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
+            ).fetchone()
+            is None
+        ):
+            return []
+        return [row[0] for row in conn.execute("SELECT DISTINCT isin FROM prices ORDER BY isin")]
 
 
 def _bench_name(config_path: str, isin: str) -> str:
@@ -230,7 +303,7 @@ def _fmt_pct(value: float | None) -> str:
 
 _HEADER = (
     f"\n{'Benchmark':<{_NAME_WIDTH}} {'n':>4} {'Beta':>6} {'R2':>6} {'TE':>7} {'IR':>6} "
-    f"{'TWR':>7} {'bTWR':>7} {'RelStr':>7} {'Out%':>7}"
+    f"{'Vol':>7} {'MaxDD':>7} {'TWR':>7} {'RelStr':>7} {'Out%':>7}"
 )
 _RULE_WIDTH = len(_HEADER.lstrip("\n"))
 
@@ -239,9 +312,9 @@ def _format_row(stats: BenchmarkStats) -> str:
     return (
         f"{stats.name:<{_NAME_WIDTH}} {stats.n:>4} {_fmt_ratio(stats.beta):>6} "
         f"{_fmt_ratio(stats.r_squared):>6} {_fmt_pct(stats.tracking_error):>7} "
-        f"{_fmt_ratio(stats.information_ratio):>6} {_fmt_pct(stats.port_twr):>7} "
-        f"{_fmt_pct(stats.bench_twr):>7} {_fmt_ratio(stats.relative_strength):>7} "
-        f"{_fmt_pct(stats.outperformance):>7}"
+        f"{_fmt_ratio(stats.information_ratio):>6} {_fmt_pct(stats.bench_vol):>7} "
+        f"{_fmt_pct(stats.bench_maxdd):>7} {_fmt_pct(stats.bench_twr):>7} "
+        f"{_fmt_ratio(stats.relative_strength):>7} {_fmt_pct(stats.outperformance):>7}"
     )
 
 
@@ -256,8 +329,9 @@ def _sort_key(stats: BenchmarkStats, sort_by: str) -> str | float:
         "r2": stats.r_squared,
         "te": stats.tracking_error,
         "ir": stats.information_ratio,
-        "twr": stats.port_twr,
-        "btwr": stats.bench_twr,
+        "vol": stats.bench_vol,
+        "maxdd": stats.bench_maxdd,
+        "twr": stats.bench_twr,
         "relstr": stats.relative_strength,
         "out": stats.outperformance,
     }[sort_by]
@@ -270,6 +344,14 @@ def sort_stats(
     return sorted(rows, key=lambda s: _sort_key(s, sort_by), reverse=reverse)
 
 
+def _format_book_summary(summary: BookSummary) -> str:
+    return (
+        f"Book {summary.start} → {summary.end}  n={summary.n}  "
+        f"TWR={_fmt_pct(summary.twr)}  Vol={_fmt_pct(summary.volatility)}  "
+        f"MaxDD={_fmt_pct(summary.max_drawdown)}"
+    )
+
+
 def _render_explain(rows: list[BenchmarkStats]) -> list[str]:
     lines = ["\nProvenance (--explain) — reconstructed from source, not a log:"]
     for stats in rows:
@@ -278,7 +360,8 @@ def _render_explain(rows: list[BenchmarkStats]) -> list[str]:
                 f"  {stats.isin}  {stats.name}: {stats.start} → {stats.end}, n={stats.n} ; "
                 f"β={_fmt_ratio(stats.beta)} R²={_fmt_ratio(stats.r_squared)} "
                 f"TE={_fmt_pct(stats.tracking_error)} IR={_fmt_ratio(stats.information_ratio)} "
-                f"TWR={_fmt_pct(stats.port_twr)} bTWR={_fmt_pct(stats.bench_twr)} "
+                f"Vol={_fmt_pct(stats.bench_vol)} MaxDD={_fmt_pct(stats.bench_maxdd)} "
+                f"TWR={_fmt_pct(stats.bench_twr)} overlap-book-TWR={_fmt_pct(stats.port_twr)} "
                 f"RelStr={_fmt_ratio(stats.relative_strength)} Out={_fmt_pct(stats.outperformance)}"
             )
         else:
@@ -294,7 +377,8 @@ def _render_explain(rows: list[BenchmarkStats]) -> list[str]:
         "per-benchmark figures + windows listed above",
         "portfolio TWR daily returns + benchmark EUR daily returns, aligned on shared dates",
         "β = cov(rp,rb)/var(rb) ; R² = corr(rp,rb)² ; TE = stdev(rp−rb)×√252 ; "
-        "IR = mean(rp−rb)/stdev(rp−rb)×√252 ; RelStr = (1+rp)/(1+rb)",
+        "IR = mean(rp−rb)/stdev(rp−rb)×√252 ; RelStr = (1+rp)/(1+rb) ; "
+        "Vol = stdev(rb)×√252 ; MaxDD = wealth-index peak-to-trough of rb",
         BENCHMARK_CONTRACT,
     ))
     return lines
@@ -311,6 +395,7 @@ def _cmd_benchmark(
     sort_by: str | None = None,
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    all_priced: bool = False,
 ) -> int:
     port = portfolio_return_series(db_path, currency_meta_path, as_of)
     if not port:
@@ -333,7 +418,10 @@ def _cmd_benchmark(
     elif reverse:
         rows = list(reversed(rows))
 
-    print(f"\nPortfolio vs benchmarks as of {as_of} (EUR, time-weighted)")
+    subject = "all priced ETFs" if all_priced else "benchmarks"
+    print(f"\nPortfolio vs {subject} as of {as_of} (EUR, time-weighted)")
+    print()
+    print(_format_book_summary(book_summary(port)))
     print(_HEADER)
     print("-" * _RULE_WIDTH)
     for stats in rows:
@@ -352,12 +440,15 @@ def _cmd_benchmark(
 
     print(
         "\nBeta/R2/TE/IR vs the benchmark's daily EUR returns over each pair's shared "
-        "window (n); TWR / bTWR = book and benchmark cumulative return over that "
-        "window; Out% = TWR − bTWR, RelStr = growth ratio. Benchmarks are investable "
+        "window (n); Vol / MaxDD / TWR are the benchmark over that window; "
+        "Out% = table TWR − overlap book TWR, RelStr = growth ratio. The Book line is the "
+        "portfolio's own full history (not a row overlap). Benchmarks are investable "
         "ETFs net of TER, not raw indices. Metrics "
         "needing €STR (Sharpe, Treynor, alpha) are out of scope (ADR-0033). --explain "
         "lists each benchmark's window."
     )
+    if all_priced:
+        print("--all: every ISIN in the prices table, not the default seven.")
     if explain:
         for line in _render_explain(rows):
             print(line)
@@ -381,22 +472,28 @@ Metrics (EUR, time-weighted daily returns aligned on shared trading days):
   R²      share of the book's variance the benchmark explains: corr(rp,rb)²
   TE      tracking error — stdev(rp − rb), annualized ×√252
   IR      information ratio — mean(rp − rb)/stdev(rp − rb), annualized
-  TWR     book's cumulative time-weighted return over the shared window
-  bTWR    benchmark's cumulative time-weighted return over the same window
-  RelStr  relative strength — (1+TWR)/(1+bTWR) over the window
-  Out%    TWR − bTWR (portfolio − benchmark cumulative return)
+  Vol     this ETF's annualized volatility over the shared window (stdev ×√252)
+  MaxDD   this ETF's wealth-index peak-to-trough over the shared window
+  TWR     this ETF's cumulative time-weighted return over the shared window
+  RelStr  relative strength — (1+book TWR)/(1+TWR) over the window
+  Out%    TWR − book TWR over the window (overlap book TWR, not the Book line)
 
-Benchmarks are investable ETFs (net of their TER, ≈ total return for accumulating
-share classes), not raw indices. There is no minimum-history floor by default: a
-benchmark computes over whatever days it shares with the book (the sample size n is
-always shown, so a thin window is visible) — raise --min-overlap to demand more.
+A Book line above the table is the portfolio's own full-history TWR / Vol / MaxDD
+(not a row overlap). Book-side overlap TWR / Vol / MaxDD are not table columns.
+Benchmarks are investable ETFs (net of their TER, ≈ total
+return for accumulating share classes), not raw indices. There is no
+minimum-history floor by default: a benchmark computes over whatever days it
+shares with the book (the sample size n is always shown, so a thin window is
+visible) — raise --min-overlap to demand more.
 A benchmark not yet fetched is reported UNAVAILABLE with the reason, never estimated.
-Metrics needing a risk-free rate (Sharpe, Treynor, Jensen alpha) are out of scope
-until €STR is fetched (ADR-0033).
+--all scores the book against every ISIN in the prices table instead of the default
+seven (mutually exclusive with --against). Metrics needing a risk-free rate (Sharpe,
+Treynor, Jensen alpha) are out of scope until €STR is fetched (ADR-0033).
 
 Examples:
   e1f benchmark
   e1f benchmark --against IE00B5BMR087,IE00B4K48X80
+  e1f benchmark --all
   e1f benchmark --as-of 2025-12-31
   e1f benchmark --explain
   e1f benchmark --sort out --reverse
@@ -413,10 +510,18 @@ Examples:
     )
     parser.add_argument(
         "--against",
-        default=_DEFAULT_BENCHMARK,
+        default=None,
         metavar="ISIN[,ISIN...]",
         help="Comma-separated benchmark ISINs (default: the seven broad benchmarks — "
-        "MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, MSCI ACWI IMI, FTSE All-World)",
+        "MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, MSCI ACWI IMI, FTSE All-World). "
+        "Mutually exclusive with --all.",
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_priced",
+        action="store_true",
+        help="Compare against every ISIN in the prices table instead of the default "
+        "seven (ADR-0044). Mutually exclusive with --against.",
     )
     parser.add_argument(
         "--as-of",
@@ -464,7 +569,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.min_overlap < 2:
             raise ValueError("--min-overlap must be >= 2")
-        benchmarks = _parse_benchmarks(args.against)
+        if args.all_priced and args.against is not None:
+            raise ValueError("--all and --against are mutually exclusive")
+        if args.all_priced:
+            benchmarks = _priced_isins(args.db)
+            if not benchmarks:
+                print("No price series in database")
+                print("Fetch prices: e1f fetch")
+                return 0
+        else:
+            benchmarks = _parse_benchmarks(args.against or _DEFAULT_BENCHMARK)
         return _cmd_benchmark(
             args.db,
             args.config,
@@ -475,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
             sort_by=args.sort,
             reverse=args.reverse,
             currency_meta_path=args.currency_meta,
+            all_priced=args.all_priced,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

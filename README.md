@@ -36,7 +36,8 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day, plus **Daily TWR** (that day's increment) |
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
-| Did I beat the market? | `e1f benchmark` | **TWR** / **bTWR** (book vs that benchmark over the shared window), **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
+| Did I beat the market? | `e1f benchmark` | **TWR** / **Vol** / **MaxDD** (that benchmark over the shared window), **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). The **Book** line is the portfolio's own TWR/Vol/MaxDD. Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
+| How does the book compare to every priced fund? | `e1f benchmark --all` | the same columns, one row per ISIN in `prices` (ADR-0044) |
 | Are my funds redundant — do they move alike? | `e1f correlation` | **ρ** (near 1 = a second helping of the same bet), the clusters, and **n** |
 | What should I buy to hit target weights? | `e1f rebalance --target ISIN:PCT …` | **Buy€** per fund and the minimum cash `C_min` (a `--target` or `--scenario` is required) |
 | What does a metric mean? | `e1f glossary <term>` | the entry itself |
@@ -129,6 +130,7 @@ e1f performance --explain            # + per-holding provenance blocks (implies 
 # Benchmark the book against broad indices (EUR, time-weighted; ADR-0033)
 e1f benchmark                        # vs the seven defaults (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, ACWI IMI, FTSE All-World)
 e1f benchmark --against IE00B5BMR087,IE00B4K48X80  # a custom benchmark set by ISIN
+e1f benchmark --all                  # every ISIN in the price DB (ADR-0044)
 e1f benchmark --min-overlap 60       # demand ~a quarter-year of shared history
 e1f benchmark --explain              # + provenance block
 
@@ -202,10 +204,11 @@ experimental tier `e1f lookthrough --help`, `e1f concentration --help`,
 
 ## Price sources
 
-ftgo resolves securities **by ISIN** and pins the first match in
+ftgo resolves securities **by ISIN** and pins the chosen listing in
 `data/currency_metadata.yaml`, preferring the listing quoted in the fund's own
-share-class currency, so the fetched security can't drift as FT Markets search
-ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
+share-class currency, then EUR then USD when the name has no currency hint
+(`ADR/ADR-0043_eur_over_gbx_listing_fallback.md`), so the fetched security can't
+drift as FT Markets search ordering changes. When `--fallback` is set and ftgo has no data for an ISIN, fetch tries
 yfinance using the tickers from the config (trying `.L` and `.DE` suffixes for
 London/Xetra listings).
 

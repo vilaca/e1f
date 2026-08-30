@@ -146,14 +146,43 @@ class DataExtractor:
         parts = symbol.split(':')
         return parts[-1] if len(parts) >= 3 else ''
 
+    @classmethod
+    def _pick_ftgo_listing(cls, resolved: pd.DataFrame, base: str | None) -> pd.Series:
+        """Choose one currency-qualified ftgo row (ADR-0002, then ADR-0043).
+
+        Share-class currency from the name still wins (true NAV, not a venue
+        overlay). When the name has no hint, prefer EUR (base, no FX) then
+        USD (the usual UCITS share-class quote). Never pin GBX while any ISO
+        listing remains (GBX pence has no EUR FX rule, ADR-0010).
+        """
+        ccy = resolved["symbol"].map(cls._symbol_currency)
+
+        def first_of(wanted: str) -> pd.Series | None:
+            hit = resolved[ccy == wanted]
+            return hit.iloc[0] if not hit.empty else None
+
+        if base:
+            row = first_of(base)
+            if row is not None:
+                return row
+        for wanted in (BASE_CURRENCY, "USD"):
+            row = first_of(wanted)
+            if row is not None:
+                return row
+        usable = resolved[~ccy.isin(UNSUPPORTED_FX_CURRENCIES)]
+        if not usable.empty:
+            return usable.iloc[0]
+        return resolved.iloc[0]
+
     def _resolve_ftgo(self, isin: str) -> dict[str, str]:
         """Resolve an ISIN to a pinned ftgo security {xid, symbol, currency}.
 
         Searches ftgo by ISIN (precise). Prefers the listing quoted in the
         fund's own share-class currency (from its name) so prices are the true
-        NAV currency, not a venue FX overlay; falls back to the first match.
-        The result is pinned and reused so the security can't drift as FT
-        Markets search ordering changes. Raises ValueError if nothing matches.
+        NAV currency, not a venue FX overlay; when the name has no currency
+        hint, prefers EUR then USD (ADR-0043). The result is pinned and
+        reused so the security can't drift as FT Markets search ordering
+        changes. Raises ValueError if nothing matches.
         """
         if isin in self._ftgo_meta.funds:
             return cast(dict[str, str], self._ftgo_meta.funds[isin])
@@ -164,9 +193,7 @@ class DataExtractor:
         if resolved.empty:
             raise ValueError(f"No currency-qualified ftgo match for {isin}")
         base = fund_currency_from_name(str(matches.iloc[0].get('name', '')))
-        preferred = resolved[resolved['symbol'].map(self._symbol_currency) == base] \
-            if base else matches.iloc[0:0]
-        row = preferred.iloc[0] if not preferred.empty else resolved.iloc[0]
+        row = self._pick_ftgo_listing(resolved, base)
 
         symbol = str(row['symbol'])
         resolved = {'xid': str(row['xid']), 'symbol': symbol,

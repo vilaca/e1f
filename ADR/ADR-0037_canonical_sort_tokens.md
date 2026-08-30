@@ -46,9 +46,11 @@ token. The contract is pinned by `tests/test_contracts.py`, not a shared
 
 Command-specific tokens (`avg`, `last_px`, `ccy`, `dist`, `tgt`, `buy`,
 `final`, `n`, `beta`, `r2`, `te`, `ir`, `relstr`, `out`, `side`, `price`,
-`fee`, `tax`, `ticker`, `exchange`, `from`, `gap`) stay local — they name a
-column that command alone prints. `from` / `gap` are the `funds` window-start
-and interior-missing-day columns (ADR-0042); `from` is not `date`.
+`fee`, `tax`, `ticker`, `exchange`, `from`, `gap`) stay local
+— they name a column that command alone prints. `from` / `gap` are the `funds`
+window-start and interior-missing-day columns (ADR-0042); `from` is not
+`date`. `benchmark` table TWR / Vol / MaxDD use the canonical `twr` / `vol` /
+`maxdd` tokens (ADR-0045); they are the ETF-leg figures, not the Book line.
 
 **Renames (no aliases).** `portfolio total` → `cost`; `deposits amount` →
 `cost`; `deposits gain` → `pnl`; `deposits ret` → `pnl_pct`. Old tokens are
