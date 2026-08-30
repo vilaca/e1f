@@ -2,6 +2,10 @@ DE000A0D8Q07:
   currency: EUR
   symbol: EXSI:GER:EUR
   xid: '1693079'
+IE0001UQQ933:
+  currency: USD
+  symbol: GERD:LSE:USD
+  xid: '1069470258'
 IE0003XJA0J9:
   currency: EUR
   symbol: WEBN:GER:EUR
@@ -14,14 +18,18 @@ IE000YYE6WK5:
   currency: USD
   symbol: DFNS:LSE:USD
   xid: '794599596'
-IE00B3RBWM25:
-  currency: GBP
-  symbol: VWRL:LSE:GBP
-  xid: '46487967'
 IE00B3VSSL01:
   currency: USD
   symbol: XLKS:LSE:USD
   xid: '22356280'
+IE00B3VTML14:
+  currency: EUR
+  symbol: CSBGE7:SWX:EUR
+  xid: '18748547'
+IE00B3VWN393:
+  currency: USD
+  symbol: CBU7:LSE:USD
+  xid: '26390414'
 IE00B3YCGJ38:
   currency: USD
   symbol: SPXS:LSE:USD
@@ -42,6 +50,10 @@ IE00B4L5Y983:
   currency: USD
   symbol: IWDA:LSE:USD
   xid: '21061415'
+IE00B4ND3602:
+  currency: USD
+  symbol: IGLN:LSE:USD
+  xid: '33139564'
 IE00B53SZB19:
   currency: USD
   symbol: CNDX:LSE:USD
@@ -50,6 +62,10 @@ IE00B5BMR087:
   currency: USD
   symbol: CSPX:LSE:USD
   xid: '26390464'
+IE00B6R52259:
+  currency: USD
+  symbol: ISAC:LSE:USD
+  xid: '39134732'
 IE00BDBRDM35:
   currency: EUR
   symbol: EUNA:GER:EUR
@@ -70,6 +86,10 @@ IE00BK5BQX27:
   currency: EUR
   symbol: VWCG:GER:EUR
   xid: '544533916'
+IE00BK5BQZ41:
+  currency: USD
+  symbol: VAPU:LSE:USD
+  xid: '554565350'
 IE00BKM4GZ66:
   currency: EUR
   symbol: IS3N:GER:EUR
@@ -78,10 +98,30 @@ IE00BM67HK77:
   currency: EUR
   symbol: XDWH:GER:EUR
   xid: '95685933'
+IE00BP3QZ825:
+  currency: USD
+  symbol: IWMO:LSE:USD
+  xid: '79108371'
+IE00BQN1K562:
+  currency: EUR
+  symbol: CEMQ:GER:EUR
+  xid: '82850564'
+IE00BYZK4883:
+  currency: USD
+  symbol: DGTL:LSE:USD
+  xid: '363143830'
+IE00BZ0PKT83:
+  currency: USD
+  symbol: IFSW:LSE:USD
+  xid: '91536606'
 LU0292103222:
   currency: EUR
   symbol: DXSE:GER:EUR
   xid: '7140084'
+LU0908508731:
+  currency: EUR
+  symbol: XG7S:GER:EUR
+  xid: '66678626'
 LU1437018838:
   currency: EUR
   symbol: EPRA:PAR:EUR
@@ -94,6 +134,18 @@ LU1829221024:
   currency: EUR
   symbol: UST:PAR:EUR
   xid: '278183'
+LU1900068328:
+  currency: EUR
+  symbol: AEJ:PAR:EUR
+  xid: '4707034'
+LU2023678282:
+  currency: EUR
+  symbol: UNIC:PAR:EUR
+  xid: '584433384'
+LU2491210618:
+  currency: EUR
+  symbol: OP6E:PAR:EUR
+  xid: '751825448'
 fx_pairs:
   EURUSD:
     symbol: EURUSD
