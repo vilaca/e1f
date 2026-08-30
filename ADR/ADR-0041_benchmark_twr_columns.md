@@ -26,7 +26,9 @@ is `TWR − bTWR` and RelStr is `(1+TWR)/(1+bTWR)` by construction.
 since-inception, not calendar-year. `n/a` when the row is UNAVAILABLE.
 
 **Next to RelStr / Out%.** Order was `… IR  TWR  bTWR  RelStr  Out%`. Sort
-tokens: `twr` (canonical, ADR-0037) and `btwr` (command-local).
+token: `twr` (canonical, ADR-0037). The `bTWR` working name was dropped when
+ADR-0045 removed the book-side column; the ETF-leg column kept the plain `TWR`
+name.
 
 **No new math.** `BenchmarkStats.port_twr` / `bench_twr` already exist.
 
@@ -37,5 +39,6 @@ column is named `TWR` (no `b` prefix). `port_twr` still feeds Out% / RelStr.
 ## Invariance
 
 On a fixture whose book compounds +21% and the benchmark +10.25% over the
-same two days, the printed `TWR` / `bTWR` / `Out%` / `RelStr` equal
-`0.21` / `0.1025` / `0.21−0.1025` / `1.21/1.1025`.
+same two days, the printed `TWR` (ETF) / `Out%` / `RelStr` equal
+`0.1025` / `0.21−0.1025` / `1.21/1.1025`. (The book's overlap TWR `0.21`
+feeds `Out%` / `RelStr` internally but is not a table column — see ADR-0045.)
