@@ -1,5 +1,6 @@
 """Benchmark comparison: regression stats + the command (ADR-0033, Phase B)."""
 
+import math
 import sqlite3
 from contextlib import closing
 
@@ -59,6 +60,8 @@ def test_benchmark_stats_identical_series_is_degenerate_active():
     assert s.information_ratio is None                # 0/0 → undefined, not NaN
     assert s.relative_strength == pytest.approx(1.0)
     assert s.outperformance == pytest.approx(0.0)
+    assert s.bench_vol is not None and s.bench_vol > 0.0
+    assert s.bench_maxdd is not None
 
 
 def test_benchmark_stats_insufficient_overlap_is_unavailable():
@@ -77,7 +80,7 @@ def test_benchmark_stats_flat_benchmark_has_no_beta_but_keeps_te():
     assert s.status is Status.CALCULATED
     assert s.beta is None and s.r_squared is None      # var(benchmark) == 0
     assert s.tracking_error is not None                # stdev(rp − 0) defined
-    assert s.outperformance == pytest.approx(s.port_twr)  # bench_twr == 0
+    assert s.outperformance == pytest.approx(-s.port_twr)  # bench_twr == 0
 
 
 def test_benchmark_stats_outperformance_and_relative_strength():
@@ -86,12 +89,50 @@ def test_benchmark_stats_outperformance_and_relative_strength():
     s = benchmark_stats(port, benchmark, BENCH_ISIN, "B", min_overlap=2)
     assert s.port_twr == pytest.approx(0.21)
     assert s.bench_twr == pytest.approx(0.1025)
-    assert s.outperformance == pytest.approx(0.21 - 0.1025)
+    assert s.outperformance == pytest.approx(0.1025 - 0.21)
     assert s.relative_strength == pytest.approx(1.21 / 1.1025)
     line = bench._format_row(s)
-    # TWR 21.0%, bTWR 10.3% (10.25 → .1f), Out% 10.8% (10.75 → .1f)
-    assert "21.0%" in line and "10.3%" in line and "10.8%" in line
-    assert "TWR" in bench._HEADER and "bTWR" in bench._HEADER
+    # Book TWR 21.0% is not a column; table TWR 10.3%; Out% = 10.25−21 → −10.8%
+    assert "21.0%" not in line
+    assert "10.3%" in line and "-10.8%" in line
+    assert "Out%" in bench._HEADER
+    assert "TWR" in bench._HEADER and "bTWR" not in bench._HEADER
+    assert "Vol" in bench._HEADER and "bVol" not in bench._HEADER
+    assert "MaxDD" in bench._HEADER and "bMaxDD" not in bench._HEADER
+    # Constant daily returns → sample stdev is 0; never below peak.
+    assert s.bench_vol == pytest.approx(0.0)
+    assert s.bench_maxdd == pytest.approx(0.0)
+
+
+def test_benchmark_stats_maxdd_pair_hand_computed():
+    port = _returns([0.10, -0.10])
+    benchmark = _returns([0.05, -0.05])
+    s = benchmark_stats(port, benchmark, BENCH_ISIN, "B", min_overlap=2)
+    assert s.bench_maxdd == pytest.approx(1.05 * 0.95 / 1.05 - 1.0)
+    line = bench._format_row(s)
+    assert "-5.0%" in line
+    assert "-10.0%" not in line  # book MaxDD is the Book line, not a column
+
+
+def test_ann_vol_and_max_dd_hand_computed():
+    returns = [0.10, -0.10]
+    assert bench._cumulative(returns) == pytest.approx(1.10 * 0.90 - 1.0)
+    assert bench._max_drawdown(returns) == pytest.approx(0.99 / 1.10 - 1.0)
+    assert bench._ann_vol(returns) == pytest.approx(math.sqrt(2) * 0.10 * math.sqrt(252))
+    assert bench._ann_vol([0.05]) is None
+    assert bench._max_drawdown([]) is None
+    assert bench._max_drawdown([0.05]) == pytest.approx(0.0)
+
+
+def test_book_summary_uses_full_series_not_an_overlap():
+    port = [("2024-01-02", 0.10), ("2024-01-03", -0.10)]
+    summary = bench.book_summary(port)
+    assert summary.n == 2
+    assert summary.start == "2024-01-02" and summary.end == "2024-01-03"
+    assert summary.twr == pytest.approx(-0.01)
+    assert summary.max_drawdown == pytest.approx(0.99 / 1.10 - 1.0)
+    assert "TWR=-1.0%" in bench._format_book_summary(summary)
+    assert "MaxDD=-10.0%" in bench._format_book_summary(summary)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +198,10 @@ def test_cmd_benchmark_calculates_against_priced_benchmark(tmp_path, capsys):
     assert "1.00" in out              # beta == 1 (and R² == 1)
     assert f"{BENCH_ISIN}" in out and "2024-01-" in out  # legend window
     assert "Provenance (--explain)" in out
+    assert "Book 2024-01-01 → 2024-01-06" in out
+    assert "TWR=26.0%" in out
+    assert "n=6" in out
+    assert out.index("Book ") < out.index("Benchmark")
 
 
 def test_cmd_benchmark_unavailable_when_benchmark_unpriced(tmp_path, capsys):
@@ -247,3 +292,69 @@ def test_sort_stats_by_name_and_n():
     assert [s.isin for s in by_name] == ["IE00A", "IE00B"]
     by_n = bench.sort_stats([alpha, zeta], sort_by="n", reverse=True)
     assert [s.isin for s in by_n] == ["IE00B", "IE00A"]
+
+
+EXTRA_ISIN = "IE00EXTRA0001"
+
+
+def test_priced_isins_sorted_distinct(tmp_path):
+    db, _config, _meta = _seed(
+        tmp_path,
+        transactions=[],
+        prices=_daily(BENCH_ISIN, 50.0) + _daily(PORT_ISIN, 100.0),
+        currencies={PORT_ISIN: "EUR", BENCH_ISIN: "EUR"},
+        names={PORT_ISIN: "My Fund", BENCH_ISIN: "Bench Fund"},
+    )
+    assert bench._priced_isins(db) == [BENCH_ISIN, PORT_ISIN]
+
+
+def test_cmd_all_uses_every_priced_isin(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[("tr", "t1", "2024-01-01", PORT_ISIN, "BUY", 10.0, 100.0, 0.0, 0.0)],
+        prices=_daily(PORT_ISIN, 100.0) + _daily(BENCH_ISIN, 50.0) + _daily(EXTRA_ISIN, 20.0),
+        currencies={PORT_ISIN: "EUR", BENCH_ISIN: "EUR", EXTRA_ISIN: "EUR"},
+        names={PORT_ISIN: "My Fund", BENCH_ISIN: "Bench Fund", EXTRA_ISIN: "Extra Fund"},
+    )
+    assert bench.main(_args(db, config, meta, "--as-of", "2024-01-06", "--min-overlap", "3")) == 0
+    default_out = capsys.readouterr().out
+    assert "Bench Fund" not in default_out and "Extra Fund" not in default_out
+
+    assert bench.main(
+        _args(db, config, meta, "--as-of", "2024-01-06", "--all", "--min-overlap", "3")
+    ) == 0
+    out = capsys.readouterr().out
+    assert "Portfolio vs all priced ETFs" in out
+    assert "My Fund*" in out and "Bench Fund" in out and "Extra Fund" in out
+    assert "every ISIN in the prices table" in out
+
+
+def test_cmd_all_and_against_are_exclusive(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[("tr", "t1", "2024-01-01", PORT_ISIN, "BUY", 10.0, 100.0, 0.0, 0.0)],
+        prices=_daily(PORT_ISIN, 100.0),
+        currencies={PORT_ISIN: "EUR"},
+        names={PORT_ISIN: "My Fund"},
+    )
+    code = bench.main(
+        _args(db, config, meta, "--all", "--against", BENCH_ISIN, "--as-of", "2024-01-06")
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "mutually exclusive" in out
+
+
+def test_cmd_all_empty_prices(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[("tr", "t1", "2024-01-01", PORT_ISIN, "BUY", 10.0, 100.0, 0.0, 0.0)],
+        prices=[],
+        currencies={PORT_ISIN: "EUR"},
+        names={PORT_ISIN: "My Fund"},
+    )
+    code = bench.main(_args(db, config, meta, "--all"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No price series in database" in out
+

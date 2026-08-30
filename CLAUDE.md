@@ -25,7 +25,7 @@ src/e1f/
   transactions.py — transactions subcommand: broker export ingest (Trade Republic CSV, XTB Excel)
   portfolio.py   — portfolio subcommand: holdings from transactions; FX-converted EUR market value + market-value-weighted fee/TER (ADR-0032)
   performance.py — performance subcommand: EUR valuation, XIRR/TWR/risk metrics; --diff N signed change over N calendar days (ADR-0029); --series N daily cumulative TOTAL over N days (ADR-0030) plus Daily TWR (ADR-0040); --isin restricts any view to one holding (ADR-0038); --metrics portfolio-level extended risk report (incl. days-since-high, best/worst month, trailing 1M/3M/6M), composes with --series; --contrib per-holding Cariño-linked return contribution summing to the TOTAL TWR (ADR-0033)
-  benchmark.py   — benchmark command: portfolio vs benchmark ETFs (TWR/bTWR, beta, R², tracking error, information ratio, relative strength) over the shared window; default set of seven broad indices, `*` marks held ones (ADR-0033 Phase B, ADR-0039, ADR-0041)
+  benchmark.py   — benchmark command: portfolio vs benchmark ETFs (TWR/Vol/MaxDD of each ETF, beta, R², tracking error, information ratio, relative strength) over the shared window; Book line is full-history TWR/Vol/MaxDD (ADR-0045); default set of seven broad indices, `*` marks held ones (ADR-0033 Phase B, ADR-0039, ADR-0041); --all uses every ISIN in prices (ADR-0044)
   deposits.py    — deposits command: organic-vs-reported value + ROIC + per-deposit contribution impact; reuses performance's EUR valuation so totals reconcile (ADR-0033 Phase C); --group week|month|year aggregates the table into deposit vintages (one row per period × fund), drops the top summary block, and adds a bottom ── ALL ── grand-total row (ADR-0036)
   correlation.py — correlation command: return co-movement redundancy + clustering (scipy)
   rebalance.py — rebalance command: minimum-cash buy-only target rebalance + N-month DCA plan
@@ -103,8 +103,11 @@ All recorded in `ADR/`. The most load-bearing:
 - `ADR-0038` — `performance --isin`: restrict the book to one holding before any view runs (snapshot / `--series` / `--metrics` / `--diff` / `--contrib`); `--series N --isin X` is `--series` on that one-fund book; unknown ISIN lists holdings and exits 1
 - `ADR-0039` — `benchmark` default set gains SPDR MSCI ACWI IMI (`IE00B3YLTY66`), listed after SPDR MSCI ACWI; seven broad accumulating ETFs (supersedes ADR-0033's six)
 - `ADR-0040` — `performance --series` gains `Daily TWR`: that day's time-weighted sub-period return (the increment that compounds into cumulative TWR), signed, next to TWR; snapshot/`--metrics` unchanged
-- `ADR-0041` — `benchmark` shows `TWR` (book) and `bTWR` (benchmark) over each row's shared window; Out% / RelStr keep using those same two numbers
+- `ADR-0041` — `benchmark` shows `TWR` (book) and `bTWR` (benchmark) over each row's shared window; Out% / RelStr keep using those same two numbers. ADR-0045 later drops the book-side table columns (Book line covers the book) and prints the remaining ETF-leg TWR/Vol/MaxDD without a `b` prefix
 - `ADR-0042` — `funds` command: configured universe with TER + windowed TWR/Vol/MaxDD; `--from` clips closes (younger funds stay listed); `From` / `n` / `Gap` on every row
+- `ADR-0043` — ftgo listing fallback when the name has no currency hint: prefer EUR, then USD (UCITS; GBX has no FX rule); name-parsed share-class currency still wins (ADR-0002)
+- `ADR-0044` — `benchmark --all`: every ISIN in `prices` as a benchmark row; mutually exclusive with `--against`; default remains the seven broad ETFs
+- `ADR-0045` — `benchmark` prints the book's full-history TWR/Vol/MaxDD above the table and TWR/Vol/MaxDD of each ETF over the shared window; book-side overlap TWR/Vol/MaxDD are not columns
 
 ## Skills
 

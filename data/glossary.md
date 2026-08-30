@@ -8,7 +8,8 @@ Four pairs this file exists to keep apart:
 - **P&Lctr vs Ctr%** — whose euros vs who drove the time-weighted return. A new,
   large, slightly-up position dominates P&Lctr and barely shows in Ctr%.
 - **Out% vs RelStr** — arithmetic gap vs compounded growth. RelStr 1.05 means €1
-  in the book became 5% more than €1 in the benchmark.
+  in the book became 5% more than €1 in the benchmark. Out% is the same gap
+  arithmetic, with the ETF as the subject (ETF TWR − book TWR).
 - **DDdur vs SinceHi** — how long the *worst* hole lasted vs how long you've been
   off the *current* peak.
 
@@ -55,8 +56,8 @@ New to the book? Five metrics answer most of the questions, in this order:
    not a rate and not a judgement of the funds.
 4. **MaxDD** — what's the worst drop you'd have had to sit through? The
    gut-check before adding more of the same.
-5. **Out%** — did leaving the market beat just buying it? Read `n` first — a
-   short window makes any gap a coin flip.
+5. **Out%** — did this ETF beat the book over the shared window? Positive
+   means the fund won. Read `n` first — a short window makes any gap a coin flip.
 
 Each has its own entry below with what *not* to conclude from it.
 
@@ -89,8 +90,9 @@ XIRR is what your cash earned; TWR is what the holdings earned. CAGR is TWR per 
 
 ### TWR
 - **Where:** `performance`, `--metrics`, `--series`, `--contrib`; `benchmark`; `funds`
-  (`benchmark` TWR is the book's return over that row's shared window;
-  `funds` TWR is the fund's own return over `--from` → `--as-of`)
+  (`benchmark` table TWR is that ETF over the shared window; the Book line is
+  the book's full history; Out% / RelStr still use the overlap book TWR
+  internally; `funds` TWR is the fund's own return over `--from` → `--as-of`)
 - **Type:** time-weighted, cumulative
 - **Definition:** Chain-linked product of daily sub-period returns
   `r_t = V_t/(V_prev+CF_t) − 1`, so deposits don't inflate or flatten it.
@@ -107,7 +109,7 @@ XIRR is what your cash earned; TWR is what the holdings earned. CAGR is TWR per 
 - **Read with:** CAGR (this number per year — compare *that* to XIRR, both
   annualized: the gap *is* timing). XIRR (your personal money-weighted rate).
   Daily TWR (each day's increment that compounds into this). MaxDD and Vol (what
-  it cost to earn). Ctr% (which holdings produced it). bTWR / Out% / RelStr (the
+  it cost to earn). Ctr% (which holdings produced it). Out% / RelStr (the
   same TWR versus a benchmark, over that row's overlap).
 
 ### Daily TWR
@@ -261,10 +263,12 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
 From the TWR wealth index, not the euro line (deposits would paper over a hole). DDdur is the worst hole's length; SinceHi is how long you've been off the current peak.
 
 ### Volatility (Vol)
-- **Where:** `performance` table (`Vol`), `--series`, `--metrics`; `funds`
+- **Where:** `performance` table (`Vol`), `--series`, `--metrics`; `funds`; `benchmark`
 - **Type:** time-weighted, annualized
 - **Definition:** Standard deviation of daily TWR returns × √252. Flagged `*` on
   short history or when the first stored close is after the first trade.
+  On `benchmark`, table `Vol` is that ETF over the shared window; the Book line
+  is the book's full history.
 - **Useful for:** how bumpy a typical stretch is — useful for "could I ignore
   this for a year without opening the app." Higher means wider swings in *both*
   directions; it does not say the worst hole was deep (that's MaxDD) and it
@@ -275,12 +279,14 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
   CAGR (different year-length: 365 calendar days vs 252 trading days).
 
 ### Max Drawdown (MaxDD)
-- **Where:** `performance` table (`MaxDD`), `--series`, `--metrics`; `funds`
+- **Where:** `performance` table (`MaxDD`), `--series`, `--metrics`; `funds`; `benchmark`
 - **Type:** time-weighted
 - **Definition:** The deepest peak-to-trough decline of the time-weighted wealth
   index, `min(wealth_t / peak_t − 1)` over the path (sampled daily), where
   `peak_t` is the running maximum up to `t`. Reported as a negative number
-  (`0` = no drawdown); RecFac divides by its magnitude, `|MaxDD|`.
+  (`0` = no drawdown); RecFac divides by its magnitude, `|MaxDD|`. On
+  `benchmark`, table `MaxDD` is that ETF over the shared window; the Book line
+  is the book's full history.
 - **Useful for:** the gut-check before you add more of the same allocation —
   "could I sit through that again?" A deep MaxDD on a broad index is historically
   normal; the question is whether *you* would have held. It is not a forecast of
@@ -662,7 +668,8 @@ describe it as "after-tax net" either — e1f has no tax model.
 
 ## Benchmark-relative
 
-Was leaving the market worth it? Out% is the arithmetic gap; RelStr is compounded. Read n; don't trust Beta without R².
+Was leaving the market worth it? Out% is the arithmetic gap (ETF minus book);
+RelStr is compounded (book over ETF). Read n; don't trust Beta without R².
 
 Statistical benchmark metrics (Beta, R², TE, IR, ρ) are estimated from shared daily
 observations. They are descriptive, not predictive, and become more meaningful as n
@@ -719,8 +726,8 @@ grows. A high value on thin n is still thin n.
 - **Type:** annualized ratio
 - **Definition:** √252 × mean(daily rp − rb) / stdev(daily rp − rb) — annualized
   mean active return ÷ tracking error (the same √252 as TE).
-- **Useful for:** "was the deviation worth it?" A noisy 2% Out% with huge TE is
-  a low IR: you took tracking risk and didn't get paid. A small Out% with tiny
+- **Useful for:** "was the deviation worth it?" A noisy 2% book lead with huge TE is
+  a low IR: you took tracking risk and didn't get paid. A small gap with tiny
   TE can be a fine IR. On a young book this is the easiest number to overfit —
   always read n.
 - **Don't:** trust IR without checking n and R² — it is the easiest statistic
@@ -728,19 +735,6 @@ grows. A high value on thin n is still thin n.
 - **Read with:** TE (the denominator). Out% / RelStr (the raw gap). R² (a low R²
   doesn't void IR — it means the gap is measured against a benchmark you don't
   resemble). n. TWR (the book return IR is not a substitute for).
-
-### bTWR
-- **Where:** `benchmark` (`bTWR`)
-- **Type:** time-weighted, cumulative, over the window
-- **Definition:** The benchmark ETF's cumulative TWR over the same shared dates
-  as that row's `TWR`. Chain-linked daily EUR returns, net of the fund's TER.
-  `n/a` when the row is UNAVAILABLE.
-- **Useful for:** seeing what the peer actually did in the window you are
-  comparing — RelStr and Out% are just this number and the book's TWR combined.
-- **Don't:** compare bTWR across rows without checking n — each benchmark's
-  overlap with the book can start and end on different days.
-- **Read with:** TWR (the book, same window). Out% (`TWR − bTWR`). RelStr
-  (`(1+TWR)/(1+bTWR)`). n.
 
 ### Relative Strength (RelStr)
 - **Where:** `benchmark`
@@ -753,23 +747,23 @@ grows. A high value on thin n is still thin n.
   window can differ, so read n.
 - **Don't:** compare RelStr across benchmark rows without checking n — each row's
   window can differ, so the numbers are not on the same footing.
-- **Read with:** Out% (the same comparison as an arithmetic gap — 0.12 − 0.10 =
-  2 points vs 1.12 / 1.10 ≈ 1.018). IR (was the gap worth the drift). TWR on
-  both legs. n. R² (a RelStr vs a poor mirror is trivia).
+- **Read with:** Out% (the same comparison as an arithmetic gap, ETF minus book:
+  0.10 − 0.12 = −2 points vs RelStr 1.12 / 1.10 ≈ 1.018). IR (was the gap worth
+  the drift). TWR on both legs. n. R² (a RelStr vs a poor mirror is trivia).
 
 ### Out%
-- **Where:** `benchmark`
+- **Where:** `benchmark` (`Out%`)
 - **Type:** cumulative, over the window
-- **Definition:** Portfolio TWR − benchmark TWR (active return, arithmetic). Not
-  annualized; each benchmark's window differs.
-- **Useful for:** a simple over/under you can say in a sentence ("+2.1% vs
-  World"). Easy to over-read on a short window: 3% Out% on 40 days is a coin
-  flip. Use it to scan the table; use RelStr when you care how €1 compounded,
-  and IR when you care whether the gap was worth the tracking risk.
+- **Definition:** ETF TWR − overlap book TWR. Same magnitude as the old
+  book-minus-ETF Out%, opposite sign. Not annualized; each row's window differs.
+- **Useful for:** a simple over/under next to that row's TWR ("this fund was
+  2.1% ahead of the book"). Positive means the ETF beat the book; negative
+  means the book beat the ETF. Easy to over-read on a short window.
 - **Don't:** over-read a short-window Out% — a 3% gap on 40 shared days is noise,
-  not skill.
-- **Read with:** RelStr (compounded). IR / TE (gap per unit of drift, and the
-  drift). n (mandatory). R² (right mirror?). TWR (both legs).
+  not skill. RelStr > 1 and Out% < 0 both mean the book won.
+- **Read with:** RelStr (compounded, still book ÷ ETF). IR / TE (book minus ETF
+  in the daily active return). n (mandatory). R² (right mirror?). table TWR and
+  the Book line.
 
 ### n (observations)
 - **Where:** `benchmark`, `correlation`; `funds`

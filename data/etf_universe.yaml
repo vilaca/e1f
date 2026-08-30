@@ -420,24 +420,6 @@ etfs:
     distribution: Accumulating
     ter: 0.15
     asset_class: Equity
-  DE000A0D8Q07:
-    name: ISHR EUROSTOXX UCITS ETF DE
-    tickers:
-    - SXXEEX
-    - GX4A
-    exchange: GR
-    figi: BBG000D8L3W2
-    listings:
-    - ticker: SXXEEX
-      exchange: GR
-    - ticker: GX4A
-      exchange: NA
-    resolved_at: '2026-08-24T10:21:48.767463+00:00'
-    source: OpenFIGI
-    fund_currency: EUR
-    distribution: Distributing
-    ter: 0.2
-    asset_class: Equity
   IE00BK5BQX27:
     name: VANG FTSE EUR EURA
     tickers:

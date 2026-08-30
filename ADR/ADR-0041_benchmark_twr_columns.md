@@ -25,10 +25,14 @@ is `TWR − bTWR` and RelStr is `(1+TWR)/(1+bTWR)` by construction.
 `wealth_and_returns` / `_cumulative` on the shared daily returns. Not
 since-inception, not calendar-year. `n/a` when the row is UNAVAILABLE.
 
-**Next to RelStr / Out%.** Order is `… IR  TWR  bTWR  RelStr  Out%`. Sort
+**Next to RelStr / Out%.** Order was `… IR  TWR  bTWR  RelStr  Out%`. Sort
 tokens: `twr` (canonical, ADR-0037) and `btwr` (command-local).
 
 **No new math.** `BenchmarkStats.port_twr` / `bench_twr` already exist.
+
+**Display superseded by ADR-0045.** The table no longer prints a book-side
+`TWR`; the Book line is the book's full-history TWR. The remaining ETF-leg
+column is named `TWR` (no `b` prefix). `port_twr` still feeds Out% / RelStr.
 
 ## Invariance
 
