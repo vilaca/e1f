@@ -41,15 +41,10 @@ YAML keys, and module/class names live in **code**; docs reference the source
 location, never copy the shape into prose. Find violations:
 
 - **CLI commands and flags** — compare `README.md` command examples against the
-  actual `argparse` definitions in `src/e1f/config.py` (config subcommands),
-  `src/e1f/fetch.py` (fetch flags), `src/e1f/transactions.py`
-  (`list`, `trade-republic`, `tr`, `xtb`, `--config`, `--db`), `src/e1f/portfolio.py`
-  (`--db`, `--config`), `src/e1f/performance.py`
-  (`--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`), and
-  `src/e1f/autocomplete.py` (shell completion). Top-level
-  commands are wired in `src/e1f/cli.py`
-  (`COMMANDS`; frozen in `tests/test_contracts.py`). A README that re-enumerates
-  subcommand names or default values is a candidate for drift.
+  actual `argparse` definitions in each command's source file under `src/e1f/`.
+  Top-level commands are wired in `src/e1f/cli.py` (`COMMANDS`; frozen in
+  `tests/test_contracts.py`). A README that re-enumerates subcommand names or
+  default values is a candidate for drift.
 - **SQLite schema** — the `prices` and `fx_rates` table columns live in
   `DataExtractor._init_database`; the `transactions` table columns live in
   `init_transactions_database()` in `src/e1f/transactions.py`; all are frozen in
@@ -75,33 +70,24 @@ and verify each still matches the code:
 - **Python version** — `README.md` "Requires Python X.Y+" must match
   `pyproject.toml` `requires-python`. (Also caught deterministically by
   `tests/test_contracts.py`; flag here for completeness.)
-- **Default paths** — README mentions `data/etf_universe.yaml`, `data/e1f.db`,
-  `data/currency_metadata.yaml`; verify these match `common/defaults.py` `DEFAULT_*`
-  constants.
-- **Flag names** — grep each flag in the argparse definitions. At minimum:
-  `config`: `--config`, `--db`, `--currency-meta`; `fetch`: `--config`, `--db`,
-  `--start`, `--force`, `--fallback`, `--currency-meta`; `transactions`:
-  `--db`, `--config` (on `trade-republic` and `xtb`); `portfolio`: `--db`, `--config`;
-  `performance`: `--db`, `--config`, `--currency-meta`, `--as-of`, `--sort`, `--reverse`.
-- **Command list** — top-level (`cli.py` `COMMANDS`; frozen in
-  `tests/test_contracts.py`): stable `autocomplete`, `config`, `fetch`,
-  `validate`, `transactions`, `portfolio`, `performance`, `benchmark`,
-  `deposits`, `correlation`, `rebalance`, `scenario`, `glossary`; experimental
-  `lookthrough`, `concentration`, `overlap`, `backtest`, `seasonality`. Nested:
-  `config`: `add`, `list`, `update`, `remove`,
-  `trim` (in `config.py`); `transactions`: `list`, `trade-republic`, `tr`,
-  `xtb` (in `transactions.py`); `scenario`: `save`, `list`, `show`, `delete`
-  (in `scenario.py`); `overlap`: default report, `candidates`, `resolve`
-  (in `src/e1f/experimental/overlap.py`). `autocomplete`, `validate`,
-  `portfolio`, `performance`, `benchmark`, `deposits`, `correlation`,
-  `rebalance`, `glossary`, `lookthrough`, `concentration`, `backtest`, and
-  `seasonality` have no nested subcommands.
+- **Default paths** — verify README path references against the `DEFAULT_*`
+  constants in `src/e1f/common/defaults.py`; the file is the authority.
+- **Flag names** — for each flag named in README prose or examples, grep it in
+  the command's argparse source file. Every stable command's flags live in its
+  own `src/e1f/<command>.py`; the code is the authority, not this skill.
+- **Command list** — read `src/e1f/cli.py` and extract the `COMMANDS` dict
+  (keys are top-level command names; `tier` separates stable from experimental).
+  Do **not** rely on an inline list here — the code is the authority. For nested
+  subcommands, read each command's own `argparse` setup: `src/e1f/config.py`
+  (config sub-commands), `src/e1f/transactions.py` (transactions sub-commands),
+  `src/e1f/scenario.py` (scenario sub-commands), and
+  `src/e1f/experimental/overlap.py` (overlap sub-commands). Verify that every
+  top-level command named in a README or CLAUDE.md prose appears in `COMMANDS`,
+  and every command named in `COMMANDS` that is referenced in prose resolves.
 - **Backtick file paths** — confirm each exists.
 - **`CLAUDE.md` check gates (mandatory)** — derive the canonical gate set from
-  `scripts/check.sh`: the `gates=(…)` default when invoked with no arguments
-  (currently `lint`, `layers`, `shell`, `actions`, `types`, `dead`, `package`,
-  `mutation`, `test`) and
-  the gate names in the usage comment. Then verify:
+  `scripts/check.sh` (the `gates=(…)` default and the usage comment); the script
+  is the authority. Then verify:
   1. Every gate appears in `CLAUDE.md` Running checks examples/comments.
   2. `CLAUDE.md` does not list gates that `check.sh` no longer defines.
   3. The CI claim matches `.github/workflows/ci.yml`: every default gate runs
@@ -178,19 +164,17 @@ the structural contract. Check:
 
 - **`**Where:**` references resolve** — each term's `**Where:**` line names the
   command(s) and flag(s) that emit the metric. Verify each command is in `cli.py`
-  `COMMANDS` and each flag (`--metrics`, `--series`, `--contrib`, `--diff`,
-  `--as-of`, …) exists in that command's argparse. A term pointing at a flag that
-  was renamed or removed is stale.
+  `COMMANDS` and each flag exists in that command's argparse. A term pointing at a
+  flag that was renamed or removed is stale.
 - **Scope discipline (ADR-0034)** — the glossary is scoped to *stable-command*
-  metrics: `performance`, `portfolio`, `deposits`, `benchmark`, `correlation`.
-  Flag any `**Where:**` line naming an experimental command (`concentration`,
-  `overlap`, `backtest`, `seasonality`, `lookthrough`) or a rebalance plan column
-  — those are out of scope and belong in an ADR/README note, not here.
+  metrics only. Read the stable/experimental split from `src/e1f/cli.py`
+  (`STABLE_COMMANDS` vs `EXPERIMENTAL_COMMANDS`). Flag any `**Where:**` line naming
+  an experimental command or a rebalance plan column — those are out of scope and
+  belong in an ADR/README note, not here.
 - **Coverage drift** — a metric column newly emitted by a stable command's output
   with no `### ` term, or a `### ` term for a metric the code no longer prints, is
-  drift. Spot-check the table/`--metrics`/`--series`/`--contrib` headers in
-  `performance.py`, `portfolio.py`, `deposits.py`, `benchmark.py`, `correlation.py`
-  against the term list.
+  drift. Spot-check the output headers in each stable command's source file against
+  the term list.
 - **Structural contract** — every term has `**Useful for:**` and `**Read with:**`
   (pinned by `tests/test_glossary.py`; flag here only for completeness). Terms in
   `**Read with:**` should name real metrics elsewhere in the file.
