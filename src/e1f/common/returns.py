@@ -44,7 +44,7 @@ def aggregate_value_series(
     aggregate return when the price later appears (ADR-0011). Returns chronological
     ``(date, total_value, total_contribution)`` triples.
     """
-    days: set[str] = {as_of}
+    days: set[str] = set()
     for series in holdings:
         days.update(d for d in series.price_dates if first_day <= d <= as_of)
         days.update(e.date for e in series.events if first_day <= e.date <= as_of)
@@ -172,7 +172,7 @@ def contribution_to_return(
     zero (a −100% period, where ``ln(1+r)`` is singular). Days where a currently-held
     ISIN cannot be valued are dropped, exactly as ``aggregate_value_series`` drops them.
     """
-    days: set[str] = {as_of}
+    days: set[str] = set()
     for series in holdings:
         days.update(d for d in series.price_dates if first_day <= d <= as_of)
         days.update(e.date for e in series.events if first_day <= e.date <= as_of)
