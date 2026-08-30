@@ -36,7 +36,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day, plus **Daily TWR** (that day's increment) |
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
-| Did I beat the market? | `e1f benchmark` | **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
+| Did I beat the market? | `e1f benchmark` | **TWR** / **bTWR** (book vs that benchmark over the shared window), **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
 | Are my funds redundant — do they move alike? | `e1f correlation` | **ρ** (near 1 = a second helping of the same bet), the clusters, and **n** |
 | What should I buy to hit target weights? | `e1f rebalance --target ISIN:PCT …` | **Buy€** per fund and the minimum cash `C_min` (a `--target` or `--scenario` is required) |
 | What does a metric mean? | `e1f glossary <term>` | the entry itself |
@@ -56,6 +56,7 @@ walled off so no stable command depends on them:
 - **`e1f autocomplete`** — print Bash or Zsh completion setup.
 - **`e1f config`** — build the ETF universe YAML from ISINs (via OpenFIGI).
 - **`e1f fetch`** — populate the SQLite DB with prices and FX rates.
+- **`e1f funds`** — every configured ETF (not just holdings) with TER, windowed TWR/Vol/MaxDD, and From/n/Gap coverage; `--from` sets the window start (younger funds stay listed with a later From).
 - **`e1f validate`** — check config/DB sync, history depth, and data quality (including interior single-day price gaps — a day a fund lacks that its same-exchange peers have — repairable with `e1f fetch <isin> --force`).
 - **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 - **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
@@ -87,6 +88,11 @@ e1f config update IE00BM67HK77
 # transaction history is always retained.
 e1f config remove IE00BM67HK77
 e1f config trim        # keep only ISINs present in config, DB, and metadata
+
+# Screen the configured universe (cost + windowed return/risk + coverage)
+e1f funds
+e1f funds --from 2020-01-01
+e1f funds --unheld --sort ter
 
 # Check config/DB sync, history depth, and data quality
 e1f validate

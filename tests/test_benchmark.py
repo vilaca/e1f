@@ -88,6 +88,10 @@ def test_benchmark_stats_outperformance_and_relative_strength():
     assert s.bench_twr == pytest.approx(0.1025)
     assert s.outperformance == pytest.approx(0.21 - 0.1025)
     assert s.relative_strength == pytest.approx(1.21 / 1.1025)
+    line = bench._format_row(s)
+    # TWR 21.0%, bTWR 10.3% (10.25 → .1f), Out% 10.8% (10.75 → .1f)
+    assert "21.0%" in line and "10.3%" in line and "10.8%" in line
+    assert "TWR" in bench._HEADER and "bTWR" in bench._HEADER
 
 
 # ---------------------------------------------------------------------------

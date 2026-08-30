@@ -105,6 +105,7 @@ def test_cli_commands_surface():
         "autocomplete",
         "config",
         "fetch",
+        "funds",
         "validate",
         "transactions",
         "portfolio",
@@ -370,6 +371,7 @@ def test_canonical_sort_tokens_agree_across_commands() -> None:
         benchmark,
         config,
         deposits,
+        funds,
         performance,
         portfolio,
         rebalance,
@@ -381,6 +383,9 @@ def test_canonical_sort_tokens_agree_across_commands() -> None:
     assert identity <= set(performance.SORT_FIELDS)
     assert identity <= set(deposits.SORT_FIELDS)
     assert identity <= set(benchmark.SORT_FIELDS)
+    assert "twr" in benchmark.SORT_FIELDS
+    assert identity <= set(funds.SORT_FIELDS)
+    assert {"twr", "vol", "maxdd", "ter", "class", "n"} <= set(funds.SORT_FIELDS)
     assert identity <= set(rebalance.SORT_FIELDS)
     assert identity <= set(config.SORT_FIELDS)
     assert "isin" in transactions.SORT_FIELDS

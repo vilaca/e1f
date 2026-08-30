@@ -95,6 +95,31 @@ def wealth_and_returns(
     return wealth_path, returns
 
 
+def eur_close_series(
+    db_path: str, isin: str, as_of: str, currency_meta_path: str
+) -> list[tuple[str, float]]:
+    """A fund's available EUR closes as ``(date, close)``, date-sorted, ``<= as_of``.
+
+    A day with a local price but no FX rate on or before it is skipped (not filled).
+    An ISIN with no pinned currency — or a currency with no EUR FX rule at all
+    (GBX pence, ADR-0010) — has no EUR closes → ``[]``.
+    """
+    currency = pinned_quote_currency(isin, currency_meta_path)
+    if currency is None or currency in UNSUPPORTED_FX_CURRENCIES:
+        # No pinned currency, or a currency convert_to_eur permanently refuses (pence):
+        # no EUR close ever exists, so there is no return series. Handling this up front
+        # narrows the except below to the ONE transient case it is meant for.
+        return []
+    dates, closes = load_price_series(db_path, isin, as_of)
+    eur_closes: list[tuple[str, float]] = []
+    for day, close in zip(dates, closes, strict=True):
+        try:
+            eur_closes.append((day, convert_to_eur(close, currency, day, db_path)))
+        except ValueError:
+            continue  # the sole remaining ValueError: no FX rate on/before this day
+    return eur_closes
+
+
 def eur_return_series(
     db_path: str, isin: str, as_of: str, currency_meta_path: str
 ) -> list[tuple[str, float]]:
@@ -112,22 +137,11 @@ def eur_return_series(
     ``load_price_series`` guarantees the ``(date, close)`` inputs are date-sorted and
     one-per-day, so the emitted returns are date-sorted with unique dates too.
     """
-    currency = pinned_quote_currency(isin, currency_meta_path)
-    if currency is None or currency in UNSUPPORTED_FX_CURRENCIES:
-        # No pinned currency, or a currency convert_to_eur permanently refuses (pence):
-        # no EUR close ever exists, so there is no return series. Handling this up front
-        # narrows the except below to the ONE transient case it is meant for.
-        return []
-    dates, closes = load_price_series(db_path, isin, as_of)
-    eur_closes: list[tuple[str, float]] = []
-    for day, close in zip(dates, closes, strict=True):
-        try:
-            eur_closes.append((day, convert_to_eur(close, currency, day, db_path)))
-        except ValueError:
-            continue  # the sole remaining ValueError: no FX rate on/before this day
     return [
         (day, cur / prev - 1.0)
-        for (_prev_day, prev), (day, cur) in itertools.pairwise(eur_closes)
+        for (_prev_day, prev), (day, cur) in itertools.pairwise(
+            eur_close_series(db_path, isin, as_of, currency_meta_path)
+        )
     ]
 
 

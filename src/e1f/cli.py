@@ -21,6 +21,7 @@ from e1f import (
     correlation,
     deposits,
     fetch,
+    funds,
     glossary,
     performance,
     portfolio,
@@ -43,6 +44,7 @@ STABLE_PARSER_FACTORIES = {
     "autocomplete": autocomplete._build_parser,
     "config": config._build_parser,
     "fetch": fetch._build_parser,
+    "funds": funds._build_parser,
     "validate": validate._build_parser,
     "transactions": transactions._build_parser,
     "portfolio": portfolio._build_parser,
@@ -71,6 +73,7 @@ STABLE_COMMANDS: dict[str, Command] = {
     "autocomplete": _autocomplete_main,
     "config": config.main,
     "fetch": fetch.main,
+    "funds": funds.main,
     "validate": validate.main,
     "transactions": transactions.main,
     "portfolio": portfolio.main,
@@ -102,6 +105,7 @@ Commands:
   autocomplete  Print Bash or Zsh completion setup
   config        Build/maintain the ETF universe YAML from ISINs
   fetch         Populate the SQLite price DB for the universe
+  funds         Configured ETFs with cost, windowed return/risk, and coverage
   validate      Check config, metadata, and stored price data
   transactions  Ingest and list broker ETF trades in SQLite
   portfolio     Show ETF holdings and average cost from transactions

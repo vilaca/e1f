@@ -17,20 +17,13 @@ from e1f.common import (
     DEFAULT_DB,
     ConfigManager,
     CurrencyMetadata,
+    consensus_gaps,
+    venues_from_currency_meta,
 )
 
 MAX_MISSING_BUSINESS_DAYS = 5
 MAX_ABS_RETURN = 0.5
 TRADING_YEAR = 252
-# Interior single-day gap detection, voted **within an exchange** (venue): a day is
-# a "consensus trading day" when at least this share of same-venue funds spanning it
-# have a close; a fund that spans the day but lacks it has an interior gap (a fetch
-# that skipped a day — invisible to the ≤5-business-day gap check). Voting per venue
-# means a real venue holiday (all its funds closed) is never flagged; MIN_COVERING is
-# both the per-venue fund floor and the per-day covering floor (a thin venue or a
-# series' own edges can't vote).
-GAP_CONSENSUS = 0.8
-MIN_COVERING_ISINS = 3
 
 
 class QualityReport(TypedDict):
@@ -109,60 +102,6 @@ def quality_report(prices: pd.DataFrame) -> QualityReport:
             str(isin): float(change) for isin, change in returns.items()
         },
     }
-
-
-def consensus_gaps(
-    prices: pd.DataFrame,
-    venue_by_isin: dict[str, str],
-    *,
-    threshold: float = GAP_CONSENSUS,
-) -> dict[str, list[str]]:
-    """Per-ISIN interior gaps: days the ISIN lacks but its same-exchange peers have.
-
-    A single skipped trading day is invisible to the business-day-gap check when the
-    gap is under its limit, yet it distorts short-window return metrics. The vote is
-    held **within an exchange** (from ``venue_by_isin``, e.g. LSE / GER) so a genuine
-    venue holiday — when every fund on that exchange is closed — is never mistaken for
-    a gap. Within a venue, a day is a *consensus trading day* when at least
-    ``threshold`` of the funds whose history spans it have a close; a covering fund
-    missing such a day has an interior gap (repair with ``e1f fetch <isin> --force``).
-    A venue with fewer than ``MIN_COVERING_ISINS`` funds can't establish consensus and
-    is skipped (under-reporting beats crying wolf). ``{isin: [YYYY-MM-DD, …]}``.
-    """
-    checked = prices.copy()
-    checked["date"] = pd.to_datetime(checked["date"], format="mixed", errors="coerce")
-    checked = checked.dropna(subset=["date"]).drop_duplicates(
-        subset=["isin", "date"], keep="last"
-    )
-    if checked.empty:
-        return {}
-    present = checked.pivot(index="date", columns="isin", values="close").sort_index().notna()
-
-    venues: dict[str, list[str]] = {}
-    for isin in present.columns:
-        venue = venue_by_isin.get(str(isin))
-        if venue:
-            venues.setdefault(venue, []).append(str(isin))
-
-    gaps: dict[str, list[str]] = {}
-    for isins in venues.values():
-        if len(isins) < MIN_COVERING_ISINS:
-            continue  # too few peers on this exchange to vote
-        sub = present[isins]
-        covering = pd.DataFrame(False, index=sub.index, columns=sub.columns)
-        for isin in isins:
-            valid = sub.index[sub[isin].to_numpy()]
-            if len(valid):
-                covering[isin] = (sub.index >= valid.min()) & (sub.index <= valid.max())
-        covering_count = covering.sum(axis=1)
-        ratio = sub.sum(axis=1).where(covering_count > 0).div(covering_count)
-        consensus = (ratio >= threshold) & (covering_count >= MIN_COVERING_ISINS)
-        for isin in isins:
-            missing = (consensus & covering[isin] & ~sub[isin]).to_numpy()
-            dates = sub.index[missing]
-            if len(dates):
-                gaps[isin] = [d.strftime("%Y-%m-%d") for d in dates]
-    return gaps
 
 
 def _affected(isins: list[str]) -> str:
@@ -252,11 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     quality = quality_report(price_df)
-    venue_by_isin = {
-        isin: str(pinned.get("symbol", "")).split(":")[1]
-        for isin, pinned in currency_meta.funds.items()
-        if len(str(pinned.get("symbol", "")).split(":")) >= 3
-    }
+    venue_by_isin = venues_from_currency_meta(currency_meta)
     consensus_gap_map = consensus_gaps(price_df, venue_by_isin)
     gap_breakdown = sorted(
         (
