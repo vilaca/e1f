@@ -18,6 +18,7 @@ dependencies = [
     "yfinance",
     "ftgo",
     "openpyxl>=3.1.5",
+    "matplotlib",
 ]
 
 [project.scripts]
