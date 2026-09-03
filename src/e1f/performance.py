@@ -18,6 +18,8 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
+import matplotlib.pyplot as plt
+
 from e1f.common import (
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
@@ -1067,6 +1069,7 @@ def _cmd_performance(
     explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
+    chart: str | None = None,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     timeline = _require_timeline(db_path, config_path, isin)
@@ -1085,16 +1088,18 @@ def _cmd_performance(
     total = _total_row(rows, holdings, as_of, db_path)
     total.pnl_contribution = None if not total.pnl else 100.0
 
-    print(f"\n{_subject_phrase(config_path, isin)} performance as of {as_of} (EUR)")
-    print(_header(show_status))
-    print("-" * _rule_width(show_status))
-    for row in rows:
-        print(_format_row(row, show_status=show_status))
-    print("-" * _rule_width(show_status))
-    print(_format_row(total, show_status=show_status))
+    quiet = chart is not None
+    if not quiet:
+        print(f"\n{_subject_phrase(config_path, isin)} performance as of {as_of} (EUR)")
+        print(_header(show_status))
+        print("-" * _rule_width(show_status))
+        for row in rows:
+            print(_format_row(row, show_status=show_status))
+        print("-" * _rule_width(show_status))
+        print(_format_row(total, show_status=show_status))
 
     estimated = [row for row in rows if row.estimated]
-    if any(row.short_history for row in rows):
+    if not quiet and any(row.short_history for row in rows):
         print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
     if estimated:
         dates = {row.price_date for row in estimated}
@@ -1126,13 +1131,15 @@ def _cmd_performance(
             + ", ".join(sorted(excluded))
         )
 
-    if explain:
+    if not quiet and explain:
         print("\nProvenance (--explain) — reconstructed from source, not a log:")
         for row in rows:
             for line in render_row_explain(row):
                 print(line)
         for line in render_row_explain(total):
             print(line)
+    if chart is not None:
+        _render_pnl_chart(rows, as_of, chart)
     return 0
 
 
@@ -1657,6 +1664,43 @@ def _cmd_performance_metrics_series(
     return 0
 
 
+def _render_pnl_chart(rows: list[PerformanceRow], as_of: str, output: str) -> None:
+    """Save a horizontal P&L% bar chart for valued holdings to *output*."""
+    valuable = [r for r in rows if r.pnl_pct is not None]
+    if not valuable:
+        print("No valued holdings to chart")
+        return
+
+    sorted_rows = sorted(valuable, key=lambda r: r.pnl_pct or 0.0)
+    labels = [r.name or r.isin for r in sorted_rows]
+    values = [r.pnl_pct or 0.0 for r in sorted_rows]
+    colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in values]
+
+    fig, ax = plt.subplots(figsize=(10, max(4, 0.5 * len(labels) + 1.5)))
+    bars = ax.barh(labels, values, color=colors, edgecolor="none")
+    ax.axvline(0, color="#555555", linewidth=0.8, linestyle="--")
+
+    for bar, val in zip(bars, values, strict=True):
+        sign = "+" if val >= 0 else ""
+        ax.text(
+            bar.get_width() + (0.1 if val >= 0 else -0.1),
+            bar.get_y() + bar.get_height() / 2,
+            f"{sign}{val:.1f}%",
+            va="center",
+            ha="left" if val >= 0 else "right",
+            fontsize=9,
+        )
+
+    ax.set_xlabel("P&L %")
+    ax.set_title(f"Portfolio P&L% as of {as_of}")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Chart saved to {output}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e1f performance",
@@ -1794,6 +1838,14 @@ Examples:
         "instead of the default table. Composes with --as-of/--sort/--reverse; not with "
         "--diff/--series/--metrics.",
     )
+    parser.add_argument(
+        "--chart",
+        nargs="?",
+        const="pnl_chart.png",
+        metavar="FILE",
+        help="Save a P&L%% bar chart to FILE (default: pnl_chart.png). Only composes "
+        "with the default snapshot view (not --diff/--series/--metrics/--contrib).",
+    )
     return parser
 
 
@@ -1830,6 +1882,11 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--metrics does not compose with --diff")
         if args.contrib and (diff_n is not None or series_n is not None or args.metrics):
             raise ValueError("--contrib does not compose with --diff/--series/--metrics")
+        chart_incompatible = (
+            diff_n is not None or series_n is not None or args.metrics or args.contrib
+        )
+        if args.chart and chart_incompatible:
+            raise ValueError("--chart only composes with the default snapshot view")
         if args.contrib:
             return _cmd_performance_contrib(
                 args.db,
@@ -1893,6 +1950,7 @@ def main(argv: list[str] | None = None) -> int:
             explain=args.explain,
             currency_meta_path=args.currency_meta,
             isin=isin,
+            chart=args.chart,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
