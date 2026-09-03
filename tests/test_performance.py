@@ -2016,3 +2016,246 @@ def test_main_contrib_sort_ctr_ascending(tmp_path, capsys):
     assert code == 0
     # B's Ctr% is smaller than A's, so ascending puts B first.
     assert out.index(_B) < out.index(_A)
+
+
+# ---------------------------------------------------------------------------
+# --chart-metric portfolio-derived metrics (ADR-0046): pweight/ter/fee_yr/
+# units/avg/last_px
+# ---------------------------------------------------------------------------
+
+
+def test_build_row_populates_shares_currency_ter_last_close(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0), (EUR_ISIN, "2024-12-31", 12.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+        ters={EUR_ISIN: 0.22},
+    )
+    row = _row_for(db, config, meta, EUR_ISIN, "2024-12-31")
+    assert row.shares == pytest.approx(100.0)
+    assert row.currency == "EUR"
+    assert row.last_close == pytest.approx(12.0)
+    assert row.ter == pytest.approx(0.22)
+
+
+def test_build_row_ter_none_when_unset(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    row = _row_for(db, config, meta, EUR_ISIN, "2024-01-01")
+    assert row.ter is None
+
+
+def test_row_metric_value_new_metrics_hand_computed():
+    row = perf.PerformanceRow(
+        isin=EUR_ISIN, name="Euro Fund", cost=1000.0, market_value=3000.0,
+        xirr=None, twr=None, volatility=None, max_drawdown=None, cagr=None,
+        short_history=False, shares=100.0, last_close=30.0, currency="EUR", ter=0.5,
+        cost_weight=25.0,
+    )
+    assert perf._row_metric_value(row, "pweight") == pytest.approx(25.0)
+    assert perf._row_metric_value(row, "ter") == pytest.approx(0.5)
+    assert perf._row_metric_value(row, "fee_yr") == pytest.approx(15.0)  # 0.5%*3000
+    assert perf._row_metric_value(row, "units") == pytest.approx(100.0)
+    assert perf._row_metric_value(row, "avg") == pytest.approx(10.0)  # 1000/100
+    assert perf._row_metric_value(row, "last_px") == pytest.approx(30.0)
+
+
+def test_row_metric_value_avg_units_none_when_no_shares():
+    row = perf.PerformanceRow(
+        isin=EUR_ISIN, name="x", cost=0.0, market_value=None,
+        xirr=None, twr=None, volatility=None, max_drawdown=None, cagr=None,
+        short_history=False, shares=0.0,
+    )
+    assert perf._row_metric_value(row, "units") is None
+    assert perf._row_metric_value(row, "avg") is None
+
+
+def test_row_metric_value_fee_yr_none_without_market_value():
+    row = perf.PerformanceRow(
+        isin=EUR_ISIN, name="x", cost=100.0, market_value=None,
+        xirr=None, twr=None, volatility=None, max_drawdown=None, cagr=None,
+        short_history=False, ter=0.3,
+    )
+    assert perf._row_metric_value(row, "fee_yr") is None
+
+
+def test_book_cost_on_sums_only_currently_held_isins(tmp_path):
+    db, _config, _meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    timeline = position_timeline(load_trades(db))
+    assert perf._book_cost_on(timeline, "2024-12-31") == pytest.approx(2000.0)  # 1000 + 1000
+
+
+def test_assign_cost_weights_shares_of_given_book_cost():
+    rows = [_perf_row("A", 100.0), _perf_row("B", 300.0)]
+    rows[0].cost, rows[1].cost = 500.0, 1500.0
+    perf._assign_cost_weights(rows, 4000.0)
+    assert rows[0].cost_weight == pytest.approx(12.5)
+    assert rows[1].cost_weight == pytest.approx(37.5)
+
+
+def test_assign_cost_weights_none_when_book_cost_zero():
+    rows = [_perf_row("A", 100.0)]
+    perf._assign_cost_weights(rows, 0.0)
+    assert rows[0].cost_weight is None
+
+
+def test_pweight_with_isin_is_the_funds_book_share_not_100_percent(tmp_path):
+    """--isin restricts the *view*, but pweight's denominator stays the whole book."""
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    timeline = position_timeline(load_trades(db))
+    rows, _holdings = perf._snapshot(
+        db, config, meta, {EUR_ISIN: timeline[EUR_ISIN]}, "2024-12-31"
+    )
+    assert len(rows) == 1
+    book_cost = perf._whole_book_cost(db, config, EUR_ISIN, rows, "2024-12-31")
+    assert book_cost == pytest.approx(2000.0)  # 1000 (EUR_ISIN) + 1000 (_TER_SECOND)
+    perf._assign_cost_weights(rows, book_cost)
+    assert rows[0].cost_weight == pytest.approx(50.0)  # NOT 100%
+
+
+def test_whole_book_cost_unfiltered_reuses_rows(tmp_path):
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    timeline = position_timeline(load_trades(db))
+    rows, _holdings = perf._snapshot(db, config, meta, timeline, "2024-12-31")
+    assert perf._whole_book_cost(db, config, None, rows, "2024-12-31") == pytest.approx(2000.0)
+
+
+# --- CLI wiring: gating refusals + end-to-end chart render per allowed context ---
+
+
+def test_chart_metric_units_without_isin_is_refused(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(_args(db, config, meta, "--chart", out_png, "--chart-metric", "units"))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "requires --isin" in out
+
+
+def test_chart_metric_avg_last_px_without_isin_is_refused(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0)],
+        prices=[(EUR_ISIN, "2024-01-01", 10.0)],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(db, config, meta, "--chart", out_png, "--chart-metric", "avg", "last_px")
+    )
+    assert code == 1
+    assert "requires --isin" in capsys.readouterr().out
+
+
+def test_chart_metric_pweight_on_total_series_is_refused(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--chart", out_png, "--chart-metric", "pweight",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "doesn't compose with the portfolio-total --series" in out
+
+
+def test_chart_metric_ter_fee_yr_on_total_series_is_refused(tmp_path, capsys):
+    db, config, meta = _seed_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--chart", out_png, "--chart-metric", "ter", "fee_yr",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "doesn't compose with the portfolio-total --series" in out
+
+
+def test_chart_metric_pweight_ter_fee_yr_allowed_in_plain_snapshot(tmp_path, capsys):
+    """Snapshot (no --series) is a per-holding view, so these ARE allowed there."""
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31",
+            "--chart", out_png, "--chart-metric", "pweight", "ter", "fee_yr",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_chart_metric_pweight_allowed_with_all_holdings_series(tmp_path, capsys):
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--all-holdings",
+            "--chart", out_png, "--chart-metric", "pweight",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_chart_metric_isin_only_allowed_with_isin_end_to_end(tmp_path, capsys):
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--isin", EUR_ISIN,
+            "--chart", out_png, "--chart-metric", "units", "avg", "last_px",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_chart_metric_pweight_with_isin_series_uses_full_book_denominator(tmp_path, capsys):
+    """--series --isin's pweight line reflects the whole book, not just that fund."""
+    db, config, meta = _seed_ter(
+        tmp_path, ters={EUR_ISIN: 0.5, _TER_SECOND: 0.1}, second_close=10.0
+    )
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "1", "--isin", EUR_ISIN,
+            "--chart", out_png, "--chart-metric", "pweight",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
