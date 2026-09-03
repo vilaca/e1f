@@ -31,7 +31,9 @@ from e1f.common import (
     Status,
     _explain_metric,
     aggregate_value_series as _aggregate_series,
+    annual_fee_estimate,
     build_series as _build_series,
+    close_asof as _close_asof,
     contribution_on as _contribution_on,
     contribution_to_return,
     load_price_series,
@@ -453,6 +455,16 @@ class PerformanceRow:
     # ``_assign_pnl_contributions``). None when the holding has no P&L or the
     # total P&L is zero.
     pnl_contribution: float | None = None
+    # Native-currency fields for --chart --chart-metric units/avg/last_px/ter/
+    # fee_yr (ADR-0046). shares/ter are populated for every row; last_close/
+    # currency stay None when the fund has no price/pinned currency yet.
+    shares: float = 0.0
+    last_close: float | None = None
+    currency: str | None = None
+    ter: float | None = None
+    # Share of the WHOLE book's cost basis (not just this view's holdings),
+    # assigned post-hoc like pnl_contribution; see ``_assign_cost_weights``.
+    cost_weight: float | None = None
 
     @property
     def valuable(self) -> bool:
@@ -548,12 +560,22 @@ def _build_row(
         short_history=short_history,
         price_date=price_date,
         estimated=estimated,
+        shares=shares,
+        last_close=_close_asof(series, as_of),
+        currency=series.currency,
+        ter=_etf_ter(config_path, isin),
     )
 
 
 def _etf_name(config_path: str, isin: str) -> str:
     data = ConfigManager(config_path).get(isin)
     return str((data or {}).get("name", ""))[:28]
+
+
+def _etf_ter(config_path: str, isin: str) -> float | None:
+    """This holding's TER (percent) from config metadata; None where unset (ADR-0007)."""
+    ter = (ConfigManager(config_path).get(isin) or {}).get("ter")
+    return float(ter) if isinstance(ter, (int, float)) else None
 
 
 def _total_row(
@@ -577,6 +599,12 @@ def _total_row(
         flows.extend((e.date, -e.cash_flow) for e in series.events if e.cash_flow > 0.0)
     flows.append((as_of, market_value))
 
+    # A per-share/native-currency figure is only meaningful when TOTAL is really
+    # one holding (e.g. --isin restricted the book); a multi-holding TOTAL leaves
+    # these None/0 (never read — --chart-metric gates units/avg/last_px/ter/fee_yr
+    # off the multi-holding total series; ADR-0046).
+    solo = included[0] if len(included) == 1 else None
+
     return PerformanceRow(
         isin="TOTAL",
         name="",
@@ -589,6 +617,10 @@ def _total_row(
         cagr=cagr,
         short_history=any(row.short_history for row in included),
         estimated=any(row.estimated for row in included),
+        shares=solo.shares if solo else 0.0,
+        last_close=solo.last_close if solo else None,
+        currency=solo.currency if solo else None,
+        ter=solo.ter if solo else None,
     )
 
 
@@ -812,6 +844,48 @@ def _assign_pnl_contributions(rows: list[PerformanceRow]) -> None:
             row.pnl_contribution = None
         else:
             row.pnl_contribution = 100.0 * row.pnl / total
+
+
+def _book_cost_on(timeline: dict[str, list[PositionEvent]], day: str) -> float:
+    """Cost basis summed across every ISIN in *timeline* still held on *day*.
+
+    Pure position math (no pricing/FX) — cost basis is known for a held ISIN
+    even when it can't be priced, so this never excludes a holding the way
+    market-value aggregation does.
+    """
+    total = 0.0
+    for events in timeline.values():
+        shares, cost = _position_asof(events, day)
+        if shares > _SHARE_EPSILON:
+            total += cost
+    return total
+
+
+def _assign_cost_weights(rows: list[PerformanceRow], book_cost: float) -> None:
+    """Set each row's share of ``book_cost`` (mutates in place; ADR-0046 pweight).
+
+    Unlike ``_assign_pnl_contributions``, the denominator is passed in rather
+    than derived from *rows* — ``pweight``'s denominator is always the WHOLE
+    book's cost, independent of any ``--isin``/``--all-holdings`` display filter.
+    """
+    for row in rows:
+        row.cost_weight = None if book_cost <= 0.0 else 100.0 * row.cost / book_cost
+
+
+def _whole_book_cost(
+    db_path: str, config_path: str, isin: str | None, rows: list[PerformanceRow], as_of: str
+) -> float:
+    """The full book's cost basis on *as_of*, regardless of any ``--isin`` filter.
+
+    When unfiltered, *rows* already covers the whole book (cheap reuse). When
+    ``--isin`` restricted the timeline upstream, *rows* only knows about that
+    one holding, so the unrestricted timeline is reloaded just for this
+    denominator.
+    """
+    if isin is None:
+        return sum(row.cost for row in rows)
+    full_timeline = _require_timeline(db_path, config_path, None)
+    return 0.0 if full_timeline is None else _book_cost_on(full_timeline, as_of)
 
 
 def _fmt_money(value: float | None, *, flag: bool = False) -> str:
@@ -1140,7 +1214,10 @@ def _cmd_performance(
         for line in render_row_explain(total):
             print(line)
     if chart is not None:
-        _render_snapshot_chart(rows, chart_metrics or ["pnl"], as_of, chart)
+        metrics = chart_metrics or ["pnl"]
+        if "pweight" in metrics:
+            _assign_cost_weights(rows, _whole_book_cost(db_path, config_path, isin, rows, as_of))
+        _render_snapshot_chart(rows, metrics, as_of, chart)
     return 0
 
 
@@ -1367,6 +1444,16 @@ def _cmd_performance_series(
             names = {isin_: _etf_name(config_path, isin_) or isin_ for isin_ in all_isins}
             _render_holdings_series_chart(per_isin_all, names, metrics, start, as_of, chart)
         else:
+            # Only reachable here with isin set (--chart-metric gating forbids
+            # pweight on the unfiltered, non-all-holdings TOTAL series), so the
+            # denominator always needs the unrestricted book, per day.
+            if "pweight" in metrics:
+                full_timeline = _require_timeline(db_path, config_path, None)
+                if full_timeline is not None:
+                    for point in rows:
+                        _assign_cost_weights(
+                            [point.total], _book_cost_on(full_timeline, point.day)
+                        )
             # The chart always reads chronological order regardless of --reverse.
             chrono = list(reversed(rows)) if reverse else rows
             _render_series_chart(chrono, metrics, chart, overlay=chart_overlay)
@@ -1685,7 +1772,16 @@ def _cmd_performance_metrics_series(
     return 0
 
 
-_CHART_METRIC_CHOICES = ("pnl", "pnl_eur", "xirr", "twr", "cagr", "vol", "maxdd", "value", "cost")
+_CHART_METRIC_CHOICES = (
+    "pnl", "pnl_eur", "xirr", "twr", "cagr", "vol", "maxdd", "value", "cost",
+    "pweight", "ter", "fee_yr", "units", "avg", "last_px",
+)
+
+# Metrics whose per-share/native value is only meaningful for one fund.
+_ISIN_ONLY_CHART_METRICS = frozenset({"units", "avg", "last_px"})
+# Metrics that would be a constant (pweight) or re-derive ADR-0031's
+# market-value-weighted WTER/Fee€/yr (ter/fee_yr) on the whole-portfolio total.
+_HOLDING_ONLY_CHART_METRICS = frozenset({"pweight", "ter", "fee_yr"})
 
 _CHART_METRIC_LABEL: dict[str, tuple[str, str, bool]] = {
     #              ylabel         title fragment          signed
@@ -1698,7 +1794,26 @@ _CHART_METRIC_LABEL: dict[str, tuple[str, str, bool]] = {
     "maxdd": ("Max Drawdown %", "Max Drawdown %",         False),
     "value": ("Market Value €", "Market Value (EUR)",     False),
     "cost":  ("Cost Basis €",   "Cost Basis (EUR)",       False),
+    "pweight": ("Book Weight %",  "Cost-Basis Book Weight %", False),
+    "ter":     ("TER %",          "TER %",                   False),
+    "fee_yr":  ("Fee €/yr",       "Estimated Fee (EUR/yr)",  False),
+    "units":   ("Shares",         "Shares Held",             False),
+    "avg":     ("Avg Cost €",     "Average Cost (EUR)",      False),
 }
+
+
+def _metric_label(metric: str, currency: str | None = None) -> tuple[str, str, bool]:
+    """Chart (ylabel, title fragment, signed) triple for *metric*.
+
+    ``last_px`` is native-currency (ADR-0046) and isn't in the static
+    ``_CHART_METRIC_LABEL`` table since its unit varies by fund; gating
+    guarantees it's only requested with ``--isin``, so *currency* is the one
+    held fund's pinned quote currency.
+    """
+    if metric == "last_px":
+        unit = currency or "?"
+        return (f"Last Close ({unit})", f"Last Close ({unit})", False)
+    return _CHART_METRIC_LABEL[metric]
 
 
 def _row_metric_value(row: PerformanceRow, metric: str) -> float | None:
@@ -1721,6 +1836,18 @@ def _row_metric_value(row: PerformanceRow, metric: str) -> float | None:
         return row.market_value
     if metric == "cost":
         return row.cost
+    if metric == "pweight":
+        return row.cost_weight
+    if metric == "ter":
+        return row.ter
+    if metric == "fee_yr":
+        return annual_fee_estimate(row.ter, row.market_value)
+    if metric == "units":
+        return row.shares if row.shares > _SHARE_EPSILON else None
+    if metric == "avg":
+        return None if row.shares <= _SHARE_EPSILON else row.cost / row.shares
+    if metric == "last_px":
+        return row.last_close
     return None  # unreachable; exhaustive over _CHART_METRIC_CHOICES
 
 
@@ -1742,6 +1869,10 @@ def _per_isin_series(
     result: dict[str, dict[str, list[tuple[str, float]]]] = {m: {} for m in metrics}
     for day in _trading_days(db_path, timeline, start, end):
         rows, _holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
+        if "pweight" in metrics:
+            # Caller only reaches here when isin is None, so ``rows`` already
+            # covers the whole book — its own cost sum IS the denominator.
+            _assign_cost_weights(rows, sum(row.cost for row in rows))
         for row in rows:
             for metric in metrics:
                 val = _row_metric_value(row, metric)
@@ -1862,6 +1993,8 @@ def _render_series_chart(
     all_days: list[str] = [p.day for p in points]
     start, end = (all_days[0], all_days[-1]) if all_days else ("", "")
 
+    currency = points[0].total.currency if points else None
+
     if overlay and len(metrics) > 1:
         fig, ax = plt.subplots(figsize=(12, 5))
         for m_idx, metric in enumerate(metrics):
@@ -1871,7 +2004,7 @@ def _render_series_chart(
                 continue
             xi = [i for i, _ in dated]
             values = [v for _, v in dated]
-            ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+            ylabel, title_frag, signed = _metric_label(metric, currency)
             color = _METRIC_COLORS[m_idx % len(_METRIC_COLORS)]
             linestyle = ["-", "--", "-.", ":"][m_idx % 4]
             ax.plot(xi, values, color=color, linewidth=1.5, linestyle=linestyle, label=title_frag)
@@ -1893,7 +2026,7 @@ def _render_series_chart(
                 continue
             xi = [i for i, _ in dated]
             values = [v for _, v in dated]
-            ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+            ylabel, title_frag, signed = _metric_label(metric, currency)
             color = ("#2ecc71" if values[-1] >= 0 else "#e74c3c") if signed else "#3498db"
             ax.plot(xi, values, color=color, linewidth=1.5)
             ax.fill_between(xi, values, 0, alpha=0.15, color=color)
@@ -1920,9 +2053,10 @@ def _render_snapshot_chart(
     n = len(metrics)
     bar_h = max(4, 0.5 * len(rows) + 1.5)
     fig, axes = plt.subplots(1, n, figsize=(9 * n, bar_h), squeeze=False)
+    currency = rows[0].currency if rows else None
 
     for ax, metric in zip(axes[0], metrics, strict=True):
-        ylabel, _title_frag, signed = _CHART_METRIC_LABEL[metric]
+        ylabel, _title_frag, signed = _metric_label(metric, currency)
         valued = [r for r in rows if _row_metric_value(r, metric) is not None]
         if not valued:
             ax.set_visible(False)
@@ -2113,7 +2247,8 @@ Examples:
         help=(
             "One or more metrics to plot with --chart (default: pnl). "
             f"Choices: {', '.join(_CHART_METRIC_CHOICES)}. "
-            "Multiple values produce stacked subplots."
+            "Multiple values produce stacked subplots. units/avg/last_px require --isin; "
+            "pweight/ter/fee_yr don't compose with the portfolio-total --series."
         ),
     )
     parser.add_argument(
@@ -2167,6 +2302,21 @@ def main(argv: list[str] | None = None) -> int:
         chart_incompatible = diff_n is not None or args.metrics or args.contrib
         if args.chart and chart_incompatible:
             raise ValueError("--chart only composes with the default snapshot view or --series")
+        if args.chart:
+            requested = set(args.chart_metric)
+            isin_only = requested & _ISIN_ONLY_CHART_METRICS
+            if isin_only and isin is None:
+                raise ValueError(
+                    f"--chart-metric {', '.join(sorted(isin_only))} requires --isin "
+                    "(a per-share value isn't comparable across funds)"
+                )
+            total_series = series_n is not None and not args.all_holdings and isin is None
+            holding_only = requested & _HOLDING_ONLY_CHART_METRICS
+            if holding_only and total_series:
+                raise ValueError(
+                    f"--chart-metric {', '.join(sorted(holding_only))} doesn't compose with "
+                    "the portfolio-total --series (per-holding only; add --isin or --all-holdings)"
+                )
         if args.contrib:
             return _cmd_performance_contrib(
                 args.db,

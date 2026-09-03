@@ -256,7 +256,25 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
   run, and the two commands use different bases on purpose.
 - **Read with:** Ctr% (return contribution — not the same as weight × TWR).
   P&Lctr (euro-P&L share). WTER (the blend is value-weighted, like `--contrib`).
-  MktVal€ / Cost€ (the two denominators).
+  MktVal€ / Cost€ (the two denominators). pweight (the same cost basis, charted).
+
+### pweight (chart book weight)
+- **Where:** `performance --chart --chart-metric pweight` (snapshot,
+  `--all-holdings`, `--isin`; not the portfolio-total `--series`, ADR-0046)
+- **Type:** share, cost basis
+- **Definition:** Same quantity as `portfolio`'s cost-basis Weight —
+  `row.cost ÷ full-book cost that day × 100` — but the denominator is always
+  the *whole* book regardless of `--isin`/`--all-holdings` narrowing the chart
+  to one holding. `--isin X` therefore plots `X`'s share of everything held,
+  not a constant 100%.
+- **Useful for:** watching one fund's book share drift over time on the same
+  chart as its P&L/TWR — did it grow because you kept buying it, or because
+  it ran and rebalancing lagged.
+- **Don't:** confuse `pweight` with `--sort weight` / `--contrib`'s Weight
+  column — same cost basis as `portfolio`'s Weight, but a distinct token so it
+  is never mistaken for `--contrib`'s market-value Weight on the same chart.
+- **Read with:** Weight (the identical non-charted quantity). Cost€ (the
+  numerator). WTER (the market-value-weighted blend this is not).
 
 ## Risk & drawdown
 
@@ -619,7 +637,9 @@ reported TWR or CAGR as "gross" unless you know what the fund factsheet embeds; 
 describe it as "after-tax net" either — e1f has no tax model.
 
 ### TER (per fund)
-- **Where:** `portfolio` per-fund table; `funds`
+- **Where:** `portfolio` per-fund table; `funds`; `performance --chart
+  --chart-metric ter` (snapshot, `--all-holdings`, `--isin`; not the
+  portfolio-total `--series`, ADR-0046)
 - **Type:** annual percentage, fund metadata
 - **Definition:** The fund's total expense ratio from configuration metadata.
   It is charged within the fund and is therefore already reflected in NAV
@@ -651,11 +671,14 @@ describe it as "after-tax net" either — e1f has no tax model.
   e1f does not compute a gross-vs-net pair).
 
 ### Fee€/yr
-- **Where:** `performance --series` (`Fee€/yr`); `portfolio` per-row (`Fee/yr`)
-  and the total line
+- **Where:** `performance --series` (`Fee€/yr`); `portfolio` per-row
+  (`Fee/yr`) and the total line; `performance --chart --chart-metric fee_yr`
+  (per-holding: snapshot, `--all-holdings`, `--isin`; not the
+  portfolio-total `--series`, ADR-0046)
 - **Type:** money, annual estimate
 - **Definition:** Estimated annual fee = WTER × market value at that date
-  (TER × AUM per holding, then summed).
+  (TER × AUM per holding, then summed). On the chart, one holding's own
+  `ter/100 × market_value` (the same per-holding term the sum is built from).
 - **Useful for:** the bill in euros — "is this a dinner a month or a holiday a
   year." More tangible than 0.22%, and it grows automatically as MktVal€ grows,
   which a rate hides. It is an estimate at today's AUM, not a cash debit e1f
@@ -665,6 +688,28 @@ describe it as "after-tax net" either — e1f has no tax model.
 - **Read with:** WTER (the rate). MktVal€ (the AUM it scales with). Organic gain
   (fees are small next to a good year and loud next to a flat one). `--series`
   (watch the euro fee climb as the book compounds).
+
+### Units / Avg / Last Px (chart per-share fields)
+- **Where:** `performance --chart --chart-metric units|avg|last_px`, all
+  `--isin`-only (ADR-0046); `portfolio`'s per-row Units and Avg paid columns
+  are the same figures, uncharted there
+- **Type:** shares / money (EUR) / money (native currency)
+- **Definition:** `units` = shares held (`row.shares`). `avg` = average cost
+  per share, EUR (`row.cost ÷ row.shares`) — EUR because Cost€ already is,
+  by the ADR-0011 contract. `last_px` = the nearest-prior close
+  (`close_asof`), in the fund's own pinned quote currency — **not** converted
+  to EUR; the chart axis/title name the currency.
+- **Useful for:** watching one fund's own tape (units accumulated, average
+  entry price, last close) on the same time axis as its P&L/TWR, without
+  reaching for `portfolio`.
+- **Don't:** request these for the whole book or `--all-holdings` — a share
+  count or native close has no shared axis across funds with different
+  denominations and split histories, so `--chart-metric` refuses them without
+  `--isin`. Don't read `last_px` as EUR — a USD or GBP fund's close is not a
+  euro number here.
+- **Read with:** Cost€ (avg's numerator). MktVal€ (shares × last_px converted
+  to EUR, which this deliberately isn't). pweight (this fund's book share on
+  the same chart).
 
 ## Benchmark-relative
 
