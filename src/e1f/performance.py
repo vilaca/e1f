@@ -1070,7 +1070,7 @@ def _cmd_performance(
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
     chart: str | None = None,
-    chart_metric: str = "pnl",
+    chart_metrics: list[str] | None = None,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     timeline = _require_timeline(db_path, config_path, isin)
@@ -1140,7 +1140,7 @@ def _cmd_performance(
         for line in render_row_explain(total):
             print(line)
     if chart is not None:
-        _render_snapshot_chart(rows, chart_metric, as_of, chart)
+        _render_snapshot_chart(rows, chart_metrics or ["pnl"], as_of, chart)
     return 0
 
 
@@ -1312,7 +1312,7 @@ def _cmd_performance_series(
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
     chart: str | None = None,
-    chart_metric: str = "pnl",
+    chart_metrics: list[str] | None = None,
     all_holdings: bool = False,
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isin)
@@ -1355,21 +1355,20 @@ def _cmd_performance_series(
                 "\nWTER = market-value-weighted TER; Fee€/yr = WTER × MktVal. "
                 "Holdings without TER metadata contribute 0 (dilutes)."
             )
+    metrics = chart_metrics or ["pnl"]
     if chart is not None:
         if all_holdings and isin is None:
-            per_isin = _per_isin_series(
+            per_isin_all = _per_isin_series(
                 db_path, config_path, currency_meta_path, timeline,
-                start=start, end=as_of, metric=chart_metric,
+                start=start, end=as_of, metrics=metrics,
             )
-            names = {
-                isin_: _etf_name(config_path, isin_) or isin_
-                for isin_ in per_isin
-            }
-            _render_holdings_series_chart(per_isin, names, chart_metric, start, as_of, chart)
+            all_isins = {isin_ for m_data in per_isin_all.values() for isin_ in m_data}
+            names = {isin_: _etf_name(config_path, isin_) or isin_ for isin_ in all_isins}
+            _render_holdings_series_chart(per_isin_all, names, metrics, start, as_of, chart)
         else:
             # The chart always reads chronological order regardless of --reverse.
             chrono = list(reversed(rows)) if reverse else rows
-            _render_series_chart(chrono, chart_metric, chart)
+            _render_series_chart(chrono, metrics, chart)
     return 0
 
 
@@ -1685,6 +1684,42 @@ def _cmd_performance_metrics_series(
     return 0
 
 
+_CHART_METRIC_CHOICES = ("pnl", "xirr", "twr", "cagr", "vol", "maxdd", "value", "cost")
+
+_CHART_METRIC_LABEL: dict[str, tuple[str, str, bool]] = {
+    #              ylabel         title fragment          signed
+    "pnl":   ("P&L %",          "P&L%",                  True),
+    "xirr":  ("XIRR %",         "XIRR %",                True),
+    "twr":   ("TWR %",          "TWR %",                  True),
+    "cagr":  ("CAGR %",         "CAGR %",                 True),
+    "vol":   ("Volatility %",   "Volatility (ann. %)",    False),
+    "maxdd": ("Max Drawdown %", "Max Drawdown %",         False),
+    "value": ("Market Value €", "Market Value (EUR)",     False),
+    "cost":  ("Cost Basis €",   "Cost Basis (EUR)",       False),
+}
+
+
+def _row_metric_value(row: PerformanceRow, metric: str) -> float | None:
+    """Extract the chart value for *metric* from *row* (scaled to display units)."""
+    if metric == "pnl":
+        return row.pnl_pct
+    if metric == "xirr":
+        return None if row.xirr is None else row.xirr * 100.0
+    if metric == "twr":
+        return None if row.twr is None else row.twr * 100.0
+    if metric == "cagr":
+        return None if row.cagr is None else row.cagr * 100.0
+    if metric == "vol":
+        return None if row.volatility is None else row.volatility * 100.0
+    if metric == "maxdd":
+        return None if row.max_drawdown is None else row.max_drawdown * 100.0
+    if metric == "value":
+        return row.market_value
+    if metric == "cost":
+        return row.cost
+    return None  # unreachable; exhaustive over _CHART_METRIC_CHOICES
+
+
 def _per_isin_series(
     db_path: str,
     config_path: str,
@@ -1693,45 +1728,41 @@ def _per_isin_series(
     *,
     start: str,
     end: str,
-    metric: str,
-) -> dict[str, list[tuple[str, float]]]:
-    """Per-ISIN ``{isin: [(day, value_pct), ...]}`` over the trading-day window.
+    metrics: list[str],
+) -> dict[str, dict[str, list[tuple[str, float]]]]:
+    """Per-ISIN, per-metric ``{metric: {isin: [(day, value), ...]}}`` over the window.
 
-    Reuses the same ``_snapshot`` pass as ``_series_rows`` but keeps individual
-    rows instead of aggregating to the portfolio total.
+    Collects all metrics in a single snapshot pass per day to avoid redundant
+    DB work.
     """
-    result: dict[str, list[tuple[str, float]]] = {}
+    result: dict[str, dict[str, list[tuple[str, float]]]] = {m: {} for m in metrics}
     for day in _trading_days(db_path, timeline, start, end):
         rows, _holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
         for row in rows:
-            if metric == "pnl":
-                val = row.pnl_pct
-            else:
-                val = None if row.volatility is None else row.volatility * 100.0
-            if val is not None:
-                result.setdefault(row.isin, []).append((day, val))
+            for metric in metrics:
+                val = _row_metric_value(row, metric)
+                if val is not None:
+                    result[metric].setdefault(row.isin, []).append((day, val))
     return result
 
 
 def _render_holdings_series_chart(
-    data: dict[str, list[tuple[str, float]]],
+    all_data: dict[str, dict[str, list[tuple[str, float]]]],
     names: dict[str, str],
-    metric: str,
+    metrics: list[str],
     start: str,
     end: str,
     output: str,
 ) -> None:
-    """Save a multi-line chart with one line per ISIN to *output*."""
-    if not data:
+    """Save a per-holding multi-line chart (one subplot per metric) to *output*.
+
+    ``all_data`` maps metric → {isin → [(day, value)]} as returned by
+    ``_per_isin_series``.
+    """
+    if not any(all_data.values()):
         print("No valued days to chart")
         return
 
-    all_days: list[str] = sorted({d for pts in data.values() for d, _ in pts})
-
-    ylabel = "P&L %" if metric == "pnl" else "Volatility %"
-    title_metric = "P&L%" if metric == "pnl" else "Volatility (annualized %)"
-
-    fig, ax = plt.subplots(figsize=(13, 6))
     palette = [
         "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
         "#1abc9c", "#e67e22", "#34495e", "#c0392b", "#16a085",
@@ -1739,157 +1770,154 @@ def _render_holdings_series_chart(
     linestyles = ["-", "--", "-.", ":"]
     markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
 
+    all_isins: list[str] = sorted({
+        isin for m_data in all_data.values() for isin in m_data
+    })
+
+    # Shared x-axis: union of all days across all metrics and ISINs
+    all_days_set: set[str] = set()
+    for m_data in all_data.values():
+        for pts in m_data.values():
+            all_days_set.update(d for d, _ in pts)
+    all_days = sorted(all_days_set)
     day_idx = {day: i for i, day in enumerate(all_days)}
 
-    for idx, (isin, points) in enumerate(sorted(data.items())):
-        xs = [day_idx[d] for d, _ in points]
-        values = [v for _, v in points]
-        color = palette[idx % len(palette)]
-        linestyle = linestyles[(idx // len(palette)) % len(linestyles)]
-        marker = markers[idx % len(markers)]
-        markevery = max(1, len(xs) // 8)
-        label = names.get(isin) or isin
-        ax.plot(
-            xs, values,
-            color=color, linewidth=1.4, linestyle=linestyle,
-            marker=marker, markersize=4, markevery=markevery,
-            label=label,
-        )
+    n = len(metrics)
+    fig, axes = plt.subplots(n, 1, figsize=(13, 4.5 * n), sharex=True, squeeze=False)
 
-    if metric == "pnl":
-        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+    for ax, metric in zip(axes[:, 0], metrics, strict=True):
+        ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+        m_data = all_data.get(metric, {})
 
+        for idx, isin in enumerate(all_isins):
+            pts = m_data.get(isin) or []
+            if not pts:
+                continue
+            xs = [day_idx[d] for d, _ in pts]
+            values = [v for _, v in pts]
+            color = palette[idx % len(palette)]
+            linestyle = linestyles[(idx // len(palette)) % len(linestyles)]
+            marker = markers[idx % len(markers)]
+            markevery = max(1, len(xs) // 8)
+            label = names.get(isin) or isin
+            ax.plot(
+                xs, values,
+                color=color, linewidth=1.4, linestyle=linestyle,
+                marker=marker, markersize=4, markevery=markevery,
+                label=label,
+            )
+
+        if signed:
+            ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(title_frag, fontsize=10, loc="left")
+        ax.legend(fontsize=7, loc="best", framealpha=0.7)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    bottom_ax = axes[-1, 0]
     n_ticks = min(10, len(all_days))
     step = max(1, len(all_days) // n_ticks)
     tick_positions = list(range(0, len(all_days), step))
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(
+    bottom_ax.set_xticks(tick_positions)
+    bottom_ax.set_xticklabels(
         [all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8
     )
 
-    ax.set_title(f"Holdings {title_metric} — {start} → {end}")
-    ax.set_ylabel(ylabel)
-    ax.legend(fontsize=8, loc="best", framealpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    fig.suptitle(f"Holdings — {start} → {end}", fontsize=11)
     plt.tight_layout()
     plt.savefig(output, dpi=150)
     plt.close(fig)
     print(f"Chart saved to {output}")
 
 
-def _chart_series_values(
-    points: list[SeriesPoint], metric: str
-) -> list[tuple[str, float]]:
-    """Extract (day, value-in-pct) pairs from *points* for the given metric."""
-    result = []
-    for p in points:
-        if metric == "pnl":
-            val = p.total.pnl_pct
-        else:  # vol
-            val = None if p.total.volatility is None else p.total.volatility * 100.0
-        if val is not None:
-            result.append((p.day, val))
-    return result
 
+def _render_series_chart(
+    points: list[SeriesPoint], metrics: list[str], output: str
+) -> None:
+    """Save a portfolio-total line chart (one subplot per metric) to *output*."""
+    n = len(metrics)
+    fig, axes = plt.subplots(n, 1, figsize=(12, 3.5 * n), sharex=True, squeeze=False)
+    all_days: list[str] = [p.day for p in points]
+    xs = list(range(len(all_days)))
 
-def _render_series_chart(points: list[SeriesPoint], metric: str, output: str) -> None:
-    """Save a metric line chart over the series window to *output*."""
-    dated = _chart_series_values(points, metric)
-    if not dated:
-        print("No valued days to chart")
-        return
+    for ax, metric in zip(axes[:, 0], metrics, strict=True):
+        dated = [(i, v) for i, p in enumerate(points)
+                 if (v := _row_metric_value(p.total, metric)) is not None]
+        if not dated:
+            ax.set_visible(False)
+            continue
+        xi = [i for i, _ in dated]
+        values = [v for _, v in dated]
+        ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+        color = ("#2ecc71" if values[-1] >= 0 else "#e74c3c") if signed else "#3498db"
+        ax.plot(xi, values, color=color, linewidth=1.5)
+        ax.fill_between(xi, values, 0, alpha=0.15, color=color)
+        if signed:
+            ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(title_frag, fontsize=10, loc="left")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    days = [d for d, _ in dated]
-    values = [v for _, v in dated]
+    if all_days:
+        bottom_ax = axes[-1, 0]
+        n_ticks = min(10, len(xs))
+        step = max(1, len(xs) // n_ticks)
+        tick_positions = list(range(0, len(xs), step))
+        bottom_ax.set_xticks(tick_positions)
+        bottom_ax.set_xticklabels(
+            [all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8
+        )
 
-    if metric == "pnl":
-        color = "#2ecc71" if values[-1] >= 0 else "#e74c3c"
-        ylabel = "P&L %"
-        title_metric = "P&L%"
-    else:
-        color = "#3498db"
-        ylabel = "Volatility %"
-        title_metric = "Volatility (annualized %)"
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(days, values, color=color, linewidth=1.5)
-    ax.fill_between(days, values, 0, alpha=0.15, color=color)
-    if metric == "pnl":
-        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
-
-    n_ticks = min(10, len(days))
-    step = max(1, len(days) // n_ticks)
-    tick_positions = list(range(0, len(days), step))
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels([days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8)
-
-    start, end = days[0], days[-1]
-    ax.set_title(f"Portfolio {title_metric} — {start} → {end}")
-    ax.set_ylabel(ylabel)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    start, end = (all_days[0], all_days[-1]) if all_days else ("", "")
+    fig.suptitle(f"Portfolio — {start} → {end}", fontsize=11)
     plt.tight_layout()
     plt.savefig(output, dpi=150)
     plt.close(fig)
     print(f"Chart saved to {output}")
-
-
-def _snapshot_chart_values(rows: list[PerformanceRow], metric: str) -> list[float]:
-    """Extract per-holding values (in %) for *metric* in the same order as *rows*."""
-    if metric == "pnl":
-        return [r.pnl_pct or 0.0 for r in rows]
-    return [(r.volatility or 0.0) * 100.0 for r in rows]
 
 
 def _render_snapshot_chart(
-    rows: list[PerformanceRow], metric: str, as_of: str, output: str
+    rows: list[PerformanceRow], metrics: list[str], as_of: str, output: str
 ) -> None:
-    """Save a horizontal bar chart for the given metric per holding to *output*."""
-    if metric == "pnl":
-        valued = [r for r in rows if r.pnl_pct is not None]
-        xlabel = "P&L %"
-        title = f"Portfolio P&L% as of {as_of}"
-        signed = True
-    else:
-        valued = [r for r in rows if r.volatility is not None]
-        xlabel = "Volatility %"
-        title = f"Portfolio Annualized Volatility % as of {as_of}"
-        signed = False
+    """Save a horizontal bar chart per metric (one subplot per metric) to *output*."""
+    n = len(metrics)
+    bar_h = max(4, 0.5 * len(rows) + 1.5)
+    fig, axes = plt.subplots(1, n, figsize=(9 * n, bar_h), squeeze=False)
 
-    if not valued:
-        print("No valued holdings to chart")
-        return
-
-    sorted_rows = sorted(valued, key=lambda r: _snapshot_chart_values([r], metric)[0])
-    labels = [r.name or r.isin for r in sorted_rows]
-    values = _snapshot_chart_values(sorted_rows, metric)
-    if metric == "pnl":
-        colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in values]
-    else:
-        colors = ["#3498db"] * len(values)
-
-    fig, ax = plt.subplots(figsize=(10, max(4, 0.5 * len(labels) + 1.5)))
-    bars = ax.barh(labels, values, color=colors, edgecolor="none")
-    if metric == "pnl":
-        ax.axvline(0, color="#555555", linewidth=0.8, linestyle="--")
-
-    for bar, val in zip(bars, values, strict=True):
-        label_txt = f"{'+' if signed and val >= 0 else ''}{val:.1f}%"
-        offset = 0.05 * (max(values) - min(values)) if values else 0.1
-        ax.text(
-            bar.get_width() + (offset if val >= 0 or not signed else -offset),
-            bar.get_y() + bar.get_height() / 2,
-            label_txt,
-            va="center",
-            ha="left" if val >= 0 or not signed else "right",
-            fontsize=9,
+    for ax, metric in zip(axes[0], metrics, strict=True):
+        ylabel, _title_frag, signed = _CHART_METRIC_LABEL[metric]
+        valued = [r for r in rows if _row_metric_value(r, metric) is not None]
+        if not valued:
+            ax.set_visible(False)
+            continue
+        sorted_rows = sorted(valued, key=lambda r: _row_metric_value(r, metric) or 0.0)
+        labels = [r.name or r.isin for r in sorted_rows]
+        values = [_row_metric_value(r, metric) or 0.0 for r in sorted_rows]
+        colors = (
+            ["#2ecc71" if v >= 0 else "#e74c3c" for v in values] if signed
+            else ["#3498db"] * len(values)
         )
+        bars = ax.barh(labels, values, color=colors, edgecolor="none")
+        if signed:
+            ax.axvline(0, color="#555555", linewidth=0.8, linestyle="--")
+        offset = 0.05 * (max(values) - min(values)) if len(values) > 1 else 0.1
+        for bar, val in zip(bars, values, strict=True):
+            sign = "+" if signed and val >= 0 else ""
+            ax.text(
+                bar.get_width() + (offset if val >= 0 or not signed else -offset),
+                bar.get_y() + bar.get_height() / 2,
+                f"{sign}{val:.1f}",
+                va="center",
+                ha="left" if val >= 0 or not signed else "right",
+                fontsize=9,
+            )
+        ax.set_xlabel(ylabel)
+        ax.set_title(f"{ylabel} as of {as_of}", fontsize=10)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    ax.set_xlabel(xlabel)
-    ax.set_title(title)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
     plt.tight_layout()
     plt.savefig(output, dpi=150)
     plt.close(fig)
@@ -2043,9 +2071,15 @@ Examples:
     )
     parser.add_argument(
         "--chart-metric",
-        choices=("pnl", "vol"),
-        default="pnl",
-        help="Metric to plot with --chart: pnl (P&L%%, default) or vol (annualized volatility%%)",
+        choices=_CHART_METRIC_CHOICES,
+        default=["pnl"],
+        nargs="+",
+        metavar="METRIC",
+        help=(
+            "One or more metrics to plot with --chart (default: pnl). "
+            f"Choices: {', '.join(_CHART_METRIC_CHOICES)}. "
+            "Multiple values produce stacked subplots."
+        ),
     )
     parser.add_argument(
         "--all-holdings",
@@ -2130,7 +2164,7 @@ def main(argv: list[str] | None = None) -> int:
                 currency_meta_path=args.currency_meta,
                 isin=isin,
                 chart=args.chart,
-                chart_metric=args.chart_metric,
+                chart_metrics=args.chart_metric,
                 all_holdings=args.all_holdings,
             )
         if diff_n is not None:
@@ -2159,7 +2193,7 @@ def main(argv: list[str] | None = None) -> int:
             currency_meta_path=args.currency_meta,
             isin=isin,
             chart=args.chart,
-            chart_metric=args.chart_metric,
+            chart_metrics=args.chart_metric,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
