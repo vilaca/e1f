@@ -213,7 +213,7 @@ def _distribution_label(distribution: str) -> str:
 _BROKER_LABELS = {"trade_republic": "tr"}
 _ASSET_CLASS_LABELS = {"Real Estate": "REITs", "Equity": "Eqty"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 153  # remaining columns + inter-column spaces
+_TABLE_WIDTH = _BROKER_COL + 158  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -346,7 +346,7 @@ def _table_header(*, show_broker: bool, show_cost_basis: bool, show_status: bool
     if show_cost_basis:
         header += (
             f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
-            f" {'Last px':>8} {'Total':>8} {'Value€':>9}"
+            f" {'Last px':>8} {'Dir':>4} {'Total':>8} {'Value€':>9}"
         )
     else:
         header += f" {'Weight':>7}"
@@ -435,10 +435,11 @@ def _cmd_portfolio(
             fee_str = f"€{fee:.2f}" if fee is not None else "—"
             last_px = _last_known_price(db_path, holding.symbol)
             last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
+            dir_str = "n/a" if last_px is None else ("+" if last_px >= holding.avg_cost else "-")
             value_str = f"{value:>9.2f}" if value is not None else f"{'—':>9}"
             row += (
                 f" {fee_str:>8} {weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
-                f" {last_px_str} {holding.total_paid:>8.2f} {value_str}"
+                f" {last_px_str} {dir_str:>4} {holding.total_paid:>8.2f} {value_str}"
             )
         else:
             row += f" {weight:>6.1f}%"
