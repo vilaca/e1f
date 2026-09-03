@@ -1313,6 +1313,7 @@ def _cmd_performance_series(
     isin: str | None = None,
     chart: str | None = None,
     chart_metric: str = "pnl",
+    all_holdings: bool = False,
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isin)
     if timeline is None:
@@ -1355,9 +1356,20 @@ def _cmd_performance_series(
                 "Holdings without TER metadata contribute 0 (dilutes)."
             )
     if chart is not None:
-        # The chart always reads chronological order regardless of --reverse.
-        chrono = list(reversed(rows)) if reverse else rows
-        _render_series_chart(chrono, chart_metric, chart)
+        if all_holdings and isin is None:
+            per_isin = _per_isin_series(
+                db_path, config_path, currency_meta_path, timeline,
+                start=start, end=as_of, metric=chart_metric,
+            )
+            names = {
+                isin_: _etf_name(config_path, isin_) or isin_
+                for isin_ in per_isin
+            }
+            _render_holdings_series_chart(per_isin, names, chart_metric, start, as_of, chart)
+        else:
+            # The chart always reads chronological order regardless of --reverse.
+            chrono = list(reversed(rows)) if reverse else rows
+            _render_series_chart(chrono, chart_metric, chart)
     return 0
 
 
@@ -1673,6 +1685,99 @@ def _cmd_performance_metrics_series(
     return 0
 
 
+def _per_isin_series(
+    db_path: str,
+    config_path: str,
+    currency_meta_path: str,
+    timeline: dict[str, list[PositionEvent]],
+    *,
+    start: str,
+    end: str,
+    metric: str,
+) -> dict[str, list[tuple[str, float]]]:
+    """Per-ISIN ``{isin: [(day, value_pct), ...]}`` over the trading-day window.
+
+    Reuses the same ``_snapshot`` pass as ``_series_rows`` but keeps individual
+    rows instead of aggregating to the portfolio total.
+    """
+    result: dict[str, list[tuple[str, float]]] = {}
+    for day in _trading_days(db_path, timeline, start, end):
+        rows, _holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
+        for row in rows:
+            if metric == "pnl":
+                val = row.pnl_pct
+            else:
+                val = None if row.volatility is None else row.volatility * 100.0
+            if val is not None:
+                result.setdefault(row.isin, []).append((day, val))
+    return result
+
+
+def _render_holdings_series_chart(
+    data: dict[str, list[tuple[str, float]]],
+    names: dict[str, str],
+    metric: str,
+    start: str,
+    end: str,
+    output: str,
+) -> None:
+    """Save a multi-line chart with one line per ISIN to *output*."""
+    if not data:
+        print("No valued days to chart")
+        return
+
+    all_days: list[str] = sorted({d for pts in data.values() for d, _ in pts})
+
+    ylabel = "P&L %" if metric == "pnl" else "Volatility %"
+    title_metric = "P&L%" if metric == "pnl" else "Volatility (annualized %)"
+
+    fig, ax = plt.subplots(figsize=(13, 6))
+    palette = [
+        "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+        "#1abc9c", "#e67e22", "#34495e", "#c0392b", "#16a085",
+    ]
+    linestyles = ["-", "--", "-.", ":"]
+    markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
+
+    day_idx = {day: i for i, day in enumerate(all_days)}
+
+    for idx, (isin, points) in enumerate(sorted(data.items())):
+        xs = [day_idx[d] for d, _ in points]
+        values = [v for _, v in points]
+        color = palette[idx % len(palette)]
+        linestyle = linestyles[(idx // len(palette)) % len(linestyles)]
+        marker = markers[idx % len(markers)]
+        markevery = max(1, len(xs) // 8)
+        label = names.get(isin) or isin
+        ax.plot(
+            xs, values,
+            color=color, linewidth=1.4, linestyle=linestyle,
+            marker=marker, markersize=4, markevery=markevery,
+            label=label,
+        )
+
+    if metric == "pnl":
+        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+
+    n_ticks = min(10, len(all_days))
+    step = max(1, len(all_days) // n_ticks)
+    tick_positions = list(range(0, len(all_days), step))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(
+        [all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8
+    )
+
+    ax.set_title(f"Holdings {title_metric} — {start} → {end}")
+    ax.set_ylabel(ylabel)
+    ax.legend(fontsize=8, loc="best", framealpha=0.7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Chart saved to {output}")
+
+
 def _chart_series_values(
     points: list[SeriesPoint], metric: str
 ) -> list[tuple[str, float]]:
@@ -1942,6 +2047,12 @@ Examples:
         default="pnl",
         help="Metric to plot with --chart: pnl (P&L%%, default) or vol (annualized volatility%%)",
     )
+    parser.add_argument(
+        "--all-holdings",
+        action="store_true",
+        help="With --series --chart: plot one line per holding instead of the portfolio total. "
+        "Ignored without --chart --series.",
+    )
     return parser
 
 
@@ -2020,6 +2131,7 @@ def main(argv: list[str] | None = None) -> int:
                 isin=isin,
                 chart=args.chart,
                 chart_metric=args.chart_metric,
+                all_holdings=args.all_holdings,
             )
         if diff_n is not None:
             end = args.as_of
