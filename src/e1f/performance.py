@@ -1314,6 +1314,7 @@ def _cmd_performance_series(
     chart: str | None = None,
     chart_metrics: list[str] | None = None,
     all_holdings: bool = False,
+    chart_overlay: bool = False,
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isin)
     if timeline is None:
@@ -1368,7 +1369,7 @@ def _cmd_performance_series(
         else:
             # The chart always reads chronological order regardless of --reverse.
             chrono = list(reversed(rows)) if reverse else rows
-            _render_series_chart(chrono, metrics, chart)
+            _render_series_chart(chrono, metrics, chart, overlay=chart_overlay)
     return 0
 
 
@@ -1684,12 +1685,13 @@ def _cmd_performance_metrics_series(
     return 0
 
 
-_CHART_METRIC_CHOICES = ("pnl", "xirr", "twr", "cagr", "vol", "maxdd", "value", "cost")
+_CHART_METRIC_CHOICES = ("pnl", "pnl_eur", "xirr", "twr", "cagr", "vol", "maxdd", "value", "cost")
 
 _CHART_METRIC_LABEL: dict[str, tuple[str, str, bool]] = {
     #              ylabel         title fragment          signed
-    "pnl":   ("P&L %",          "P&L%",                  True),
-    "xirr":  ("XIRR %",         "XIRR %",                True),
+    "pnl":     ("P&L %",          "P&L%",                  True),
+    "pnl_eur": ("P&L €",         "P&L (EUR)",              True),
+    "xirr":    ("XIRR %",        "XIRR %",                True),
     "twr":   ("TWR %",          "TWR %",                  True),
     "cagr":  ("CAGR %",         "CAGR %",                 True),
     "vol":   ("Volatility %",   "Volatility (ann. %)",    False),
@@ -1703,6 +1705,8 @@ def _row_metric_value(row: PerformanceRow, metric: str) -> float | None:
     """Extract the chart value for *metric* from *row* (scaled to display units)."""
     if metric == "pnl":
         return row.pnl_pct
+    if metric == "pnl_eur":
+        return row.pnl
     if metric == "xirr":
         return None if row.xirr is None else row.xirr * 100.0
     if metric == "twr":
@@ -1832,46 +1836,77 @@ def _render_holdings_series_chart(
 
 
 
-def _render_series_chart(
-    points: list[SeriesPoint], metrics: list[str], output: str
-) -> None:
-    """Save a portfolio-total line chart (one subplot per metric) to *output*."""
-    n = len(metrics)
-    fig, axes = plt.subplots(n, 1, figsize=(12, 3.5 * n), sharex=True, squeeze=False)
-    all_days: list[str] = [p.day for p in points]
-    xs = list(range(len(all_days)))
+_METRIC_COLORS = [
+    "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+    "#1abc9c", "#e67e22", "#34495e",
+]
 
-    for ax, metric in zip(axes[:, 0], metrics, strict=True):
-        dated = [(i, v) for i, p in enumerate(points)
-                 if (v := _row_metric_value(p.total, metric)) is not None]
-        if not dated:
-            ax.set_visible(False)
-            continue
-        xi = [i for i, _ in dated]
-        values = [v for _, v in dated]
-        ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
-        color = ("#2ecc71" if values[-1] >= 0 else "#e74c3c") if signed else "#3498db"
-        ax.plot(xi, values, color=color, linewidth=1.5)
-        ax.fill_between(xi, values, 0, alpha=0.15, color=color)
-        if signed:
-            ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
-        ax.set_ylabel(ylabel, fontsize=9)
-        ax.set_title(title_frag, fontsize=10, loc="left")
+
+def _apply_xticks(ax: plt.Axes, all_days: list[str]) -> None:  # type: ignore[name-defined]
+    xs = list(range(len(all_days)))
+    n_ticks = min(10, len(xs))
+    step = max(1, len(xs) // n_ticks)
+    tick_positions = list(range(0, len(xs), step))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels([all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8)
+
+
+def _render_series_chart(
+    points: list[SeriesPoint], metrics: list[str], output: str, *, overlay: bool = False
+) -> None:
+    """Save a portfolio-total line chart to *output*.
+
+    ``overlay=True`` draws all metrics as lines on a single panel; the default
+    stacks one subplot per metric.
+    """
+    all_days: list[str] = [p.day for p in points]
+    start, end = (all_days[0], all_days[-1]) if all_days else ("", "")
+
+    if overlay and len(metrics) > 1:
+        fig, ax = plt.subplots(figsize=(12, 5))
+        for m_idx, metric in enumerate(metrics):
+            dated = [(i, v) for i, p in enumerate(points)
+                     if (v := _row_metric_value(p.total, metric)) is not None]
+            if not dated:
+                continue
+            xi = [i for i, _ in dated]
+            values = [v for _, v in dated]
+            ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+            color = _METRIC_COLORS[m_idx % len(_METRIC_COLORS)]
+            linestyle = ["-", "--", "-.", ":"][m_idx % 4]
+            ax.plot(xi, values, color=color, linewidth=1.5, linestyle=linestyle, label=title_frag)
+        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+        ax.set_ylabel("%")
+        ax.legend(fontsize=9, loc="best", framealpha=0.7)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        _apply_xticks(ax, all_days)
+        fig.suptitle(f"Portfolio — {start} → {end}", fontsize=11)
+    else:
+        n = len(metrics)
+        fig, axes = plt.subplots(n, 1, figsize=(12, 3.5 * n), sharex=True, squeeze=False)
+        for ax, metric in zip(axes[:, 0], metrics, strict=True):
+            dated = [(i, v) for i, p in enumerate(points)
+                     if (v := _row_metric_value(p.total, metric)) is not None]
+            if not dated:
+                ax.set_visible(False)
+                continue
+            xi = [i for i, _ in dated]
+            values = [v for _, v in dated]
+            ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+            color = ("#2ecc71" if values[-1] >= 0 else "#e74c3c") if signed else "#3498db"
+            ax.plot(xi, values, color=color, linewidth=1.5)
+            ax.fill_between(xi, values, 0, alpha=0.15, color=color)
+            if signed:
+                ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+            ax.set_ylabel(ylabel, fontsize=9)
+            ax.set_title(title_frag, fontsize=10, loc="left")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+        if all_days:
+            _apply_xticks(axes[-1, 0], all_days)
+        fig.suptitle(f"Portfolio — {start} → {end}", fontsize=11)
 
-    if all_days:
-        bottom_ax = axes[-1, 0]
-        n_ticks = min(10, len(xs))
-        step = max(1, len(xs) // n_ticks)
-        tick_positions = list(range(0, len(xs), step))
-        bottom_ax.set_xticks(tick_positions)
-        bottom_ax.set_xticklabels(
-            [all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8
-        )
-
-    start, end = (all_days[0], all_days[-1]) if all_days else ("", "")
-    fig.suptitle(f"Portfolio — {start} → {end}", fontsize=11)
     plt.tight_layout()
     plt.savefig(output, dpi=150)
     plt.close(fig)
@@ -2087,6 +2122,12 @@ Examples:
         help="With --series --chart: plot one line per holding instead of the portfolio total. "
         "Ignored without --chart --series.",
     )
+    parser.add_argument(
+        "--chart-overlay",
+        action="store_true",
+        help="With --series --chart and multiple --chart-metric values: draw all metrics as "
+        "lines on a single shared panel instead of stacked subplots.",
+    )
     return parser
 
 
@@ -2166,6 +2207,7 @@ def main(argv: list[str] | None = None) -> int:
                 chart=args.chart,
                 chart_metrics=args.chart_metric,
                 all_holdings=args.all_holdings,
+                chart_overlay=args.chart_overlay,
             )
         if diff_n is not None:
             end = args.as_of
