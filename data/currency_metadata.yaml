@@ -74,6 +74,10 @@ IE00BFMXXD54:
   currency: USD
   symbol: VUAA:LSE:USD
   xid: '534460756'
+IE00BHZRR030:
+  currency: EUR
+  symbol: FLXK:GER:EUR
+  xid: '537526831'
 IE00BK5BQT80:
   currency: USD
   symbol: VWRA:LSE:USD
