@@ -1310,6 +1310,7 @@ def _cmd_performance_series(
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
+    chart: str | None = None,
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isin)
     if timeline is None:
@@ -1323,32 +1324,38 @@ def _cmd_performance_series(
     if reverse:
         rows = list(reversed(rows))
 
-    print(
-        f"\n{_subject_phrase(config_path, isin)} performance series "
-        f"{start} → {as_of} (EUR, cumulative since inception)"
-    )
-    print(_SERIES_HEADER)
-    print("-" * _SERIES_RULE_WIDTH)
-    for point in rows:
-        print(_format_series_row(point))
+    quiet = chart is not None
+    if not quiet:
+        print(
+            f"\n{_subject_phrase(config_path, isin)} performance series "
+            f"{start} → {as_of} (EUR, cumulative since inception)"
+        )
+        print(_SERIES_HEADER)
+        print("-" * _SERIES_RULE_WIDTH)
+        for point in rows:
+            print(_format_series_row(point))
 
-    if any(point.total.short_history for point in rows):
-        print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
-    if any(point.total.estimated for point in rows):
-        print(
-            "\n~ MktVal carried forward from an earlier close on flagged days "
-            "(no close on the day itself — fetch to refresh)."
-        )
-    if any(point.daily_twr is not None for point in rows):
-        print(
-            "\nDaily TWR is that day's time-weighted return (the increment that "
-            "compounds into TWR); a gap-bridged period, not always one calendar day."
-        )
-    if any(point.weighted_ter is not None for point in rows):
-        print(
-            "\nWTER = market-value-weighted TER; Fee€/yr = WTER × MktVal. "
-            "Holdings without TER metadata contribute 0 (dilutes)."
-        )
+        if any(point.total.short_history for point in rows):
+            print("\n* < 1y or short history — annualized figures (Vol, CAGR) extrapolated")
+        if any(point.total.estimated for point in rows):
+            print(
+                "\n~ MktVal carried forward from an earlier close on flagged days "
+                "(no close on the day itself — fetch to refresh)."
+            )
+        if any(point.daily_twr is not None for point in rows):
+            print(
+                "\nDaily TWR is that day's time-weighted return (the increment that "
+                "compounds into TWR); a gap-bridged period, not always one calendar day."
+            )
+        if any(point.weighted_ter is not None for point in rows):
+            print(
+                "\nWTER = market-value-weighted TER; Fee€/yr = WTER × MktVal. "
+                "Holdings without TER metadata contribute 0 (dilutes)."
+            )
+    if chart is not None:
+        # The chart always reads chronological order regardless of --reverse.
+        chrono = list(reversed(rows)) if reverse else rows
+        _render_pnl_series_chart(chrono, chart)
     return 0
 
 
@@ -1664,6 +1671,39 @@ def _cmd_performance_metrics_series(
     return 0
 
 
+def _render_pnl_series_chart(points: list[SeriesPoint], output: str) -> None:
+    """Save a P&L% line chart over the series window to *output*."""
+    dated = [(p.day, p.total.pnl_pct) for p in points if p.total.pnl_pct is not None]
+    if not dated:
+        print("No valued days to chart")
+        return
+
+    days = [d for d, _ in dated]
+    values = [v for _, v in dated]
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    color = "#2ecc71" if values[-1] >= 0 else "#e74c3c"
+    ax.plot(days, values, color=color, linewidth=1.5)
+    ax.fill_between(days, values, 0, alpha=0.15, color=color)
+    ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+
+    n_ticks = min(10, len(days))
+    step = max(1, len(days) // n_ticks)
+    tick_positions = list(range(0, len(days), step))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels([days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8)
+
+    start, end = days[0], days[-1]
+    ax.set_title(f"Portfolio P&L% — {start} → {end}")
+    ax.set_ylabel("P&L %")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Chart saved to {output}")
+
+
 def _render_pnl_chart(rows: list[PerformanceRow], as_of: str, output: str) -> None:
     """Save a horizontal P&L% bar chart for valued holdings to *output*."""
     valuable = [r for r in rows if r.pnl_pct is not None]
@@ -1882,11 +1922,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--metrics does not compose with --diff")
         if args.contrib and (diff_n is not None or series_n is not None or args.metrics):
             raise ValueError("--contrib does not compose with --diff/--series/--metrics")
-        chart_incompatible = (
-            diff_n is not None or series_n is not None or args.metrics or args.contrib
-        )
+        chart_incompatible = diff_n is not None or args.metrics or args.contrib
         if args.chart and chart_incompatible:
-            raise ValueError("--chart only composes with the default snapshot view")
+            raise ValueError("--chart only composes with the default snapshot view or --series")
         if args.contrib:
             return _cmd_performance_contrib(
                 args.db,
@@ -1924,6 +1962,7 @@ def main(argv: list[str] | None = None) -> int:
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
                 isin=isin,
+                chart=args.chart,
             )
         if diff_n is not None:
             end = args.as_of
