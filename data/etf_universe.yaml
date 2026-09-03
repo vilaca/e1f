@@ -819,3 +819,25 @@ etfs:
     distribution: Accumulating
     ter: 0.12
     asset_class: Precious Metals
+  IE00BHZRR030:
+    name: FRK FTSE KOREA UCITS ETF
+    tickers:
+    - FLXK
+    - FLRK
+    exchange: GR
+    figi: BBG00P80NQ11
+    listings:
+    - ticker: FLXK
+      exchange: GR
+    - ticker: FLXK
+      exchange: LN
+    - ticker: FLRK
+      exchange: LN
+    - ticker: FLXK
+      exchange: NA
+    resolved_at: '2026-09-01T18:46:10.916054+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.09
+    asset_class: Equity
