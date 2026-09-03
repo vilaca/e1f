@@ -1070,6 +1070,7 @@ def _cmd_performance(
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
     chart: str | None = None,
+    chart_metric: str = "pnl",
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
     timeline = _require_timeline(db_path, config_path, isin)
@@ -1139,7 +1140,7 @@ def _cmd_performance(
         for line in render_row_explain(total):
             print(line)
     if chart is not None:
-        _render_pnl_chart(rows, as_of, chart)
+        _render_snapshot_chart(rows, chart_metric, as_of, chart)
     return 0
 
 
@@ -1311,6 +1312,7 @@ def _cmd_performance_series(
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     isin: str | None = None,
     chart: str | None = None,
+    chart_metric: str = "pnl",
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isin)
     if timeline is None:
@@ -1355,7 +1357,7 @@ def _cmd_performance_series(
     if chart is not None:
         # The chart always reads chronological order regardless of --reverse.
         chrono = list(reversed(rows)) if reverse else rows
-        _render_pnl_series_chart(chrono, chart)
+        _render_series_chart(chrono, chart_metric, chart)
     return 0
 
 
@@ -1671,9 +1673,24 @@ def _cmd_performance_metrics_series(
     return 0
 
 
-def _render_pnl_series_chart(points: list[SeriesPoint], output: str) -> None:
-    """Save a P&L% line chart over the series window to *output*."""
-    dated = [(p.day, p.total.pnl_pct) for p in points if p.total.pnl_pct is not None]
+def _chart_series_values(
+    points: list[SeriesPoint], metric: str
+) -> list[tuple[str, float]]:
+    """Extract (day, value-in-pct) pairs from *points* for the given metric."""
+    result = []
+    for p in points:
+        if metric == "pnl":
+            val = p.total.pnl_pct
+        else:  # vol
+            val = None if p.total.volatility is None else p.total.volatility * 100.0
+        if val is not None:
+            result.append((p.day, val))
+    return result
+
+
+def _render_series_chart(points: list[SeriesPoint], metric: str, output: str) -> None:
+    """Save a metric line chart over the series window to *output*."""
+    dated = _chart_series_values(points, metric)
     if not dated:
         print("No valued days to chart")
         return
@@ -1681,11 +1698,20 @@ def _render_pnl_series_chart(points: list[SeriesPoint], output: str) -> None:
     days = [d for d, _ in dated]
     values = [v for _, v in dated]
 
+    if metric == "pnl":
+        color = "#2ecc71" if values[-1] >= 0 else "#e74c3c"
+        ylabel = "P&L %"
+        title_metric = "P&L%"
+    else:
+        color = "#3498db"
+        ylabel = "Volatility %"
+        title_metric = "Volatility (annualized %)"
+
     fig, ax = plt.subplots(figsize=(12, 5))
-    color = "#2ecc71" if values[-1] >= 0 else "#e74c3c"
     ax.plot(days, values, color=color, linewidth=1.5)
     ax.fill_between(days, values, 0, alpha=0.15, color=color)
-    ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+    if metric == "pnl":
+        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
 
     n_ticks = min(10, len(days))
     step = max(1, len(days) // n_ticks)
@@ -1694,8 +1720,8 @@ def _render_pnl_series_chart(points: list[SeriesPoint], output: str) -> None:
     ax.set_xticklabels([days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8)
 
     start, end = days[0], days[-1]
-    ax.set_title(f"Portfolio P&L% — {start} → {end}")
-    ax.set_ylabel("P&L %")
+    ax.set_title(f"Portfolio {title_metric} — {start} → {end}")
+    ax.set_ylabel(ylabel)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     plt.tight_layout()
@@ -1704,35 +1730,59 @@ def _render_pnl_series_chart(points: list[SeriesPoint], output: str) -> None:
     print(f"Chart saved to {output}")
 
 
-def _render_pnl_chart(rows: list[PerformanceRow], as_of: str, output: str) -> None:
-    """Save a horizontal P&L% bar chart for valued holdings to *output*."""
-    valuable = [r for r in rows if r.pnl_pct is not None]
-    if not valuable:
+def _snapshot_chart_values(rows: list[PerformanceRow], metric: str) -> list[float]:
+    """Extract per-holding values (in %) for *metric* in the same order as *rows*."""
+    if metric == "pnl":
+        return [r.pnl_pct or 0.0 for r in rows]
+    return [(r.volatility or 0.0) * 100.0 for r in rows]
+
+
+def _render_snapshot_chart(
+    rows: list[PerformanceRow], metric: str, as_of: str, output: str
+) -> None:
+    """Save a horizontal bar chart for the given metric per holding to *output*."""
+    if metric == "pnl":
+        valued = [r for r in rows if r.pnl_pct is not None]
+        xlabel = "P&L %"
+        title = f"Portfolio P&L% as of {as_of}"
+        signed = True
+    else:
+        valued = [r for r in rows if r.volatility is not None]
+        xlabel = "Volatility %"
+        title = f"Portfolio Annualized Volatility % as of {as_of}"
+        signed = False
+
+    if not valued:
         print("No valued holdings to chart")
         return
 
-    sorted_rows = sorted(valuable, key=lambda r: r.pnl_pct or 0.0)
+    sorted_rows = sorted(valued, key=lambda r: _snapshot_chart_values([r], metric)[0])
     labels = [r.name or r.isin for r in sorted_rows]
-    values = [r.pnl_pct or 0.0 for r in sorted_rows]
-    colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in values]
+    values = _snapshot_chart_values(sorted_rows, metric)
+    if metric == "pnl":
+        colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in values]
+    else:
+        colors = ["#3498db"] * len(values)
 
     fig, ax = plt.subplots(figsize=(10, max(4, 0.5 * len(labels) + 1.5)))
     bars = ax.barh(labels, values, color=colors, edgecolor="none")
-    ax.axvline(0, color="#555555", linewidth=0.8, linestyle="--")
+    if metric == "pnl":
+        ax.axvline(0, color="#555555", linewidth=0.8, linestyle="--")
 
     for bar, val in zip(bars, values, strict=True):
-        sign = "+" if val >= 0 else ""
+        label_txt = f"{'+' if signed and val >= 0 else ''}{val:.1f}%"
+        offset = 0.05 * (max(values) - min(values)) if values else 0.1
         ax.text(
-            bar.get_width() + (0.1 if val >= 0 else -0.1),
+            bar.get_width() + (offset if val >= 0 or not signed else -offset),
             bar.get_y() + bar.get_height() / 2,
-            f"{sign}{val:.1f}%",
+            label_txt,
             va="center",
-            ha="left" if val >= 0 else "right",
+            ha="left" if val >= 0 or not signed else "right",
             fontsize=9,
         )
 
-    ax.set_xlabel("P&L %")
-    ax.set_title(f"Portfolio P&L% as of {as_of}")
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     plt.tight_layout()
@@ -1881,10 +1931,16 @@ Examples:
     parser.add_argument(
         "--chart",
         nargs="?",
-        const="pnl_chart.png",
+        const="chart.png",
         metavar="FILE",
-        help="Save a P&L%% bar chart to FILE (default: pnl_chart.png). Only composes "
-        "with the default snapshot view (not --diff/--series/--metrics/--contrib).",
+        help="Save a chart to FILE (default: chart.png). Composes with the default "
+        "snapshot view or --series; not with --diff/--metrics/--contrib.",
+    )
+    parser.add_argument(
+        "--chart-metric",
+        choices=("pnl", "vol"),
+        default="pnl",
+        help="Metric to plot with --chart: pnl (P&L%%, default) or vol (annualized volatility%%)",
     )
     return parser
 
@@ -1963,6 +2019,7 @@ def main(argv: list[str] | None = None) -> int:
                 currency_meta_path=args.currency_meta,
                 isin=isin,
                 chart=args.chart,
+                chart_metric=args.chart_metric,
             )
         if diff_n is not None:
             end = args.as_of
@@ -1990,6 +2047,7 @@ def main(argv: list[str] | None = None) -> int:
             currency_meta_path=args.currency_meta,
             isin=isin,
             chart=args.chart,
+            chart_metric=args.chart_metric,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
