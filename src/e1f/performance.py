@@ -1942,11 +1942,15 @@ def _render_holdings_series_chart(
                 label=label,
             )
 
+        all_values = [v for pts in m_data.values() for _, v in pts]
+        if all_values:
+            _focus_ylim(ax, all_values, signed=signed)
         if signed:
             ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
         ax.set_ylabel(ylabel, fontsize=9)
         ax.set_title(title_frag, fontsize=10, loc="left")
         ax.legend(fontsize=7, loc="best", framealpha=0.7)
+        ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
@@ -1973,6 +1977,28 @@ _METRIC_COLORS = [
 ]
 
 
+def _focus_ylim(
+    ax: plt.Axes, values: list[float], *, signed: bool = False  # type: ignore[name-defined]
+) -> float:
+    """Set y-limits focused on the data range with a small readable margin.
+
+    Returns the lower bound (useful as a fill baseline for non-signed metrics).
+    For signed metrics, always keeps 0 in view.
+    """
+    lo, hi = min(values), max(values)
+    span = hi - lo
+    if span == 0:
+        span = abs(lo) * 0.1 or 1.0
+    pad = span * 0.08
+    y_lo = lo - pad
+    y_hi = hi + pad
+    if signed:
+        y_lo = min(y_lo, 0.0)
+        y_hi = max(y_hi, 0.0)
+    ax.set_ylim(y_lo, y_hi)
+    return y_lo
+
+
 def _apply_xticks(ax: plt.Axes, all_days: list[str]) -> None:  # type: ignore[name-defined]
     xs = list(range(len(all_days)))
     n_ticks = min(10, len(xs))
@@ -1997,6 +2023,8 @@ def _render_series_chart(
 
     if overlay and len(metrics) > 1:
         fig, ax = plt.subplots(figsize=(12, 5))
+        all_overlay_values: list[float] = []
+        all_signed = True
         for m_idx, metric in enumerate(metrics):
             dated = [(i, v) for i, p in enumerate(points)
                      if (v := _row_metric_value(p.total, metric)) is not None]
@@ -2005,12 +2033,18 @@ def _render_series_chart(
             xi = [i for i, _ in dated]
             values = [v for _, v in dated]
             ylabel, title_frag, signed = _metric_label(metric, currency)
+            if not signed:
+                all_signed = False
+            all_overlay_values.extend(values)
             color = _METRIC_COLORS[m_idx % len(_METRIC_COLORS)]
             linestyle = ["-", "--", "-.", ":"][m_idx % 4]
             ax.plot(xi, values, color=color, linewidth=1.5, linestyle=linestyle, label=title_frag)
+        if all_overlay_values:
+            _focus_ylim(ax, all_overlay_values, signed=all_signed)
         ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
         ax.set_ylabel("%")
         ax.legend(fontsize=9, loc="best", framealpha=0.7)
+        ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         _apply_xticks(ax, all_days)
@@ -2029,11 +2063,14 @@ def _render_series_chart(
             ylabel, title_frag, signed = _metric_label(metric, currency)
             color = ("#2ecc71" if values[-1] >= 0 else "#e74c3c") if signed else "#3498db"
             ax.plot(xi, values, color=color, linewidth=1.5)
-            ax.fill_between(xi, values, 0, alpha=0.15, color=color)
+            y_lo = _focus_ylim(ax, values, signed=signed)
+            fill_base = 0.0 if signed else y_lo
+            ax.fill_between(xi, values, fill_base, alpha=0.15, color=color)
             if signed:
                 ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
             ax.set_ylabel(ylabel, fontsize=9)
             ax.set_title(title_frag, fontsize=10, loc="left")
+            ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
         if all_days:
