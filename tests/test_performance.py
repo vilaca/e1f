@@ -1460,19 +1460,31 @@ def _seed_two_fund_series(tmp_path):
     )
 
 
-def test_normalize_isin_strips_and_uppers():
-    assert perf._normalize_isin(None) is None
-    assert perf._normalize_isin(" ie00eur000001 ") == "IE00EUR000001"
+def test_normalize_isins_strips_uppers_and_dedupes():
+    assert perf._normalize_isins(None) is None
+    assert perf._normalize_isins([]) is None
+    assert perf._normalize_isins([" ie00eur000001 "]) == ["IE00EUR000001"]
+    # order preserved, case-folded duplicate collapsed
+    assert perf._normalize_isins(["ie00a", "IE00B", "IE00A"]) == ["IE00A", "IE00B"]
     with pytest.raises(ValueError, match="non-empty"):
-        perf._normalize_isin("  ")
+        perf._normalize_isins(["  "])
 
 
 def test_restrict_timeline_unknown_lists_holdings(tmp_path):
     db, config, _meta = _seed_two_fund_series(tmp_path)
     timeline = position_timeline(load_trades(db))
     with pytest.raises(ValueError, match="not a holding") as exc:
-        perf._restrict_timeline(timeline, "IE00NOTHELD01", config)
+        perf._restrict_timeline(timeline, [EUR_ISIN, "IE00NOTHELD01"], config)
+    # the held one is kept out of the "missing" clause; both are in the held list
+    assert "IE00NOTHELD01" in str(exc.value)
     assert EUR_ISIN in str(exc.value) and _ISIN_SECOND in str(exc.value)
+
+
+def test_restrict_timeline_subset_keeps_named_holdings(tmp_path):
+    db, config, _meta = _seed_two_fund_series(tmp_path)
+    timeline = position_timeline(load_trades(db))
+    restricted = perf._restrict_timeline(timeline, [_ISIN_SECOND, EUR_ISIN], config)
+    assert list(restricted) == [_ISIN_SECOND, EUR_ISIN]
 
 
 def test_series_isin_uses_only_that_funds_trading_days(tmp_path, capsys):
@@ -1564,6 +1576,161 @@ def test_snapshot_isin_hides_the_other_holding(tmp_path, capsys):
     assert code == 0
     assert EUR_ISIN in out and "Euro Fund" in out
     assert _ISIN_SECOND not in out
+
+
+# Repeated --isin: compare a subset of holdings — ADR-0047
+
+_ISIN_THIRD = "IE00EUR000003"
+
+
+def _seed_three_fund_series(tmp_path):
+    """EUR + a second and a third fund, all EUR, priced on the Christmas-week closes."""
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 100.0, 10.0),
+            _buy("t2", "2024-01-01", _ISIN_SECOND, 50.0, 20.0),
+            _buy("t3", "2024-01-01", _ISIN_THIRD, 40.0, 25.0),
+        ],
+        prices=[
+            *_SERIES_PRICES,
+            (_ISIN_SECOND, "2024-12-24", 20.0), (_ISIN_SECOND, "2024-12-31", 21.0),
+            (_ISIN_THIRD, "2024-12-24", 25.0), (_ISIN_THIRD, "2024-12-31", 27.0),
+        ],
+        currencies={EUR_ISIN: "EUR", _ISIN_SECOND: "EUR", _ISIN_THIRD: "EUR"},
+        names={EUR_ISIN: "Euro Fund", _ISIN_SECOND: "Second Fund", _ISIN_THIRD: "Third Fund"},
+    )
+
+
+def test_snapshot_subset_shows_named_rows_and_hides_the_rest(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    code = perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--isin", EUR_ISIN, "--isin", _ISIN_SECOND)
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert EUR_ISIN in out and _ISIN_SECOND in out
+    assert _ISIN_THIRD not in out and "Third Fund" not in out
+    # subset banner names the count and the members; TOTAL still printed
+    assert f"2 holdings ({EUR_ISIN}, {_ISIN_SECOND})" in out
+    assert "TOTAL" in out
+
+
+def test_subset_total_equals_two_fund_book_over_just_those_funds(tmp_path, capsys):
+    """The subset TOTAL is the sub-book of exactly the named funds, not the whole book."""
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    perf.main(
+        _args(db, config, meta, "--as-of", "2024-12-31", "--isin", EUR_ISIN, "--isin", _ISIN_SECOND)
+    )
+    subset_total = next(
+        ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("TOTAL")
+    )
+    # MktVal = 100*12.2 (EUR) + 50*21 (Second) = 1220 + 1050 = 2270; Third excluded.
+    assert "2,270.00" in subset_total
+
+
+def test_series_subset_combined_total_chart_renders(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--isin", EUR_ISIN, "--isin", _ISIN_SECOND, "--chart", out_png,
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_series_subset_all_holdings_chart_is_per_holding(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--all-holdings",
+            "--isin", EUR_ISIN, "--isin", _ISIN_SECOND, "--chart", out_png,
+            "--chart-metric", "pnl",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_series_subset_all_holdings_overlay_chart_renders(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10", "--all-holdings",
+            "--chart-overlay", "--isin", EUR_ISIN, "--isin", _ISIN_SECOND,
+            "--chart", out_png, "--chart-metric", "pnl", "twr",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_snapshot_subset_chart_renders_bars(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31",
+            "--isin", EUR_ISIN, "--isin", _ISIN_SECOND, "--chart", out_png,
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Chart saved to" in out
+
+
+def test_chart_metric_units_with_multiple_isins_is_refused(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31",
+            "--isin", EUR_ISIN, "--isin", _ISIN_SECOND,
+            "--chart", out_png, "--chart-metric", "units",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "requires --isin" in out and "single holding" in out
+
+
+def test_chart_metric_pweight_on_subset_combined_series_is_refused(tmp_path, capsys):
+    """A 2+ ISIN subset without --all-holdings is a combined total — pweight is blocked."""
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = str(tmp_path / "chart.png")
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--isin", EUR_ISIN, "--isin", _ISIN_SECOND,
+            "--chart", out_png, "--chart-metric", "pweight",
+        )
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "doesn't compose with the portfolio-total --series" in out
+
+
+def test_per_isin_series_subset_pweight_uses_full_book_denominator(tmp_path):
+    """--all-holdings pweight over a subset weights each fund against the WHOLE book."""
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    full_timeline = position_timeline(load_trades(db))
+    subset = {k: full_timeline[k] for k in (EUR_ISIN, _ISIN_SECOND)}
+    data = perf._per_isin_series(
+        db, config, meta, subset,
+        start="2024-12-31", end="2024-12-31", metrics=["pweight"],
+        full_timeline=full_timeline,
+    )
+    # Whole-book cost = 1000 + 1000 + 1000 = 3000; each named fund cost 1000 => 33.33%.
+    eur_pts = data["pweight"][EUR_ISIN]
+    assert eur_pts[-1][1] == pytest.approx(100.0 / 3.0, abs=0.01)
 
 
 # --series weighted TER + estimated annual cost columns — ADR-0031
@@ -2118,7 +2285,7 @@ def test_pweight_with_isin_is_the_funds_book_share_not_100_percent(tmp_path):
         db, config, meta, {EUR_ISIN: timeline[EUR_ISIN]}, "2024-12-31"
     )
     assert len(rows) == 1
-    book_cost = perf._whole_book_cost(db, config, EUR_ISIN, rows, "2024-12-31")
+    book_cost = perf._whole_book_cost(db, config, [EUR_ISIN], rows, "2024-12-31")
     assert book_cost == pytest.approx(2000.0)  # 1000 (EUR_ISIN) + 1000 (_TER_SECOND)
     perf._assign_cost_weights(rows, book_cost)
     assert rows[0].cost_weight == pytest.approx(50.0)  # NOT 100%
