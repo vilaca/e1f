@@ -35,6 +35,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | What changed over the last N days? | `e1f performance --diff N` | **ΔMktVal€ / ΔP&L€** — a **ΔCost€** spike is cash *in*, not a gain |
 | How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day, plus **Daily TWR** (that day's increment) |
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
+| How do two funds compare? | `e1f performance --isin A --isin B` | repeat `--isin` to narrow every view to a subset (ADR-0047) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
 | Did I beat the market? | `e1f benchmark` | **TWR** / **Vol** / **MaxDD** (that benchmark over the shared window), **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). The **Book** line is the portfolio's own TWR/Vol/MaxDD. Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
 | How does the book compare to every priced fund? | `e1f benchmark --all` | the same columns, one row per ISIN in `prices` (ADR-0044) |
@@ -120,6 +121,8 @@ e1f performance --diff 7             # signed change over the last 7 calendar da
 e1f performance --as-of 2025-12-31 --diff 7  # change in the week ending Dec 31
 e1f performance --series 90          # portfolio TOTAL for each trading day, last 90 days (ADR-0030)
 e1f performance --series 60 --isin IE00B3VSSL01  # that holding's path only (ADR-0038)
+e1f performance --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # compare a subset; repeat --isin (ADR-0047)
+e1f performance --series 90 --chart --all-holdings --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # per-holding comparison chart
 e1f performance --metrics            # portfolio-level extended risk report (ADR-0033)
 e1f performance --metrics --series 14 # that report tabulated per trading day, last 14 days
 e1f performance --contrib            # per-holding return contribution (sums to TOTAL TWR, ADR-0033)

@@ -672,48 +672,61 @@ def _snapshot_total(
     return _total_row(rows, holdings, as_of, db_path)
 
 
-def _normalize_isin(raw: str | None) -> str | None:
-    """Strip/upper an optional ``--isin``; empty after strip is rejected."""
-    if raw is None:
+def _normalize_isins(raw: list[str] | None) -> list[str] | None:
+    """Strip/upper each ``--isin`` value, de-duplicate preserving order (ADR-0047).
+
+    ``None`` or an empty list stays ``None`` (the whole book); an empty-after-strip
+    value is rejected.
+    """
+    if not raw:
         return None
-    key = raw.strip().upper()
-    if not key:
-        raise ValueError("--isin must be a non-empty ISIN")
-    return key
+    ordered: dict[str, None] = {}
+    for item in raw:
+        key = item.strip().upper()
+        if not key:
+            raise ValueError("--isin must be a non-empty ISIN")
+        ordered.setdefault(key, None)
+    return list(ordered)
 
 
 def _restrict_timeline(
-    timeline: dict[str, list[PositionEvent]], isin: str, config_path: str
+    timeline: dict[str, list[PositionEvent]], isins: list[str], config_path: str
 ) -> dict[str, list[PositionEvent]]:
-    """Keep one holding, or raise with the held list (ADR-0038)."""
-    if isin not in timeline:
+    """Keep the named holdings, or raise with the held list (ADR-0038, ADR-0047)."""
+    missing = [isin for isin in isins if isin not in timeline]
+    if missing:
         held = "\n".join(
             f"  {key}  {_etf_name(config_path, key)}" for key in sorted(timeline)
         )
-        raise ValueError(f"--isin {isin}: not a holding. Held:\n{held}")
-    return {isin: timeline[isin]}
+        raise ValueError(f"--isin {', '.join(missing)}: not a holding. Held:\n{held}")
+    return {isin: timeline[isin] for isin in isins}
 
 
 def _require_timeline(
-    db_path: str, config_path: str, isin: str | None
+    db_path: str, config_path: str, isins: list[str] | None
 ) -> dict[str, list[PositionEvent]] | None:
-    """Load holdings, optionally restricted to ``isin``. None = empty book (message printed)."""
+    """Load holdings, optionally restricted to ``isins``. None = empty book (message printed)."""
     timeline = position_timeline(load_trades(db_path))
     if not timeline:
         print("No ETF holdings in database")
         print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
         return None
-    if isin is None:
+    if isins is None:
         return timeline
-    return _restrict_timeline(timeline, isin, config_path)
+    return _restrict_timeline(timeline, isins, config_path)
 
 
-def _subject_phrase(config_path: str, isin: str | None, *, default: str = "Portfolio") -> str:
-    """Banner noun: ``default`` (usually ``Portfolio``) or ``Name (ISIN)``."""
-    if isin is None:
+def _subject_phrase(
+    config_path: str, isins: list[str] | None, *, default: str = "Portfolio"
+) -> str:
+    """Banner noun: ``default``, a single ``Name (ISIN)``, or ``N holdings (A, B)`` (ADR-0047)."""
+    if not isins:
         return default
-    name = _etf_name(config_path, isin)
-    return f"{name} ({isin})" if name else isin
+    if len(isins) == 1:
+        isin = isins[0]
+        name = _etf_name(config_path, isin)
+        return f"{name} ({isin})" if name else isin
+    return f"{len(isins)} holdings ({', '.join(isins)})"
 
 
 # ---------------------------------------------------------------------------
@@ -873,16 +886,16 @@ def _assign_cost_weights(rows: list[PerformanceRow], book_cost: float) -> None:
 
 
 def _whole_book_cost(
-    db_path: str, config_path: str, isin: str | None, rows: list[PerformanceRow], as_of: str
+    db_path: str, config_path: str, isins: list[str] | None, rows: list[PerformanceRow], as_of: str
 ) -> float:
     """The full book's cost basis on *as_of*, regardless of any ``--isin`` filter.
 
     When unfiltered, *rows* already covers the whole book (cheap reuse). When
-    ``--isin`` restricted the timeline upstream, *rows* only knows about that
-    one holding, so the unrestricted timeline is reloaded just for this
+    ``--isin`` restricted the timeline to a subset upstream, *rows* only knows
+    about those holdings, so the unrestricted timeline is reloaded just for this
     denominator.
     """
-    if isin is None:
+    if isins is None:
         return sum(row.cost for row in rows)
     full_timeline = _require_timeline(db_path, config_path, None)
     return 0.0 if full_timeline is None else _book_cost_on(full_timeline, as_of)
@@ -894,19 +907,21 @@ def _fmt_money(value: float | None, *, flag: bool = False) -> str:
     return f"{value:,.2f}" + ("~" if flag else "")
 
 
-def _fmt_pct(value: float | None, *, scaled: bool = False, flag: bool = False) -> str:
+def _fmt_pct(
+    value: float | None, *, scaled: bool = False, flag: bool = False, decimals: int = 1
+) -> str:
     if value is None:
         return "n/a"
     pct = value if scaled else value * 100.0
-    return f"{pct:.1f}%" + ("*" if flag else "")
+    return f"{pct:.{decimals}f}%" + ("*" if flag else "")
 
 
 _HEADER = (
     f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>10} {'Cost€':>10} {'P&L€':>10} "
-    f"{'P&L%':>7} {'P&Lctr':>7} {'XIRR':>7} {'CAGR':>8} {'TWR':>7} {'Vol':>7} "
+    f"{'P&L%':>8} {'P&Lctr':>7} {'XIRR':>7} {'CAGR':>8} {'TWR':>7} {'Vol':>7} "
     f"{'MaxDD':>7}"
 )
-_RULE_WIDTH = 14 + 28 + 10 * 3 + 7 * 5 + 7 + 8 + 11
+_RULE_WIDTH = 14 + 28 + 10 * 3 + 8 + 7 * 4 + 7 + 8 + 11
 _STATUS_COL = 11
 
 
@@ -928,7 +943,7 @@ def _format_row(row: PerformanceRow, *, show_status: bool = False) -> str:
     base = (
         f"{row.isin:<14} {row.name:<28} "
         f"{_fmt_money(row.market_value, flag=row.estimated):>10} {_fmt_money(row.cost):>10} "
-        f"{_fmt_money(row.pnl):>10} {_fmt_pct(row.pnl_pct, scaled=True):>7} "
+        f"{_fmt_money(row.pnl):>10} {_fmt_pct(row.pnl_pct, scaled=True, decimals=2):>8} "
         f"{_fmt_pct(row.pnl_contribution, scaled=True):>7} "
         f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.cagr, flag=flag):>8} "
         f"{_fmt_pct(row.twr):>7} "
@@ -953,7 +968,7 @@ def render_row_explain(row: PerformanceRow) -> list[str]:
         stale = " (carried forward — stale close)" if row.estimated else ""
         val_result = (
             f"MktVal €{_fmt_money(row.market_value)} ; "
-            f"P&L €{_fmt_money(row.pnl)} ({_fmt_pct(row.pnl_pct, scaled=True)}) ; "
+            f"P&L €{_fmt_money(row.pnl)} ({_fmt_pct(row.pnl_pct, scaled=True, decimals=2)}) ; "
             f"P&L share {_fmt_pct(row.pnl_contribution, scaled=True)}"
         )
         val_inputs = f"shares × close × FX{when}{stale}"
@@ -1068,10 +1083,10 @@ def _cmd_performance_diff(
     show_status: bool = False,
     explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
 ) -> int:
     show_status = show_status or explain
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1103,7 +1118,7 @@ def _cmd_performance_diff(
     excluded = [r.isin for r in rows if not r.valuable]
 
     print(
-        f"\n{_subject_phrase(config_path, isin, default='Performance')} change "
+        f"\n{_subject_phrase(config_path, isins, default='Performance')} change "
         f"{start} → {end} (EUR)"
     )
     print(_diff_header(show_status))
@@ -1142,12 +1157,12 @@ def _cmd_performance(
     show_status: bool = False,
     explain: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
     chart: str | None = None,
     chart_metrics: list[str] | None = None,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1165,7 +1180,7 @@ def _cmd_performance(
 
     quiet = chart is not None
     if not quiet:
-        print(f"\n{_subject_phrase(config_path, isin)} performance as of {as_of} (EUR)")
+        print(f"\n{_subject_phrase(config_path, isins)} performance as of {as_of} (EUR)")
         print(_header(show_status))
         print("-" * _rule_width(show_status))
         for row in rows:
@@ -1216,7 +1231,7 @@ def _cmd_performance(
     if chart is not None:
         metrics = chart_metrics or ["pnl"]
         if "pweight" in metrics:
-            _assign_cost_weights(rows, _whole_book_cost(db_path, config_path, isin, rows, as_of))
+            _assign_cost_weights(rows, _whole_book_cost(db_path, config_path, isins, rows, as_of))
         _render_snapshot_chart(rows, metrics, as_of, chart)
     return 0
 
@@ -1228,7 +1243,7 @@ def _cmd_performance(
 
 _SERIES_HEADER = (
     f"\n{'Date':<12} {'MktVal€':>13} {'Cost€':>13} {'P&L€':>13} "
-    f"{'P&L%':>8} {'XIRR':>8} {'CAGR':>8} {'TWR':>8} {'Daily TWR':>10} "
+    f"{'P&L%':>9} {'XIRR':>8} {'CAGR':>8} {'TWR':>8} {'Daily TWR':>10} "
     f"{'Vol':>8} {'MaxDD':>8} {'WTER':>8} {'Fee€/yr':>10}"
 )
 _SERIES_RULE_WIDTH = len(_SERIES_HEADER.lstrip("\n"))
@@ -1296,7 +1311,7 @@ def _format_series_row(point: SeriesPoint) -> str:
         f"{point.day:<12} "
         f"{_fmt_money(row.market_value, flag=row.estimated):>13} "
         f"{_fmt_money(row.cost):>13} {_fmt_money(row.pnl):>13} "
-        f"{_fmt_pct(row.pnl_pct, scaled=True):>8} "
+        f"{_fmt_pct(row.pnl_pct, scaled=True, decimals=2):>9} "
         f"{_fmt_pct(row.xirr):>8} {_fmt_pct(row.cagr, flag=flag):>8} "
         f"{_fmt_pct(row.twr):>8} {_fmt_signed_pct(point.daily_twr):>10} "
         f"{_fmt_pct(row.volatility, flag=flag):>8} {_fmt_pct(row.max_drawdown):>8} "
@@ -1387,13 +1402,13 @@ def _cmd_performance_series(
     n: int,
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
     chart: str | None = None,
     chart_metrics: list[str] | None = None,
     all_holdings: bool = False,
     chart_overlay: bool = False,
 ) -> int:
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1408,7 +1423,7 @@ def _cmd_performance_series(
     quiet = chart is not None
     if not quiet:
         print(
-            f"\n{_subject_phrase(config_path, isin)} performance series "
+            f"\n{_subject_phrase(config_path, isins)} performance series "
             f"{start} → {as_of} (EUR, cumulative since inception)"
         )
         print(_SERIES_HEADER)
@@ -1435,18 +1450,28 @@ def _cmd_performance_series(
             )
     metrics = chart_metrics or ["pnl"]
     if chart is not None:
-        if all_holdings and isin is None:
+        if all_holdings:
+            # One line per holding (whole book, or the --isin subset). pweight's
+            # denominator is the WHOLE book, so a subset needs the unrestricted
+            # timeline reloaded per day (ADR-0047).
+            full_timeline = (
+                _require_timeline(db_path, config_path, None)
+                if "pweight" in metrics and isins is not None
+                else None
+            )
             per_isin_all = _per_isin_series(
                 db_path, config_path, currency_meta_path, timeline,
-                start=start, end=as_of, metrics=metrics,
+                start=start, end=as_of, metrics=metrics, full_timeline=full_timeline,
             )
             all_isins = {isin_ for m_data in per_isin_all.values() for isin_ in m_data}
             names = {isin_: _etf_name(config_path, isin_) or isin_ for isin_ in all_isins}
-            _render_holdings_series_chart(per_isin_all, names, metrics, start, as_of, chart)
+            _render_holdings_series_chart(
+                per_isin_all, names, metrics, start, as_of, chart, overlay=chart_overlay
+            )
         else:
-            # Only reachable here with isin set (--chart-metric gating forbids
-            # pweight on the unfiltered, non-all-holdings TOTAL series), so the
-            # denominator always needs the unrestricted book, per day.
+            # A single combined total line (whole book or the --isin subset).
+            # pweight here only survives gating for a single --isin, whose total
+            # IS that fund — its book share needs the unrestricted book per day.
             if "pweight" in metrics:
                 full_timeline = _require_timeline(db_path, config_path, None)
                 if full_timeline is not None:
@@ -1507,7 +1532,9 @@ def _render_metrics(
         "  Value",
         _metric_line("MktVal€", _fmt_money(total.market_value, flag=total.estimated)),
         _metric_line("Cost€", _fmt_money(total.cost)),
-        _metric_line("P&L€", _fmt_money(total.pnl), note=_fmt_pct(total.pnl_pct, scaled=True)),
+        _metric_line(
+            "P&L€", _fmt_money(total.pnl), note=_fmt_pct(total.pnl_pct, scaled=True, decimals=2)
+        ),
         "",
         "  Return",
         _metric_line("XIRR (money-weighted)", _fmt_pct(total.xirr)),
@@ -1579,9 +1606,9 @@ def _cmd_performance_metrics(
     *,
     as_of: str,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
 ) -> int:
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1591,7 +1618,7 @@ def _cmd_performance_metrics(
         return 0
     rows, total, ext = snapshot
 
-    for line in _render_metrics(as_of, total, ext, subject=_subject_phrase(config_path, isin)):
+    for line in _render_metrics(as_of, total, ext, subject=_subject_phrase(config_path, isins)):
         print(line)
 
     if total.short_history:
@@ -1645,9 +1672,9 @@ def _cmd_performance_contrib(
     sort_by: str = "isin",
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
 ) -> int:
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1662,7 +1689,7 @@ def _cmd_performance_contrib(
     contributions = contribution_to_return(valuable_series, first_day, as_of, db_path)
 
     print(
-        f"\n{_subject_phrase(config_path, isin, default='Per-holding')} return "
+        f"\n{_subject_phrase(config_path, isins, default='Per-holding')} return "
         f"contribution as of {as_of} (EUR)"
     )
     print(_CONTRIB_HEADER)
@@ -1731,9 +1758,9 @@ def _cmd_performance_metrics_series(
     n: int,
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
-    isin: str | None = None,
+    isins: list[str] | None = None,
 ) -> int:
-    timeline = _require_timeline(db_path, config_path, isin)
+    timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
         return 0
 
@@ -1751,7 +1778,7 @@ def _cmd_performance_metrics_series(
         points = list(reversed(points))
 
     print(
-        f"\n{_subject_phrase(config_path, isin)} metrics series "
+        f"\n{_subject_phrase(config_path, isins)} metrics series "
         f"{start} → {as_of} (EUR, cumulative since inception)"
     )
     print(_METRICS_SERIES_HEADER)
@@ -1860,19 +1887,26 @@ def _per_isin_series(
     start: str,
     end: str,
     metrics: list[str],
+    full_timeline: dict[str, list[PositionEvent]] | None = None,
 ) -> dict[str, dict[str, list[tuple[str, float]]]]:
     """Per-ISIN, per-metric ``{metric: {isin: [(day, value), ...]}}`` over the window.
 
     Collects all metrics in a single snapshot pass per day to avoid redundant
-    DB work.
+    DB work. ``pweight``'s denominator is the WHOLE book's cost: pass
+    ``full_timeline`` when *timeline* is an ``--isin`` subset (ADR-0047);
+    unfiltered, *timeline* already covers the whole book so its own cost sum is
+    the denominator.
     """
     result: dict[str, dict[str, list[tuple[str, float]]]] = {m: {} for m in metrics}
     for day in _trading_days(db_path, timeline, start, end):
         rows, _holdings = _snapshot(db_path, config_path, currency_meta_path, timeline, day)
         if "pweight" in metrics:
-            # Caller only reaches here when isin is None, so ``rows`` already
-            # covers the whole book — its own cost sum IS the denominator.
-            _assign_cost_weights(rows, sum(row.cost for row in rows))
+            book_cost = (
+                sum(row.cost for row in rows)
+                if full_timeline is None
+                else _book_cost_on(full_timeline, day)
+            )
+            _assign_cost_weights(rows, book_cost)
         for row in rows:
             for metric in metrics:
                 val = _row_metric_value(row, metric)
@@ -1888,11 +1922,15 @@ def _render_holdings_series_chart(
     start: str,
     end: str,
     output: str,
+    *,
+    overlay: bool = False,
 ) -> None:
-    """Save a per-holding multi-line chart (one subplot per metric) to *output*.
+    """Save a per-holding multi-line chart to *output*.
 
     ``all_data`` maps metric → {isin → [(day, value)]} as returned by
-    ``_per_isin_series``.
+    ``_per_isin_series``. Default stacks one subplot per metric (holdings
+    overlaid within each); ``overlay=True`` with multiple metrics collapses
+    them onto a single shared panel — one line per holding×metric (ADR-0047).
     """
     if not any(all_data.values()):
         print("No valued days to chart")
@@ -1916,6 +1954,13 @@ def _render_holdings_series_chart(
             all_days_set.update(d for d, _ in pts)
     all_days = sorted(all_days_set)
     day_idx = {day: i for i, day in enumerate(all_days)}
+
+    if overlay and len(metrics) > 1:
+        _render_holdings_overlay(
+            all_data, names, metrics, all_isins, all_days, day_idx,
+            palette, linestyles, markers, start, end, output,
+        )
+        return
 
     n = len(metrics)
     fig, axes = plt.subplots(n, 1, figsize=(13, 4.5 * n), sharex=True, squeeze=False)
@@ -1969,6 +2014,59 @@ def _render_holdings_series_chart(
     plt.close(fig)
     print(f"Chart saved to {output}")
 
+
+def _render_holdings_overlay(
+    all_data: dict[str, dict[str, list[tuple[str, float]]]],
+    names: dict[str, str],
+    metrics: list[str],
+    all_isins: list[str],
+    all_days: list[str],
+    day_idx: dict[str, int],
+    palette: list[str],
+    linestyles: list[str],
+    markers: list[str],
+    start: str,
+    end: str,
+    output: str,
+) -> None:
+    """Single-panel overlay: one line per holding×metric (color=holding, dash=metric)."""
+    fig, ax = plt.subplots(figsize=(13, 6))
+    overlay_values: list[float] = []
+    any_signed = False
+    for m_idx, metric in enumerate(metrics):
+        _ylabel, title_frag, signed = _CHART_METRIC_LABEL[metric]
+        any_signed = any_signed or signed
+        m_data = all_data.get(metric, {})
+        for i_idx, isin in enumerate(all_isins):
+            pts = m_data.get(isin) or []
+            if not pts:
+                continue
+            xs = [day_idx[d] for d, _ in pts]
+            values = [v for _, v in pts]
+            overlay_values.extend(values)
+            ax.plot(
+                xs, values,
+                color=palette[i_idx % len(palette)], linewidth=1.4,
+                linestyle=linestyles[m_idx % len(linestyles)],
+                marker=markers[i_idx % len(markers)], markersize=4,
+                markevery=max(1, len(xs) // 8),
+                label=f"{names.get(isin) or isin} · {title_frag}",
+            )
+    if overlay_values:
+        _focus_ylim(ax, overlay_values, signed=any_signed)
+    if any_signed:
+        ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+    ax.set_title("Overlay (mixed units)", fontsize=10, loc="left")
+    ax.legend(fontsize=7, loc="best", framealpha=0.7)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _apply_xticks(ax, all_days)
+    fig.suptitle(f"Holdings — {start} → {end}", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Chart saved to {output}")
 
 
 _METRIC_COLORS = [
@@ -2162,8 +2260,9 @@ first. Mutually exclusive with --diff. Daily TWR (ADR-0040) is that day's
 time-weighted increment (the print that compounds into TWR). Two trailing
 columns (ADR-0031) add the market-value-weighted TER (WTER) and estimated annual
 fee at that day's MktVal (Fee€/yr); holdings without TER metadata contribute 0
-(dilutes). Add --isin X (ADR-0038) to restrict the book to one holding; every
-view composes with it.
+(dilutes). Add --isin X (ADR-0038) to restrict the book to one holding, or repeat
+--isin to compare a subset (ADR-0047); every view composes with it. With
+--series --chart, add --all-holdings for one line per holding in the subset.
 
 --metrics (ADR-0033) replaces the per-holding table with a portfolio-level
 extended risk report: XIRR/TWR/CAGR/Vol/MaxDD plus MaxDD duration, days since
@@ -2186,6 +2285,8 @@ Examples:
   e1f performance --explain
   e1f performance --series 90
   e1f performance --series 60 --isin IE00B3VSSL01
+  e1f performance --isin IE00B3VSSL01 --isin IE00B3YCGJ38   # compare two funds
+  e1f performance --series 90 --chart --all-holdings --isin IE00B3VSSL01 --isin IE00B3YCGJ38
   e1f performance --as-of 2025-12-31 --series 30 --reverse
   e1f performance --metrics
   e1f performance --metrics --series 14
@@ -2247,9 +2348,12 @@ Examples:
     )
     parser.add_argument(
         "--isin",
+        action="append",
         default=None,
         metavar="ISIN",
-        help="Restrict every view to one holding (ADR-0038). Must be a held ISIN.",
+        help="Restrict every view to this holding; repeat to compare a subset "
+        "(ADR-0038, ADR-0047). Each must be a held ISIN. With --series --chart, add "
+        "--all-holdings for one line per holding.",
     )
     parser.add_argument(
         "--metrics",
@@ -2291,8 +2395,8 @@ Examples:
     parser.add_argument(
         "--all-holdings",
         action="store_true",
-        help="With --series --chart: plot one line per holding instead of the portfolio total. "
-        "Ignored without --chart --series.",
+        help="With --series --chart: plot one line per holding instead of the combined total "
+        "(honours a repeated --isin subset). Ignored without --chart --series.",
     )
     parser.add_argument(
         "--chart-overlay",
@@ -2327,7 +2431,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         _validate_as_of(args.as_of)
-        isin = _normalize_isin(args.isin)
+        isins = _normalize_isins(args.isin)
         diff_n = _validate_positive_int(args.diff, "--diff")
         series_n = _validate_positive_int(args.series, "--series")
         if diff_n is not None and series_n is not None:
@@ -2342,17 +2446,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.chart:
             requested = set(args.chart_metric)
             isin_only = requested & _ISIN_ONLY_CHART_METRICS
-            if isin_only and isin is None:
+            if isin_only and not (isins is not None and len(isins) == 1):
                 raise ValueError(
-                    f"--chart-metric {', '.join(sorted(isin_only))} requires --isin "
-                    "(a per-share value isn't comparable across funds)"
+                    f"--chart-metric {', '.join(sorted(isin_only))} requires --isin with a "
+                    "single holding (a per-share value isn't comparable across funds)"
                 )
-            total_series = series_n is not None and not args.all_holdings and isin is None
+            # A combined-total line: the whole book, or a 2+ ISIN subset, when not
+            # decomposed by --all-holdings. A single --isin's total IS that fund,
+            # so pweight/ter/fee_yr stay meaningful there (ADR-0047).
+            combined_total = (
+                series_n is not None
+                and not args.all_holdings
+                and (isins is None or len(isins) > 1)
+            )
             holding_only = requested & _HOLDING_ONLY_CHART_METRICS
-            if holding_only and total_series:
+            if holding_only and combined_total:
                 raise ValueError(
                     f"--chart-metric {', '.join(sorted(holding_only))} doesn't compose with "
-                    "the portfolio-total --series (per-holding only; add --isin or --all-holdings)"
+                    "the portfolio-total --series (per-holding only; use one --isin or "
+                    "--all-holdings)"
                 )
         if args.contrib:
             return _cmd_performance_contrib(
@@ -2362,7 +2474,7 @@ def main(argv: list[str] | None = None) -> int:
                 sort_by=args.sort,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
-                isin=isin,
+                isins=isins,
             )
         if args.metrics and series_n is not None:
             return _cmd_performance_metrics_series(
@@ -2372,7 +2484,7 @@ def main(argv: list[str] | None = None) -> int:
                 n=series_n,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
-                isin=isin,
+                isins=isins,
             )
         if args.metrics:
             return _cmd_performance_metrics(
@@ -2380,7 +2492,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.config,
                 as_of=args.as_of,
                 currency_meta_path=args.currency_meta,
-                isin=isin,
+                isins=isins,
             )
         if series_n is not None:
             return _cmd_performance_series(
@@ -2390,7 +2502,7 @@ def main(argv: list[str] | None = None) -> int:
                 n=series_n,
                 reverse=args.reverse,
                 currency_meta_path=args.currency_meta,
-                isin=isin,
+                isins=isins,
                 chart=args.chart,
                 chart_metrics=args.chart_metric,
                 all_holdings=args.all_holdings,
@@ -2409,7 +2521,7 @@ def main(argv: list[str] | None = None) -> int:
                 show_status=args.show_status,
                 explain=args.explain,
                 currency_meta_path=args.currency_meta,
-                isin=isin,
+                isins=isins,
             )
         return _cmd_performance(
             args.db,
@@ -2420,7 +2532,7 @@ def main(argv: list[str] | None = None) -> int:
             show_status=args.show_status,
             explain=args.explain,
             currency_meta_path=args.currency_meta,
-            isin=isin,
+            isins=isins,
             chart=args.chart,
             chart_metrics=args.chart_metric,
         )
