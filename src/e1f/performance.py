@@ -1465,6 +1465,16 @@ def _cmd_performance_series(
             )
             all_isins = {isin_ for m_data in per_isin_all.values() for isin_ in m_data}
             names = {isin_: _etf_name(config_path, isin_) or isin_ for isin_ in all_isins}
+            _PORTFOLIO_KEY = "__portfolio__"
+            chrono = list(reversed(rows)) if reverse else rows
+            for metric in metrics:
+                pts = [
+                    (p.day, v) for p in chrono
+                    if (v := _row_metric_value(p.total, metric)) is not None
+                ]
+                if pts:
+                    per_isin_all.setdefault(metric, {})[_PORTFOLIO_KEY] = pts
+            names[_PORTFOLIO_KEY] = "Portfolio (total)"
             _render_holdings_series_chart(
                 per_isin_all, names, metrics, start, as_of, chart, overlay=chart_overlay
             )
@@ -1943,8 +1953,10 @@ def _render_holdings_series_chart(
     linestyles = ["-", "--", "-.", ":"]
     markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
 
+    _PORTFOLIO_KEY = "__portfolio__"
     all_isins: list[str] = sorted({
         isin for m_data in all_data.values() for isin in m_data
+        if isin != _PORTFOLIO_KEY
     })
 
     # Shared x-axis: union of all days across all metrics and ISINs
@@ -1987,7 +1999,17 @@ def _render_holdings_series_chart(
                 label=label,
             )
 
-        all_values = [v for pts in m_data.values() for _, v in pts]
+        port_pts = m_data.get(_PORTFOLIO_KEY) or []
+        if port_pts:
+            xs = [day_idx[d] for d, _ in port_pts if d in day_idx]
+            values = [v for d, v in port_pts if d in day_idx]
+            ax.plot(
+                xs, values,
+                color="#2c3e50", linewidth=2.2, linestyle="-", zorder=10,
+                label=names.get(_PORTFOLIO_KEY, "Portfolio"),
+            )
+
+        all_values = [v for isin, pts in m_data.items() for _, v in pts if isin != _PORTFOLIO_KEY]
         if all_values:
             _focus_ylim(ax, all_values, signed=signed)
         if signed:

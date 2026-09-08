@@ -25,6 +25,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from e1f.common import (
@@ -396,6 +397,7 @@ def _cmd_benchmark(
     reverse: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     all_priced: bool = False,
+    chart: str | None = None,
 ) -> int:
     port = portfolio_return_series(db_path, currency_meta_path, as_of)
     if not port:
@@ -405,13 +407,18 @@ def _cmd_benchmark(
 
     held = portfolio_isins(db_path)
     rows: list[BenchmarkStats] = []
+    bench_pairs: list[tuple[BenchmarkStats, list[tuple[str, float]]]] = []
     for isin in benchmarks:
         name = _bench_name(config_path, isin) + ("*" if isin in held else "")
         bench = eur_return_series(db_path, isin, as_of, currency_meta_path)
         if not bench:
-            rows.append(_unavailable(isin, name, f"no return series (fetch {isin}?)"))
+            stats = _unavailable(isin, name, f"no return series (fetch {isin}?)")
+            rows.append(stats)
+            bench_pairs.append((stats, []))
             continue
-        rows.append(benchmark_stats(port, bench, isin, name, min_overlap=min_overlap))
+        stats = benchmark_stats(port, bench, isin, name, min_overlap=min_overlap)
+        rows.append(stats)
+        bench_pairs.append((stats, bench))
 
     if sort_by is not None:
         rows = sort_stats(rows, sort_by=sort_by, reverse=reverse)
@@ -452,7 +459,93 @@ def _cmd_benchmark(
     if explain:
         for line in _render_explain(rows):
             print(line)
+    if chart:
+        _render_benchmark_chart(port, bench_pairs, chart, as_of)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Chart.
+# ---------------------------------------------------------------------------
+
+_CHART_COLORS = [
+    "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+    "#1abc9c", "#e67e22", "#34495e",
+]
+
+
+def _wealth_pct(returns: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Cumulative return (%) from the first date."""
+    wealth = 1.0
+    result = []
+    for day, r in returns:
+        wealth *= 1.0 + r
+        result.append((day, (wealth - 1.0) * 100.0))
+    return result
+
+
+def _apply_xticks(ax: plt.Axes, all_days: list[str]) -> None:  # type: ignore[name-defined]
+    n_ticks = min(10, len(all_days))
+    step = max(1, len(all_days) // n_ticks)
+    tick_positions = list(range(0, len(all_days), step))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(
+        [all_days[i] for i in tick_positions], rotation=30, ha="right", fontsize=8
+    )
+
+
+def _render_benchmark_chart(
+    port: list[tuple[str, float]],
+    bench_pairs: list[tuple[BenchmarkStats, list[tuple[str, float]]]],
+    output: str,
+    as_of: str,
+) -> None:
+    """Save a cumulative-return line chart (portfolio + benchmarks) to *output*."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    port_wealth = _wealth_pct(port)
+    all_days = [d for d, _ in port_wealth]
+    day_to_xi = {d: i for i, d in enumerate(all_days)}
+    port_vals = [v for _, v in port_wealth]
+
+    ax.plot(list(range(len(port_vals))), port_vals, color="#2c3e50", linewidth=2.0,
+            label="Portfolio", zorder=10)
+
+    all_vals: list[float] = list(port_vals)
+    available = [(s, bs) for s, bs in bench_pairs if bs and s.status is Status.CALCULATED]
+    for idx, (stats, bench) in enumerate(available):
+        bench_wealth = _wealth_pct([(d, r) for d, r in bench if d in day_to_xi])
+        plotted = [(day_to_xi[d], v) for d, v in bench_wealth if d in day_to_xi]
+        if not plotted:
+            continue
+        bxi = [x for x, _ in plotted]
+        bvals = [v for _, v in plotted]
+        all_vals.extend(bvals)
+        color = _CHART_COLORS[idx % len(_CHART_COLORS)]
+        label = stats.name.rstrip("*").strip()
+        ax.plot(bxi, bvals, color=color, linewidth=1.2, label=label, alpha=0.85)
+
+    if all_vals:
+        lo, hi = min(all_vals), max(all_vals)
+        span = max(hi - lo, abs(lo) * 0.1, 1.0)
+        pad = span * 0.08
+        ax.set_ylim(min(lo - pad, -pad), hi + pad)
+
+    ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
+    ax.set_ylabel("Cumulative return (%)", fontsize=9)
+    ncol = 2 if len(available) > 4 else 1
+    ax.legend(fontsize=8, loc="best", framealpha=0.7, ncol=ncol)
+    ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    start = port[0][0] if port else ""
+    _apply_xticks(ax, all_days)
+    fig.suptitle(f"Portfolio vs Benchmarks — {start} → {as_of}", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Chart saved to {output}")
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +642,15 @@ Examples:
     parser.add_argument(
         "--reverse", "-r", action="store_true", help="Descending sort order"
     )
+    parser.add_argument(
+        "--chart",
+        nargs="?",
+        const="chart.png",
+        default=None,
+        metavar="FILE",
+        help="Save a cumulative-return chart to FILE (default: chart.png). Plots the "
+        "portfolio and each available benchmark as a line from their shared history.",
+    )
     return parser
 
 
@@ -590,6 +692,7 @@ def main(argv: list[str] | None = None) -> int:
             reverse=args.reverse,
             currency_meta_path=args.currency_meta,
             all_priced=args.all_priced,
+            chart=args.chart,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")
