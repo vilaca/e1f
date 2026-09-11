@@ -828,3 +828,132 @@ def test_main_portfolio_excluded_when_no_price(tmp_path, capsys):
     assert "⚠ excluded from market value / fee / weighted TER" in out
     assert ISIN_ETF in out
     assert "weighted avg TER" not in out  # no market value → cannot weight
+
+
+# ---------------------------------------------------------------------------
+# --as-of: historical snapshot (transactions and prices capped to date)
+# ---------------------------------------------------------------------------
+
+
+def test_main_portfolio_as_of_filters_future_transactions(tmp_path, capsys):
+    db, config, meta = _seed_valued(
+        tmp_path,
+        transactions=[
+            _vbuy("t1", "2024-01-01", ISIN_ETF, 10.0, 100.0),
+            _vbuy("t2", "2024-06-01", ISIN_ETF, 5.0, 110.0),  # after as-of
+        ],
+        prices=[(ISIN_ETF, "2024-03-01", 105.0)],
+        currencies={ISIN_ETF: "EUR"},
+        names={ISIN_ETF: "Euro Fund"},
+    )
+    code = portfolio_mod.main(
+        _pargs(db, config, meta, "--as-of", "2024-03-31", "--show-cost-basis")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    # Only the Jan buy should be counted (10 shares, cost 1000)
+    assert "10.0000" in out
+    assert "15.0000" not in out
+
+
+def test_main_portfolio_as_of_uses_price_on_or_before_date(tmp_path, capsys):
+    db, config, meta = _seed_valued(
+        tmp_path,
+        transactions=[_vbuy("t1", "2024-01-01", ISIN_ETF, 1.0, 100.0)],
+        prices=[
+            (ISIN_ETF, "2024-03-01", 120.0),
+            (ISIN_ETF, "2024-06-01", 200.0),  # after as-of
+        ],
+        currencies={ISIN_ETF: "EUR"},
+        names={ISIN_ETF: "Euro Fund"},
+    )
+    code = portfolio_mod.main(
+        _pargs(db, config, meta, "--as-of", "2024-04-30", "--show-cost-basis")
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "120.00" in out   # value at 2024-03-01 (latest on/before as-of)
+    assert "200.00" not in out
+
+
+# ---------------------------------------------------------------------------
+# --diff: signed change over a window
+# ---------------------------------------------------------------------------
+
+
+def _seed_diff(tmp_path):
+    db, config, meta = _seed_valued(
+        tmp_path,
+        transactions=[
+            _vbuy("t1", "2024-01-01", ISIN_ETF, 10.0, 100.0),
+            _vbuy("t2", "2024-06-01", ISIN_ETF, 5.0, 110.0),   # bought more mid-window
+        ],
+        prices=[
+            (ISIN_ETF, "2024-01-01", 100.0),
+            (ISIN_ETF, "2024-12-31", 130.0),
+        ],
+        currencies={ISIN_ETF: "EUR"},
+        names={ISIN_ETF: "Euro Fund"},
+    )
+    return db, config, meta
+
+
+def test_main_portfolio_diff_shows_delta_columns(tmp_path, capsys):
+    db, config, meta = _seed_diff(tmp_path)
+    code = portfolio_mod.main(_pargs(db, config, meta, "--diff", "365", "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Portfolio holdings change" in out
+    assert "ΔUnits" in out
+    assert "ΔCost€" in out
+    assert "ΔValue€" in out
+    assert "ΔWgt%" in out
+    assert "ΔAvg paid" in out
+    assert "ΔLast px" in out
+    assert ISIN_ETF in out
+    assert "TOTAL" in out
+
+
+def test_main_portfolio_diff_delta_units_and_cost(tmp_path, capsys):
+    db, config, meta = _seed_diff(tmp_path)
+    # Window covers only the second buy: start=2024-05-31, end=2024-12-31
+    code = portfolio_mod.main(_pargs(db, config, meta, "--diff", "214", "--as-of", "2024-12-31"))
+    out = capsys.readouterr().out
+    assert code == 0
+    # +5 units bought in window; cost delta = +550
+    assert "+5.0000" in out
+    assert "+550.00" in out
+
+
+def test_main_portfolio_diff_no_holdings_shows_message(tmp_path, capsys):
+    db = tmp_path / "empty.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = portfolio_mod.main(
+        ["--db", str(db), "--config", str(config), "--diff", "30"]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No ETF holdings" in out
+
+
+def test_main_portfolio_diff_invalid_n(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = portfolio_mod.main(["--db", str(db), "--config", str(config), "--diff", "0"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "✗ Error:" in out
+
+
+def test_main_portfolio_diff_invalid_as_of(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.dump({"etfs": {}}))
+    code = portfolio_mod.main(
+        ["--db", str(db), "--config", str(config), "--diff", "30", "--as-of", "not-a-date"]
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "✗ Error:" in out

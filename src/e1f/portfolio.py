@@ -4,6 +4,8 @@
 Usage:
     e1f portfolio
     e1f portfolio --db data/e1f.db --config data/etf_universe.yaml
+    e1f portfolio --as-of 2025-12-31 --sort value --reverse
+    e1f portfolio --diff 30
 """
 
 import argparse
@@ -11,6 +13,7 @@ import sqlite3
 import sys
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from e1f.common import (
@@ -68,12 +71,23 @@ class Holding:
 
 def _load_trade_rows(
     db_path: str,
+    as_of: str | None = None,
 ) -> list[tuple[str, str, str, str, float, float, float]]:
     with closing(sqlite3.connect(db_path)) as conn:
         if conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'"
         ).fetchone() is None:
             return []
+        if as_of is not None:
+            return conn.execute(
+                """
+                SELECT broker, datetime, symbol, side, shares, price, fee
+                FROM transactions
+                WHERE substr(datetime, 1, 10) <= ?
+                ORDER BY datetime, transaction_id
+                """,
+                (as_of,),
+            ).fetchall()
         return conn.execute(
             """
             SELECT broker, datetime, symbol, side, shares, price, fee
@@ -83,35 +97,49 @@ def _load_trade_rows(
         ).fetchall()
 
 
-def _latest_close(db_path: str, isin: str) -> tuple[str, float] | None:
-    """``(date, close)`` of the most recent priced day for ``isin`` (native currency)."""
+def _latest_close(db_path: str, isin: str, as_of: str | None = None) -> tuple[str, float] | None:
+    """``(date, close)`` of the most recent priced day for ``isin`` (native currency).
+
+    When ``as_of`` is given, restricts to dates on/before that day.
+    """
     with closing(sqlite3.connect(db_path)) as conn:
         if conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
         ).fetchone() is None:
             return None
-        row = conn.execute(
-            "SELECT date, close FROM prices"
-            " WHERE isin = ? AND close IS NOT NULL ORDER BY date DESC LIMIT 1",
-            (isin,),
-        ).fetchone()
+        if as_of is not None:
+            row = conn.execute(
+                "SELECT date, close FROM prices"
+                " WHERE isin = ? AND close IS NOT NULL AND date <= ?"
+                " ORDER BY date DESC LIMIT 1",
+                (isin, as_of),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT date, close FROM prices"
+                " WHERE isin = ? AND close IS NOT NULL ORDER BY date DESC LIMIT 1",
+                (isin,),
+            ).fetchone()
     return (str(row[0])[:10], float(row[1])) if row else None
 
 
-def _last_known_price(db_path: str, isin: str) -> float | None:
+def _last_known_price(db_path: str, isin: str, as_of: str | None = None) -> float | None:
     """Latest close in native currency (the ``Last px`` column); None if unpriced."""
-    latest = _latest_close(db_path, isin)
+    latest = _latest_close(db_path, isin, as_of)
     return latest[1] if latest else None
 
 
-def _eur_value(db_path: str, currency_meta_path: str, isin: str, shares: float) -> float | None:
+def _eur_value(
+    db_path: str, currency_meta_path: str, isin: str, shares: float, as_of: str | None = None
+) -> float | None:
     """EUR market value ``shares × latest close × FX``; None when it can't be valued.
 
     FX uses the rate as of the close's own date (ADR-0010). None when there is no
     price, no pinned trade currency, or no FX rate — never a silent mis-conversion,
     matching ``common.value_on`` and the ``performance`` valuation contract.
+    When ``as_of`` is given, uses the latest close on/before that date.
     """
-    latest = _latest_close(db_path, isin)
+    latest = _latest_close(db_path, isin, as_of)
     if latest is None:
         return None
     price_date, close = latest
@@ -122,6 +150,24 @@ def _eur_value(db_path: str, currency_meta_path: str, isin: str, shares: float) 
         return convert_to_eur(close * shares, quote, price_date, db_path)
     except ValueError:
         return None
+
+
+def _eur_value_estimated(
+    db_path: str, currency_meta_path: str, isin: str, shares: float, as_of: str
+) -> tuple[float | None, bool]:
+    """EUR value and whether the backing close predates ``as_of`` (stale/estimated)."""
+    latest = _latest_close(db_path, isin, as_of)
+    if latest is None:
+        return None, False
+    price_date, close = latest
+    quote = pinned_quote_currency(isin, currency_meta_path)
+    if quote is None:
+        return None, False
+    try:
+        value = convert_to_eur(close * shares, quote, price_date, db_path)
+        return value, price_date < as_of
+    except ValueError:
+        return None, False
 
 
 def compute_holdings(
@@ -355,10 +401,257 @@ def _table_header(*, show_broker: bool, show_cost_basis: bool, show_status: bool
     return header
 
 
+@dataclass(frozen=True)
+class PortfolioDiffRow:
+    """Per-ISIN signed delta between two portfolio snapshots."""
+
+    isin: str
+    name: str
+    delta_units: float
+    delta_cost: float
+    delta_value: float | None   # None when either endpoint is unpriceable
+    estimated: bool             # at least one endpoint's close is carried forward
+    delta_weight: float | None  # %-pt change in cost-basis book weight; None for TOTAL
+    delta_avg: float | None     # change in avg cost per share; None if not held at both
+    delta_last_px: float | None # change in native-currency last close; None if unpriced
+
+    @property
+    def valuable(self) -> bool:
+        return self.delta_value is not None
+
+
+@dataclass
+class _IsinsPoint:
+    """Per-ISIN aggregated position at one snapshot date."""
+
+    units: float
+    cost: float
+    eur_value: float | None
+    estimated: bool
+    last_px: float | None  # native currency, None if unpriced
+
+    @property
+    def avg_cost(self) -> float | None:
+        return None if self.units <= 0 else self.cost / self.units
+
+
+def _isin_snapshot(
+    db_path: str, currency_meta_path: str, as_of: str
+) -> dict[str, _IsinsPoint]:
+    """ISIN → aggregated position across brokers at ``as_of``."""
+    rows = _load_trade_rows(db_path, as_of)
+    holdings = compute_holdings(rows)
+    result: dict[str, _IsinsPoint] = {}
+    for h in holdings:
+        value, estimated = _eur_value_estimated(
+            db_path, currency_meta_path, h.symbol, h.shares, as_of
+        )
+        last_px = _last_known_price(db_path, h.symbol, as_of)
+        if h.symbol in result:
+            prev = result[h.symbol]
+            merged_value = (
+                None if (prev.eur_value is None or value is None)
+                else prev.eur_value + value
+            )
+            result[h.symbol] = _IsinsPoint(
+                units=prev.units + h.shares,
+                cost=prev.cost + h.total_paid,
+                eur_value=merged_value,
+                estimated=prev.estimated or estimated,
+                last_px=last_px,  # same ISIN → same price regardless of broker
+            )
+        else:
+            result[h.symbol] = _IsinsPoint(
+                units=h.shares,
+                cost=h.total_paid,
+                eur_value=value,
+                estimated=estimated,
+                last_px=last_px,
+            )
+    return result
+
+
+def _portfolio_diff_rows(
+    start: dict[str, _IsinsPoint],
+    end: dict[str, _IsinsPoint],
+    config_path: str,
+) -> list[PortfolioDiffRow]:
+    start_total_cost = sum(p.cost for p in start.values())
+    end_total_cost = sum(p.cost for p in end.values())
+
+    result: list[PortfolioDiffRow] = []
+    for isin in sorted(set(start) | set(end)):
+        s = start.get(isin)
+        e = end.get(isin)
+
+        s_units = s.units if s else 0.0
+        s_cost = s.cost if s else 0.0
+        e_units = e.units if e else 0.0
+        e_cost = e.cost if e else 0.0
+
+        # ΔValue: None when either held endpoint is unpriceable.
+        if (s is not None and s.eur_value is None) or (e is not None and e.eur_value is None):
+            delta_value: float | None = None
+        else:
+            delta_value = (e.eur_value or 0.0) - (s.eur_value or 0.0)
+
+        # ΔWeight%: cost-basis share of the whole book at each endpoint.
+        s_weight = (100.0 * s_cost / start_total_cost) if start_total_cost > 0 else 0.0
+        e_weight = (100.0 * e_cost / end_total_cost) if end_total_cost > 0 else 0.0
+        delta_weight: float | None = e_weight - s_weight
+
+        # ΔAvg paid: meaningful only when held at both endpoints.
+        if s is not None and e is not None:
+            delta_avg: float | None = (e.avg_cost or 0.0) - (s.avg_cost or 0.0)
+        else:
+            delta_avg = None
+
+        # ΔLast px: None when either endpoint has no price.
+        s_px = s.last_px if s else None
+        e_px = e.last_px if e else None
+        if s_px is not None and e_px is not None:
+            delta_last_px: float | None = e_px - s_px
+        else:
+            delta_last_px = None
+
+        result.append(PortfolioDiffRow(
+            isin=isin,
+            name=_etf_name(config_path, isin),
+            delta_units=e_units - s_units,
+            delta_cost=e_cost - s_cost,
+            delta_value=delta_value,
+            estimated=(s.estimated if s else False) or (e.estimated if e else False),
+            delta_weight=delta_weight,
+            delta_avg=delta_avg,
+            delta_last_px=delta_last_px,
+        ))
+    return result
+
+
+def _fmt_signed_money(value: float | None, *, flag: bool = False) -> str:
+    if value is None:
+        return "—"
+    prefix = "+" if value > 0 else ""
+    return f"{prefix}{value:,.2f}" + ("~" if flag else "")
+
+
+def _fmt_signed_units(value: float) -> str:
+    prefix = "+" if value > 0 else ""
+    return f"{prefix}{value:.4f}"
+
+
+def _fmt_signed_pct(value: float | None) -> str:
+    if value is None:
+        return "—"
+    prefix = "+" if value > 0 else ""
+    return f"{prefix}{value:.2f}%"
+
+
+_DIFF_HEADER = (
+    f"\n{'ISIN':<14} {'Name':<32} {'ΔUnits':>12} {'ΔCost€':>12} {'ΔValue€':>12}"
+    f" {'ΔWgt%':>7} {'ΔAvg paid':>10} {'ΔLast px':>10}"
+)
+_DIFF_RULE_WIDTH = len(_DIFF_HEADER.lstrip("\n"))
+
+
+def _format_diff_row(row: PortfolioDiffRow) -> str:
+    units = _fmt_signed_units(row.delta_units)
+    cost = _fmt_signed_money(row.delta_cost)
+    value = _fmt_signed_money(row.delta_value, flag=row.estimated)
+    weight = _fmt_signed_pct(row.delta_weight)
+    avg = _fmt_signed_money(row.delta_avg)
+    last_px = _fmt_signed_money(row.delta_last_px)
+    return (
+        f"{row.isin:<14} {row.name[:32]:<32} {units:>12} {cost:>12} {value:>12}"
+        f" {weight:>7} {avg:>10} {last_px:>10}"
+    )
+
+
+def _diff_sort_key(row: PortfolioDiffRow, sort_by: str) -> str | float:
+    if sort_by == "isin":
+        return row.isin
+    if sort_by == "name":
+        return row.name.lower()
+    if sort_by == "units":
+        return row.delta_units
+    if sort_by == "cost":
+        return row.delta_cost
+    if sort_by == "value":
+        return float("-inf") if row.delta_value is None else row.delta_value
+    if sort_by == "weight":
+        return float("-inf") if row.delta_weight is None else row.delta_weight
+    if sort_by == "avg":
+        return float("-inf") if row.delta_avg is None else row.delta_avg
+    if sort_by == "last_px":
+        return float("-inf") if row.delta_last_px is None else row.delta_last_px
+    return row.isin
+
+
+def _cmd_portfolio_diff(
+    db_path: str,
+    config_path: str,
+    *,
+    start: str,
+    end: str,
+    currency_meta_path: str = DEFAULT_CURRENCY_META,
+    sort_by: str = "isin",
+    reverse: bool = False,
+) -> int:
+    start_snap = _isin_snapshot(db_path, currency_meta_path, start)
+    end_snap = _isin_snapshot(db_path, currency_meta_path, end)
+
+    if not start_snap and not end_snap:
+        print("No ETF holdings in database")
+        print("Ingest trades: e1f transactions trade-republic path/to/transactions.csv")
+        return 0
+
+    rows = _portfolio_diff_rows(start_snap, end_snap, config_path)
+    rows = sorted(rows, key=lambda r: _diff_sort_key(r, sort_by), reverse=reverse)
+
+    valuable = [r for r in rows if r.valuable]
+    total_cost = sum(r.delta_cost for r in rows)
+    total_value: float | None = (
+        sum(r.delta_value for r in valuable if r.delta_value is not None)
+        if valuable else None
+    )
+    total_row = PortfolioDiffRow(
+        isin="TOTAL", name="",
+        delta_units=sum(r.delta_units for r in rows),
+        delta_cost=total_cost,
+        delta_value=total_value,
+        estimated=any(r.estimated for r in valuable),
+        delta_weight=None,
+        delta_avg=None,
+        delta_last_px=None,
+    )
+    excluded = [r.isin for r in rows if not r.valuable]
+
+    print(f"\nPortfolio holdings change {start} → {end}")
+    print(_DIFF_HEADER)
+    print("-" * _DIFF_RULE_WIDTH)
+    for row in rows:
+        print(_format_diff_row(row))
+    print("-" * _DIFF_RULE_WIDTH)
+    print(_format_diff_row(total_row))
+
+    if any(r.estimated for r in valuable):
+        print(
+            "\n~ ΔValue€ estimated: at least one window endpoint used a "
+            "carried-forward close (fetch to refresh)."
+        )
+    if excluded:
+        print(
+            "\n⚠ excluded from ΔValue€ (held but unpriceable at an endpoint): "
+            + ", ".join(sorted(excluded))
+        )
+    return 0
+
+
 def _cmd_portfolio(
     db_path: str,
     config_path: str,
     *,
+    as_of: str,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
     sort_by: str = "broker",
     reverse: bool = False,
@@ -368,7 +661,7 @@ def _cmd_portfolio(
     show_broker: bool = False,
 ) -> int:
     show_status = show_status or explain  # --explain implies status visibility (ADR-0014)
-    rows = _load_trade_rows(db_path)
+    rows = _load_trade_rows(db_path, as_of)
     holdings = compute_holdings(rows)
 
     if not holdings:
@@ -379,13 +672,13 @@ def _cmd_portfolio(
     total_invested = sum(holding.total_paid for holding in holdings)
     eur_values = {
         (holding.broker, holding.symbol): _eur_value(
-            db_path, currency_meta_path, holding.symbol, holding.shares
+            db_path, currency_meta_path, holding.symbol, holding.shares, as_of
         )
         for holding in holdings
     }
     total_market_value = sum(v for v in eur_values.values() if v is not None)
     last_prices = {
-        holding.symbol: _last_known_price(db_path, holding.symbol) for holding in holdings
+        holding.symbol: _last_known_price(db_path, holding.symbol, as_of) for holding in holdings
     }
     holdings = sort_holdings(
         holdings,
@@ -433,7 +726,7 @@ def _cmd_portfolio(
         )
         if show_cost_basis:
             fee_str = f"€{fee:.2f}" if fee is not None else "—"
-            last_px = _last_known_price(db_path, holding.symbol)
+            last_px = _last_known_price(db_path, holding.symbol, as_of)
             last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
             dir_str = "n/a" if last_px is None else ("+" if last_px >= holding.avg_cost else "-")
             value_str = f"{value:>9.2f}" if value is not None else f"{'—':>9}"
@@ -483,8 +776,9 @@ provenance block with config-metadata completeness and implies --show-status.
 Examples:
   e1f portfolio
   e1f portfolio --db data/e1f.db --config data/etf_universe.yaml
+  e1f portfolio --as-of 2025-12-31 --sort value --reverse
+  e1f portfolio --diff 30
   e1f portfolio --sort weight --reverse
-  e1f portfolio --sort value --reverse
   e1f portfolio --show-status
   e1f portfolio --explain
         """,
@@ -500,6 +794,19 @@ Examples:
         "--currency-meta",
         default=DEFAULT_CURRENCY_META,
         help="Currency metadata YAML (pinned ftgo resolutions)",
+    )
+    parser.add_argument(
+        "--as-of",
+        default=datetime.now(UTC).date().isoformat(),
+        metavar="YYYY-MM-DD",
+        help="Show holdings as of this date (default: today)",
+    )
+    parser.add_argument(
+        "--diff",
+        metavar="N",
+        default=None,
+        help="Show signed change over the last N calendar days instead of a snapshot "
+        "(composes with --as-of: window is [as_of − N, as_of]). N ≥ 1.",
     )
     parser.add_argument(
         "--sort",
@@ -537,13 +844,47 @@ Examples:
     return parser
 
 
+def _validate_as_of(as_of: str) -> None:
+    try:
+        date.fromisoformat(as_of)
+    except ValueError as exc:
+        raise ValueError(f"--as-of must be YYYY-MM-DD: {as_of}") from exc
+
+
+def _validate_positive_int(raw: str | None, flag: str) -> int | None:
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{flag} must be a positive integer, got: {raw!r}") from exc
+    if n < 1:
+        raise ValueError(f"{flag} must be ≥ 1, got: {n}")
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
+        _validate_as_of(args.as_of)
+        diff_n = _validate_positive_int(args.diff, "--diff")
+        if diff_n is not None:
+            end = args.as_of
+            start = (date.fromisoformat(end) - timedelta(days=diff_n)).isoformat()
+            return _cmd_portfolio_diff(
+                args.db,
+                args.config,
+                start=start,
+                end=end,
+                currency_meta_path=args.currency_meta,
+                sort_by=args.sort,
+                reverse=args.reverse,
+            )
         return _cmd_portfolio(
             args.db,
             args.config,
+            as_of=args.as_of,
             currency_meta_path=args.currency_meta,
             sort_by=args.sort,
             reverse=args.reverse,
