@@ -7,11 +7,12 @@ import pytest
 import yaml
 
 from e1f import deposits as dep, performance as perf
-from e1f.common import load_trades, position_timeline
+from e1f.common import Status, load_trades, position_timeline
 from e1f.deposits import DepositImpact
 
 EUR_ISIN = "IE00EUR000001"
 USD_ISIN = "IE00USD000001"
+ALT_ISIN = "IE00ALT000001"
 
 
 def _seed(tmp_path, *, transactions, prices=(), fx=(), currencies=None, names=None):
@@ -541,3 +542,408 @@ def test_cmd_deposits_bad_as_of(tmp_path, capsys):
 def test_retired_sort_token_gain_is_rejected():
     with pytest.raises(SystemExit):
         dep.main(["--sort", "gain"])
+
+
+def _replay(db, config, meta, alt_isin, as_of="2024-12-31", name="Alt Fund"):
+    impacts = dep.deposit_impacts(db, config, meta, as_of)
+    return dep.replay_deposits(db, meta, as_of, alt_isin, name, impacts)
+
+
+# ---------------------------------------------------------------------------
+# Same-cash replay (ADR-0054)
+# ---------------------------------------------------------------------------
+
+def test_replay_same_isin_zero_delta_when_close_matches_fill(tmp_path):
+    # Hand pin: 10 shares @ 10.00 on 2024-01-01, stored close 10.00, fee 0.
+    # As-of close 14.00 → 10 × 14 = 140. Replay: 100 / 10 = 10 shares × 14 = 140.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    row = _replay(db, config, meta, EUR_ISIN, name="Euro Fund")
+    assert row.status is Status.CALCULATED
+    assert row.n_filled == 1 and row.n_skipped == 0
+    assert row.invested == pytest.approx(100.0)
+    assert row.alt_value == pytest.approx(140.0)
+    assert row.book_gain == pytest.approx(40.0)
+    assert row.alt_gain == pytest.approx(40.0)
+    assert row.delta == pytest.approx(0.0)
+    assert row.alt_roic == pytest.approx(40.0)
+
+
+def test_replay_doubling_alt_beats_book_by_ten(tmp_path):
+    # Book: 10 @ 10.00, as-of 14.00 → value 140, gain 40.
+    # Alt EUR unit 20 → 30 over the same dates: 100 / 20 = 5 shares × 30 = 150.
+    # AltGain 50 − BookGain 40 = Δ +10. AltROIC 50%.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-01-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Alt Fund"},
+    )
+    row = _replay(db, config, meta, ALT_ISIN)
+    assert row.status is Status.CALCULATED
+    assert (row.invested, row.alt_value, row.alt_gain, row.book_gain, row.delta) == (
+        pytest.approx(100.0),
+        pytest.approx(150.0),
+        pytest.approx(50.0),
+        pytest.approx(40.0),
+        pytest.approx(10.0),
+    )
+    assert row.alt_roic == pytest.approx(50.0)
+
+
+def test_replay_usd_alt_converts_fx_on_buy_and_as_of(tmp_path):
+    # Amount€ 100. Alt USD close 24 / FX 1.2 = 20 EUR on buy date;
+    # as-of close 36 / 1.2 = 30 EUR → 5 shares × 30 = 150. Same Δ +10 as EUR pin.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-01-01", 24.0),
+            (ALT_ISIN, "2024-12-31", 36.0),
+        ],
+        fx=[
+            ("EUR", "USD", "2024-01-01", 1.2),
+            ("EUR", "USD", "2024-12-31", 1.2),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "USD"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Dollar Alt"},
+    )
+    row = _replay(db, config, meta, ALT_ISIN)
+    assert row.status is Status.CALCULATED
+    assert row.alt_value == pytest.approx(150.0)
+    assert row.delta == pytest.approx(10.0)
+
+
+def test_replay_fee_is_deployed_as_cash_not_stripped(tmp_path):
+    # Amount€ = 10×10 + 1 = 101. Book: 10 × 14 = 140, gain 39.
+    # Replay at close 10: 101/10 = 10.1 shares × 14 = 141.4, Δ = 1.4.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0, fee=1.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    row = _replay(db, config, meta, EUR_ISIN)
+    assert row.invested == pytest.approx(101.0)
+    assert row.alt_value == pytest.approx(141.4)
+    assert row.book_value == pytest.approx(140.0)
+    assert row.delta == pytest.approx(1.4)
+
+
+def test_replay_fills_nearest_prior_close_not_later_print(tmp_path):
+    # Buy on 2024-01-03; only close on 2024-01-01 (20) and as-of (30).
+    # Fill must be 20, not 30: 100/20 = 5 × 30 = 150.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-03", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-01-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Alt Fund"},
+    )
+    row = _replay(db, config, meta, ALT_ISIN)
+    assert row.status is Status.CALCULATED
+    assert row.alt_value == pytest.approx(150.0)
+    assert row.delta == pytest.approx(10.0)
+
+
+def test_replay_skips_unfillable_lot_from_both_legs(tmp_path):
+    # Buy1 10@10 on 2024-01-01 → book 140, gain 40. Buy2 5@12 on 2024-06-01 → 70, +10.
+    # Alt listed 2024-03-01 @20, as-of @30. Buy1 skipped; Buy2: 60/20 = 3 × 30 = 90.
+    # Overlap invested 60, book gain 10, alt gain 30, Δ +20. BOUNDED.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-06-01", EUR_ISIN, 5.0, 12.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-03-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Young Alt"},
+    )
+    row = _replay(db, config, meta, ALT_ISIN)
+    assert row.status is Status.BOUNDED
+    assert row.n_filled == 1 and row.n_skipped == 1
+    assert row.invested == pytest.approx(60.0)
+    assert row.alt_value == pytest.approx(90.0)
+    assert row.book_gain == pytest.approx(10.0)
+    assert row.alt_gain == pytest.approx(30.0)
+    assert row.delta == pytest.approx(20.0)
+    assert "skipped 1 of 2" in (row.reason or "")
+
+
+def test_replay_unavailable_when_alt_has_no_as_of_price(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Missing"},
+    )
+    row = _replay(db, config, meta, ALT_ISIN)
+    assert row.status is Status.UNAVAILABLE
+    assert row.delta is None and row.alt_value is None
+    assert row.n_filled == 0
+    assert "no EUR close/FX" in (row.reason or "")
+
+
+def test_parse_against_strips_and_dedupes():
+    assert dep._parse_against(" IE00A ,IE00B, IE00A") == ["IE00A", "IE00B"]
+    with pytest.raises(ValueError, match="at least one ISIN"):
+        dep._parse_against(" , , ")
+
+
+def test_sort_replays_delta_ascending_puts_laggards_first():
+    ahead = dep.DepositReplay(
+        isin="A", name="A", status=Status.CALCULATED, reason=None,
+        n_filled=1, n_skipped=0, invested=100.0, alt_value=150.0, book_value=140.0,
+    )
+    behind = dep.DepositReplay(
+        isin="B", name="B", status=Status.CALCULATED, reason=None,
+        n_filled=1, n_skipped=0, invested=100.0, alt_value=130.0, book_value=140.0,
+    )
+    missing = dep.DepositReplay(
+        isin="C", name="C", status=Status.UNAVAILABLE, reason="none",
+        n_filled=0, n_skipped=1, invested=None, alt_value=None, book_value=None,
+    )
+    ordered = dep.sort_replays([ahead, behind, missing], sort_by="delta", reverse=True)
+    assert [row.isin for row in ordered] == ["A", "B", "C"]  # None sinks when reversed
+
+
+def test_cmd_deposits_against_renders_delta_and_keeps_book_summary(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-01-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Alt Fund"},
+    )
+    code = dep.main(_args(
+        db, config, meta, "--as-of", "2024-12-31", "--against", ALT_ISIN,
+    ))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Invested (contributions)" in out and "100.00" in out
+    assert "Organic gain (market)" in out and "+40.00" in out
+    assert "Same-cash replay" in out
+    assert "Per-deposit impact" not in out
+    assert ALT_ISIN in out and "+10.00" in out  # ΔGain€
+    assert "ADR-0054" in out
+
+
+def test_cmd_deposits_against_discloses_bounded_row(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-06-01", EUR_ISIN, 5.0, 12.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-03-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Young Alt"},
+    )
+    dep.main(_args(db, config, meta, "--as-of", "2024-12-31", "--against", ALT_ISIN))
+    out = capsys.readouterr().out
+    assert f"⚠ {ALT_ISIN} BOUNDED:" in out
+    assert "skipped 1 of 2" in out
+
+
+def test_cmd_deposits_all_lists_priced_isins(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (ALT_ISIN, "2024-01-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        currencies={EUR_ISIN: "EUR", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", ALT_ISIN: "Alt Fund"},
+    )
+    code = dep.main(_args(
+        db, config, meta, "--as-of", "2024-12-31", "--against-all", "--reverse",
+    ))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert EUR_ISIN in out and ALT_ISIN in out
+    # --sort delta --reverse: ALT Δ+10 before EUR Δ0.
+    assert out.index(ALT_ISIN) < out.index(EUR_ISIN)
+
+
+def test_cmd_deposits_all_empty_prices_exits_zero(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path, transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)]
+    )
+    code = dep.main(_args(db, config, meta, "--against-all"))
+    assert code == 0
+    assert "No price series" in capsys.readouterr().out
+
+
+def test_cmd_deposits_group_and_against_are_exclusive(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, transactions=[])
+    code = dep.main(_args(
+        db, config, meta, "--group", "year", "--against", ALT_ISIN,
+    ))
+    assert code == 1
+    assert "--group cannot be combined" in capsys.readouterr().out
+
+
+def test_cmd_deposits_all_and_against_are_exclusive(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, transactions=[])
+    code = dep.main(_args(db, config, meta, "--against-all", "--against", ALT_ISIN))
+    assert code == 1
+    assert "--against and --against-all are mutually exclusive" in capsys.readouterr().out
+
+
+def test_cmd_deposits_against_rejects_date_sort(tmp_path, capsys):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    code = dep.main(_args(
+        db, config, meta, "--as-of", "2024-12-31",
+        "--against", EUR_ISIN, "--sort", "date",
+    ))
+    assert code == 1
+    assert "--sort date is not a column" in capsys.readouterr().out
+
+
+def test_book_isins_are_sorted_distinct():
+    a = DepositImpact("2024-01-01", EUR_ISIN, "", amount=100.0, value=140.0)
+    b = DepositImpact("2024-06-01", ALT_ISIN, "", amount=60.0, value=70.0)
+    c = DepositImpact("2024-07-01", EUR_ISIN, "", amount=50.0, value=None)
+    assert dep._book_isins([b, a, c]) == [ALT_ISIN, EUR_ISIN]
+
+
+def test_cmd_against_portfolio_is_holdings_not_every_priced_isin(tmp_path, capsys):
+    # EUR and USD are held; ALT is priced but unheld. --against-portfolio must
+    # emit the two holdings and omit ALT (that is --against-all's job).
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0),
+            _buy("t2", "2024-01-01", USD_ISIN, 5.0, 12.0),
+        ],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+            (USD_ISIN, "2024-01-01", 12.0),
+            (USD_ISIN, "2024-12-31", 120.0),
+            (ALT_ISIN, "2024-01-01", 20.0),
+            (ALT_ISIN, "2024-12-31", 30.0),
+        ],
+        fx=[
+            ("EUR", "USD", "2024-01-01", 1.2),
+            ("EUR", "USD", "2024-12-31", 1.2),
+        ],
+        currencies={EUR_ISIN: "EUR", USD_ISIN: "USD", ALT_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund", USD_ISIN: "Dollar Fund", ALT_ISIN: "Alt Fund"},
+    )
+    code = dep.main(_args(
+        db, config, meta, "--as-of", "2024-12-31", "--against-portfolio",
+    ))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Same-cash replay" in out
+    assert EUR_ISIN in out and USD_ISIN in out
+    assert ALT_ISIN not in out
+
+
+def test_cmd_against_portfolio_matches_explicit_against_on_one_holding(tmp_path):
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", EUR_ISIN, 10.0, 10.0)],
+        prices=[
+            (EUR_ISIN, "2024-01-01", 10.0),
+            (EUR_ISIN, "2024-12-31", 14.0),
+        ],
+        currencies={EUR_ISIN: "EUR"},
+        names={EUR_ISIN: "Euro Fund"},
+    )
+    impacts = dep.deposit_impacts(db, config, meta, "2024-12-31")
+    explicit = dep.replay_deposits(db, meta, "2024-12-31", EUR_ISIN, "Euro Fund", impacts)
+    held = dep._book_isins(impacts)
+    assert held == [EUR_ISIN]
+    via_book = dep.replay_deposits(db, meta, "2024-12-31", held[0], "Euro Fund", impacts)
+    assert via_book.delta == pytest.approx(explicit.delta)
+    assert via_book.alt_value == pytest.approx(explicit.alt_value)
+
+
+def test_cmd_against_portfolio_exclusive_with_against(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, transactions=[])
+    code = dep.main(_args(
+        db, config, meta, "--against-portfolio", "--against", ALT_ISIN,
+    ))
+    assert code == 1
+    assert "--against and --against-portfolio are mutually exclusive" in (
+        capsys.readouterr().out
+    )
+
+
+def test_cmd_against_portfolio_exclusive_with_all(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, transactions=[])
+    code = dep.main(_args(db, config, meta, "--against-portfolio", "--against-all"))
+    assert code == 1
+    assert "--against-portfolio and --against-all are mutually exclusive" in (
+        capsys.readouterr().out
+    )
+
+
+def test_cmd_group_exclusive_with_against_portfolio(tmp_path, capsys):
+    db, config, meta = _seed(tmp_path, transactions=[])
+    code = dep.main(_args(
+        db, config, meta, "--group", "year", "--against-portfolio",
+    ))
+    assert code == 1
+    assert "--group cannot be combined with --against-portfolio" in (
+        capsys.readouterr().out
+    )

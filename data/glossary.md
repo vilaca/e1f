@@ -1,6 +1,6 @@
 # e1f metrics glossary
 
-Four pairs this file exists to keep apart:
+Pairs this file exists to keep apart:
 
 - **XIRR vs TWR** — quote XIRR to yourself (what *your cash* earned, given when
   you paid in); quote TWR against a fund or a benchmark (what *the holdings*
@@ -10,6 +10,10 @@ Four pairs this file exists to keep apart:
 - **Out% vs RelStr** — arithmetic gap vs compounded growth. RelStr 1.05 means €1
   in the book became 5% more than €1 in the benchmark. Out% is the same gap
   arithmetic, with the ETF as the subject (ETF TWR − book TWR).
+- **Out% vs ΔGain€** — time-weighted gap (`benchmark`) vs same-cash replay
+  (`deposits --against`, `deposits --against-portfolio`, `deposits --against-all`).
+  Out% ignores when you deposited; ΔGain€ spends each buy's euros into the
+  alternative on that day.
 - **DDdur vs SinceHi** — how long the *worst* hole lasted vs how long you've been
   off the *current* peak.
 
@@ -25,11 +29,12 @@ A quick map before the detail:
 |---|---|---|
 | Personal return | What did my cash earn? | XIRR |
 | Investment return | What did the holdings earn? | TWR, Daily TWR, CAGR |
-| Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€ |
+| Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€, ΔGain€ |
 | Attribution | Which holdings drove the return? | Ctr%, P&Lctr |
 | Allocation | Where is capital/risk? | Weight |
 | Risk | How rough was the ride? | Vol, MaxDD, DDdur, SinceHi, Underwtr, RecFac |
 | Benchmark-relative | Did I beat the alternative? | Out%, RelStr, IR, Beta, TE, R² |
+| Same-cash alternative | If every buy had gone into one ETF? | ΔGain€, AltROIC, AltGain€ |
 | Fees | What does the fund cost annually? | TER, WTER, Fee€/yr |
 | Diversification | Do holdings move alike? | ρ, clusters |
 
@@ -495,8 +500,16 @@ the same Invested/Reported/Organic-gain (Gain€)/ROIC (Ret%) figures; %P&L subt
 and the ALL row foot to 100%, and the totals reconcile with the `performance` TOTAL
 exactly as ungrouped (ADR-0036).
 
+`deposits --against ISIN`, `--against-portfolio`, or `--against-all` keeps that
+book summary and replaces the per-deposit table with a same-cash replay: each
+valuable buy's Amount€ is spent into the candidate on that day at the stored
+EUR close, then valued at `--as-of`. `--against-portfolio` is one row per
+holding; `--against-all` is every priced ISIN. `ΔGain€` is alternative gain
+minus book gain on the overlapping lots (ADR-0054). Mutually exclusive with
+`--group`.
+
 ### Invested
-- **Where:** `deposits`
+- **Where:** `deposits`; `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
 - **Type:** money
 - **Definition:** Total contributions — shares × price + fee across valuable
   buys. Same TOTAL as performance **Cost€**. Unpriceable deposits are excluded,
@@ -627,6 +640,76 @@ exactly as ungrouped (ADR-0036).
   of the book's total gain a row actually represents.
 - **Read with:** P&Lctr (same idea by holding). Ret% (this row's own return).
   Organic gain (the TOTAL). Ctr% (time-weighted, not euros).
+
+### Lots
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** count
+- **Definition:** Number of valuable book deposits that could be filled on the
+  alternative — a close and FX on or before that buy's date. Not daily-return
+  `n`.
+- **Useful for:** seeing whether the replay used the whole savings-plan history
+  or only the overlapping tail of a younger fund.
+- **Don't:** treat Lots = 24 and a full-book Organic gain as the same capital
+  when the row is BOUNDED — skipped buys are out of Invested€ / BookGain€.
+- **Read with:** ΔGain€ (the euro gap on those lots). Invested€ (their cash).
+
+### AltValue€
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** money, snapshot
+- **Definition:** Hypothetical market value of the shares the alternative
+  would have given, had each overlapping deposit's Amount€ been spent at that
+  day's nearest-prior EUR close and those shares marked at `--as-of`.
+- **Useful for:** the "what would the account show" number next to Reported.
+- **Don't:** read it as a TWR, or assume a second broker fee was deducted —
+  Amount€ (fee included) is deployed in full (ADR-0054).
+- **Read with:** AltGain€ / ΔGain€. Reported (the real book). Invested€ (the
+  overlapping cash).
+
+### AltGain€
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** money
+- **Definition:** AltValue€ − Invested€ on the overlapping lots. The
+  alternative's organic gain for the same euros, same dates.
+- **Useful for:** the euro P&L you would have had in that single fund.
+- **Don't:** subtract the full-book Organic gain from this when Lots skipped
+  deposits — use BookGain€, which is the same lots.
+- **Read with:** BookGain€. ΔGain€ (AltGain€ − BookGain€). AltROIC.
+
+### BookGain€
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** money
+- **Definition:** Sum of the actual lots' Gain€ over the deposits the
+  alternative could fill. Equals Organic gain when every valuable buy was
+  fillable; smaller when the row is BOUNDED.
+- **Useful for:** the apples-to-apples book leg of ΔGain€.
+- **Don't:** compare AltGain€ to the summary Organic gain on a BOUNDED row —
+  that mixes excluded cash into one side only.
+- **Read with:** Organic gain (the full book). ΔGain€. Lots.
+
+### ΔGain€
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** money, signed gap
+- **Definition:** AltGain€ − BookGain€ on the overlapping lots. Positive
+  means the alternative finished ahead, in euros, of those same deposits.
+- **Useful for:** "if every buy had gone into X, more or less P&L?" — the
+  money-weighted cousin of Out%. Timing of contributions is in the number.
+- **Don't:** treat it as Out% or RelStr. Those are time-weighted over a shared
+  return window and ignore when cash arrived. A positive Out% can coexist with
+  a negative ΔGain€ (or the reverse) when deposit dates are lumpy.
+- **Read with:** Out% / RelStr (the TWR gap). AltROIC. Organic gain. Lots
+  (was the capital the whole book?).
+
+### AltROIC
+- **Where:** `deposits --against`, `deposits --against-portfolio`, `deposits --against-all`
+- **Type:** money-weighted ratio
+- **Definition:** AltGain€ ÷ Invested€ on the overlapping lots. Same shape as
+  ROIC, computed on the replay rather than the held book.
+- **Useful for:** a single "would I have been further ahead on the cash I
+  deployed" ratio against one fund.
+- **Don't:** treat it as an annual rate, or as TWR. A late lump sits in the
+  denominator immediately, just as with ROIC.
+- **Read with:** ROIC (the real book). ΔGain€ (the euros). XIRR (annualized,
+  timing-aware — not computed for the replay).
 
 ## Fees
 

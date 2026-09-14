@@ -398,6 +398,9 @@ def test_canonical_sort_tokens_agree_across_commands() -> None:
 
     assert {"pnl", "pnl_pct", "pnl_ctr"} <= set(performance.SORT_FIELDS)
     assert {"pnl", "pnl_pct", "pnl_ctr"} <= set(deposits.SORT_FIELDS)
+    assert {"isin", "name", "cost", "value", "pnl", "pnl_pct", "lots", "delta"} <= set(
+        deposits.AGAINST_SORT_FIELDS
+    )
     assert "weight" in portfolio.SORT_FIELDS
     assert "weight" in performance.SORT_FIELDS
     assert "weight" in rebalance.SORT_FIELDS

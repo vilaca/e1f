@@ -12,15 +12,26 @@ SELL makes the report unavailable because disposal attribution is not implemente
 vintages (one row per calendar period × fund). Week labels are ISO-8601
 (``YYYY-Www``, Monday-start).
 
+``--against ISIN[,ISIN…]`` / ``--against-portfolio`` / ``--against-all`` (ADR-0054)
+replay each valuable buy's Amount€ into a candidate fund on that buy's date and
+compare euro P&L to the book. ``--against-portfolio`` is each held ISIN;
+``--against-all`` is every priced ISIN, held or not.
+
 Usage:
     e1f deposits
     e1f deposits --as-of 2025-12-31 --sort pnl --reverse
     e1f deposits --group year
     e1f deposits --group week
+    e1f deposits --against IE00BK5BQT80
+    e1f deposits --against-portfolio
+    e1f deposits --against-all --sort delta --reverse
 """
 
 import argparse
+import os
+import sqlite3
 import sys
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
@@ -29,13 +40,18 @@ from e1f.common import (
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
     ConfigManager,
+    Status,
     build_series,
     load_trades,
     unit_value_on,
 )
 
 # Canonical tokens (ADR-0037): cost=Amount€, pnl=Gain€, pnl_pct=Ret%, pnl_ctr=%P&L.
+# Against-table extras (ADR-0054): lots=Lots, delta=ΔGain€. Default sort stays date;
+# --against / --against-portfolio / --against-all resolve an omitted --sort to delta.
 SORT_FIELDS = ("date", "isin", "name", "cost", "value", "pnl", "pnl_pct", "pnl_ctr")
+AGAINST_SORT_FIELDS = ("isin", "name", "lots", "cost", "value", "pnl", "pnl_pct", "delta")
+_SORT_CHOICES = tuple(dict.fromkeys([*SORT_FIELDS, *AGAINST_SORT_FIELDS]))
 _BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
 
 
@@ -218,6 +234,169 @@ def summarize(impacts: list[DepositImpact]) -> DepositSummary | None:
     )
 
 
+@dataclass(frozen=True)
+class DepositReplay:
+    """Same-cash replay of valuable deposits onto one alternative ISIN (ADR-0054)."""
+
+    isin: str
+    name: str
+    status: Status
+    reason: str | None
+    n_filled: int
+    n_skipped: int
+    invested: float | None
+    alt_value: float | None
+    book_value: float | None
+
+    @property
+    def alt_gain(self) -> float | None:
+        if self.alt_value is None or self.invested is None:
+            return None
+        return self.alt_value - self.invested
+
+    @property
+    def book_gain(self) -> float | None:
+        if self.book_value is None or self.invested is None:
+            return None
+        return self.book_value - self.invested
+
+    @property
+    def delta(self) -> float | None:
+        if self.alt_gain is None or self.book_gain is None:
+            return None
+        return self.alt_gain - self.book_gain
+
+    @property
+    def alt_roic(self) -> float | None:
+        if self.alt_gain is None or self.invested is None or self.invested <= 0.0:
+            return None
+        return 100.0 * self.alt_gain / self.invested
+
+
+def _unavailable_replay(
+    isin: str, name: str, reason: str, n_skipped: int
+) -> DepositReplay:
+    return DepositReplay(
+        isin=isin,
+        name=name,
+        status=Status.UNAVAILABLE,
+        reason=reason,
+        n_filled=0,
+        n_skipped=n_skipped,
+        invested=None,
+        alt_value=None,
+        book_value=None,
+    )
+
+
+def replay_deposits(
+    db_path: str,
+    currency_meta_path: str,
+    as_of: str,
+    alt_isin: str,
+    alt_name: str,
+    impacts: list[DepositImpact],
+) -> DepositReplay:
+    """Spend each valuable deposit's Amount€ in ``alt_isin`` on that buy's date.
+
+    Fill is ``unit_value_on`` (nearest-prior close, FX on the valuation day). A
+    deposit the candidate cannot fill is dropped from both legs. Returns
+    UNAVAILABLE when the candidate has no as-of unit value or no fillable
+    deposit; BOUNDED when some valuable deposits were skipped.
+    """
+    valuable = [impact for impact in impacts if impact.valuable]
+    series = build_series(db_path, alt_isin, [], as_of, currency_meta_path)
+    unit_asof = unit_value_on(series, as_of, db_path)
+    if unit_asof is None or unit_asof <= 0.0:
+        return _unavailable_replay(
+            alt_isin,
+            alt_name,
+            "no EUR close/FX for the alternative on or before as-of",
+            n_skipped=len(valuable),
+        )
+
+    hyp_shares = 0.0
+    invested = 0.0
+    book_value = 0.0
+    n_filled = 0
+    n_skipped = 0
+    for impact in valuable:
+        unit_buy = unit_value_on(series, impact.date, db_path)
+        if unit_buy is None or unit_buy <= 0.0:
+            n_skipped += 1
+            continue
+        hyp_shares += impact.amount / unit_buy
+        invested += impact.amount
+        book_value += impact.value or 0.0
+        n_filled += 1
+
+    if n_filled == 0:
+        return _unavailable_replay(
+            alt_isin,
+            alt_name,
+            "no alternative close on or before any deposit date",
+            n_skipped=n_skipped,
+        )
+
+    return DepositReplay(
+        isin=alt_isin,
+        name=alt_name,
+        status=Status.BOUNDED if n_skipped else Status.CALCULATED,
+        reason=(
+            None
+            if n_skipped == 0
+            else (
+                f"skipped {n_skipped} of {n_filled + n_skipped} deposits "
+                "(no close on or before buy date); BookGain€/Invested€ are the overlapping lots"
+            )
+        ),
+        n_filled=n_filled,
+        n_skipped=n_skipped,
+        invested=invested,
+        alt_value=hyp_shares * unit_asof,
+        book_value=book_value,
+    )
+
+
+def _priced_isins(db_path: str) -> list[str]:
+    """Distinct ISINs in ``prices``, sorted; empty when the table or file is missing."""
+    if not os.path.exists(db_path):
+        return []
+    with closing(sqlite3.connect(db_path)) as conn:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
+            ).fetchone()
+            is None
+        ):
+            return []
+        return [row[0] for row in conn.execute("SELECT DISTINCT isin FROM prices ORDER BY isin")]
+
+
+def _book_isins(impacts: list[DepositImpact]) -> list[str]:
+    """Distinct ISINs among this as-of book's deposits, sorted."""
+    return sorted({impact.isin for impact in impacts})
+
+
+def _parse_against(raw: str) -> list[str]:
+    """Comma-separated ISINs, stripped, de-duplicated, order preserved."""
+    isins: list[str] = []
+    seen: set[str] = set()
+    for token in raw.split(","):
+        isin = token.strip()
+        if not isin or isin in seen:
+            continue
+        seen.add(isin)
+        isins.append(isin)
+    if not isins:
+        raise ValueError("--against needs at least one ISIN")
+    return isins
+
+
+def _alt_name(config: ConfigManager, isin: str) -> str:
+    return str((config.get(isin) or {}).get("name", ""))[:24] or isin
+
+
 # ---------------------------------------------------------------------------
 # Sorting + rendering.
 # ---------------------------------------------------------------------------
@@ -238,6 +417,28 @@ def _sort_key(impact: DepositImpact, sort_by: str) -> str | float:
         "pnl_ctr": impact.pnl_share,
     }[sort_by]
     return float("-inf") if value is None else value
+
+
+def _against_sort_key(replay: DepositReplay, sort_by: str) -> str | float:
+    if sort_by == "isin":
+        return replay.isin
+    if sort_by == "name":
+        return replay.name.lower()
+    value = {
+        "lots": float(replay.n_filled),
+        "cost": replay.invested,
+        "value": replay.alt_value,
+        "pnl": replay.alt_gain,
+        "pnl_pct": replay.alt_roic,
+        "delta": replay.delta,
+    }[sort_by]
+    return float("-inf") if value is None else value
+
+
+def sort_replays(
+    replays: list[DepositReplay], *, sort_by: str = "delta", reverse: bool = False
+) -> list[DepositReplay]:
+    return sorted(replays, key=lambda row: _against_sort_key(row, sort_by), reverse=reverse)
 
 
 def sort_impacts(
@@ -263,6 +464,10 @@ def _fmt_pct(value: float | None) -> str:
 _COLUMNS = (
     f"{'ISIN':<14} {'Fund':<24} {'Amount€':>10} {'Value€':>10} "
     f"{'Gain€':>10} {'Ret%':>7} {'%P&L':>7}"
+)
+_AGAINST_HEADER = (
+    f"\n{'ISIN':<14} {'Fund':<24} {'Lots':>4} {'Invested€':>10} "
+    f"{'AltValue€':>10} {'AltGain€':>10} {'BookGain€':>10} {'ΔGain€':>10} {'AltROIC':>8}"
 )
 
 
@@ -354,6 +559,34 @@ def _render_summary(as_of: str, summary: DepositSummary) -> list[str]:
     ]
 
 
+def _format_replay_row(replay: DepositReplay) -> str:
+    lots = f"{replay.n_filled:>4}"
+    return (
+        f"{replay.isin:<14} {replay.name:<24} {lots} "
+        f"{_fmt_money(replay.invested):>10} {_fmt_money(replay.alt_value):>10} "
+        f"{_fmt_signed(replay.alt_gain):>10} {_fmt_signed(replay.book_gain):>10} "
+        f"{_fmt_signed(replay.delta):>10} {_fmt_pct(replay.alt_roic):>8}"
+    )
+
+
+def _render_against(
+    replays: list[DepositReplay], *, sort_by: str, reverse: bool
+) -> None:
+    header = _AGAINST_HEADER
+    print(header)
+    print("-" * len(header.lstrip("\n")))
+    for replay in sort_replays(replays, sort_by=sort_by, reverse=reverse):
+        print(_format_replay_row(replay))
+
+
+def _disclose_replays(replays: list[DepositReplay]) -> None:
+    """Print typed partial/unavailable outcomes (ADR-0054); one line per flagged row."""
+    for replay in replays:
+        if replay.status is Status.CALCULATED or replay.reason is None:
+            continue
+        print(f"\n⚠ {replay.isin} {replay.status}: {replay.reason}")
+
+
 def _cmd_deposits(
     db_path: str,
     config_path: str,
@@ -362,6 +595,8 @@ def _cmd_deposits(
     sort_by: str = "date",
     reverse: bool = False,
     group: str | None = None,
+    against: list[str] | None = None,
+    against_portfolio: bool = False,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
 ) -> int:
     impacts = deposit_impacts(db_path, config_path, currency_meta_path, as_of)
@@ -373,6 +608,44 @@ def _cmd_deposits(
     summary = summarize(impacts)
     if summary is None:
         print(f"No priceable deposits as of {as_of} — fetch prices first (e1f fetch)")
+        return 0
+
+    if against_portfolio:
+        against = _book_isins(impacts)
+
+    if against is not None:
+        config = ConfigManager(config_path)
+        replays = [
+            replay_deposits(
+                db_path,
+                currency_meta_path,
+                as_of,
+                isin,
+                _alt_name(config, isin),
+                impacts,
+            )
+            for isin in against
+        ]
+        for line in _render_summary(as_of, summary):
+            print(line)
+        print(
+            "\nSame-cash replay (each deposit's Amount€ bought the alternative "
+            "at that day's EUR close):"
+        )
+        _render_against(replays, sort_by=sort_by, reverse=reverse)
+        _disclose_replays(replays)
+        excluded = sorted({i.isin for i in impacts if not i.valuable})
+        if excluded:
+            print(
+                f"\n⚠ excluded from the book (no price/FX on or before {as_of}): "
+                + ", ".join(excluded)
+            )
+        print(
+            "\nReplay deploys Amount€ (shares × price + fee) at the alternative's "
+            "nearest-prior EUR close; no second fee is modelled. ΔGain€ = AltGain€ − "
+            "BookGain€ on the overlapping lots. Positive ΔGain€ means the alternative "
+            "would have been ahead (ADR-0054)."
+        )
         return 0
 
     if group:
@@ -431,12 +704,21 @@ Invested/Reported/Organic-gain(Gain€)/ROIC(Ret%) figures instead. Grouping onl
 partitions the same buys, so the totals and reconciliation are unchanged. --sort
 orders funds within each period; --reverse also flips period order.
 
+--against ISIN[,ISIN…] replays each valuable buy's Amount€ into those funds.
+--against-portfolio is the same table, one row per holding in this as-of book.
+--against-all is the same table for every ISIN in prices, held or not. The three
+are mutually exclusive with each other and with --group. Default --sort under any
+replay is delta (positive ΔGain€ = alternative ahead).
+
 Examples:
   e1f deposits
   e1f deposits --as-of 2025-12-31
   e1f deposits --sort pnl --reverse
   e1f deposits --group year          # one row per fund per calendar year
   e1f deposits --group week          # one row per fund per ISO week
+  e1f deposits --against IE00BK5BQT80
+  e1f deposits --against-portfolio --sort delta --reverse
+  e1f deposits --against-all --sort delta --reverse
         """,
     )
     parser.add_argument("--db", "-d", default=DEFAULT_DB, help="Database file path")
@@ -462,12 +744,72 @@ Examples:
         "(week, month, or year)",
     )
     parser.add_argument(
-        "--sort", choices=SORT_FIELDS, default="date", help="Sort column (default: date)"
+        "--against",
+        default=None,
+        metavar="ISIN[,ISIN...]",
+        help="Replay each deposit's Amount€ into these ISINs and compare P&L to the book",
+    )
+    parser.add_argument(
+        "--against-portfolio",
+        dest="against_portfolio",
+        action="store_true",
+        help="Replay onto each held ISIN in this as-of book (mutually exclusive "
+        "with --against and --against-all)",
+    )
+    parser.add_argument(
+        "--against-all",
+        dest="against_all",
+        action="store_true",
+        help="Replay onto every ISIN in the prices table, held or not "
+        "(mutually exclusive with --against and --against-portfolio)",
+    )
+    parser.add_argument(
+        "--sort",
+        choices=_SORT_CHOICES,
+        default=None,
+        help="Sort column (default: date; delta under "
+        "--against/--against-portfolio/--against-all)",
     )
     parser.add_argument(
         "--reverse", "-r", action="store_true", help="Descending sort order"
     )
     return parser
+
+
+def _replay_flags(args: argparse.Namespace) -> list[str]:
+    flags: list[str] = []
+    if args.against is not None:
+        flags.append("--against")
+    if args.against_portfolio:
+        flags.append("--against-portfolio")
+    if args.against_all:
+        flags.append("--against-all")
+    return flags
+
+
+def _resolve_against(args: argparse.Namespace) -> list[str] | None:
+    flags = _replay_flags(args)
+    if args.group and flags:
+        raise ValueError(f"--group cannot be combined with {flags[0]}")
+    if len(flags) > 1:
+        raise ValueError(f"{flags[0]} and {flags[1]} are mutually exclusive")
+    if args.against_all:
+        return _priced_isins(args.db)
+    if args.against is not None:
+        return _parse_against(args.against)
+    return None
+
+
+def _resolve_sort(sort_by: str | None, *, against: bool) -> str:
+    default = "delta" if against else "date"
+    resolved = sort_by or default
+    allowed = AGAINST_SORT_FIELDS if against else SORT_FIELDS
+    if resolved not in allowed:
+        raise ValueError(
+            f"--sort {resolved} is not a column on this deposits view "
+            f"(choose from {', '.join(allowed)})"
+        )
+    return resolved
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -478,13 +820,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✗ Error: --as-of must be YYYY-MM-DD: {args.as_of}")
         return 1
     try:
+        against = _resolve_against(args)
+        if args.against_all and against is not None and not against:
+            print("No price series in database")
+            print("Fetch prices: e1f fetch")
+            return 0
         return _cmd_deposits(
             args.db,
             args.config,
             as_of=args.as_of,
-            sort_by=args.sort,
+            sort_by=_resolve_sort(args.sort, against=bool(_replay_flags(args))),
             reverse=args.reverse,
             group=args.group,
+            against=against,
+            against_portfolio=args.against_portfolio,
             currency_meta_path=args.currency_meta,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1

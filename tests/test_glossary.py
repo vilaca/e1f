@@ -253,6 +253,19 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
             },
         ),
         (
+            "deposits",
+            deposits._AGAINST_HEADER,
+            {
+                "Lots": "Lots",
+                "Invested€": "Invested",
+                "AltValue€": "AltValue€",
+                "AltGain€": "AltGain€",
+                "BookGain€": "BookGain€",
+                "ΔGain€": "ΔGain€",
+                "AltROIC": "AltROIC",
+            },
+        ),
+        (
             "benchmark",
             benchmark._HEADER,
             {
@@ -340,6 +353,10 @@ def test_special_char_single_queries_resolve():
         "Amount€",
         "Value€ (per deposit)",
         "Gain€ (per deposit)",
+        "AltValue€",
+        "AltGain€",
+        "BookGain€",
+        "ΔGain€",
         "Fee€/yr",
     ]
     percent = ["P&L%", "Ctr%", "Ret% (per deposit)", "%P&L (per deposit)", "Out%"]

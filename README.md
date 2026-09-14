@@ -37,6 +37,9 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
 | How do two funds compare? | `e1f performance --isin A --isin B` | repeat `--isin` to narrow every view to a subset (ADR-0047) |
 | How did each individual deposit do? | `e1f deposits` | **ROIC** (gain ÷ invested), **Organic gain** (market growth, excludes new cash), per-lot **Ret%** |
+| If every buy had gone into one ETF, more or less P&L? | `e1f deposits --against ISIN` | **ΔGain€** (alternative − book, same euros and dates). **AltROIC** is the replay's ROIC. Not Out% — that is TWR |
+| Same question against each holding? | `e1f deposits --against-portfolio` | the same columns, one row per held ISIN (ADR-0054) |
+| Same question against every priced fund? | `e1f deposits --against-all` | the same columns, one row per ISIN in `prices` (ADR-0054) |
 | Did I beat the market? | `e1f benchmark` | **TWR** / **Vol** / **MaxDD** (that benchmark over the shared window), **Out%** (raw gap) / **RelStr** (compounded: 1.05 = €1 became 5% more), **IR** (gap per unit of drift). The **Book** line is the portfolio's own TWR/Vol/MaxDD. Check **n** (thin history is noise) and **R²** (a poor mirror means you beat the wrong benchmark) first |
 | How does the book compare to every priced fund? | `e1f benchmark --all` | the same columns, one row per ISIN in `prices` (ADR-0044) |
 | Are my funds redundant — do they move alike? | `e1f correlation` | **ρ** (near 1 = a second helping of the same bet), the clusters, and **n** |
@@ -64,7 +67,7 @@ walled off so no stable command depends on them:
 - **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
 - **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; see `e1f glossary` for metric definitions and `e1f performance --help` for report modes.
 - **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs; see the glossary for the reported metrics and ADR-0033 for the benchmark set and overlap policy.
-- **`e1f deposits`** — compare invested capital with reported value and inspect each deposit's impact. Buy-and-hold totals reconcile with the `performance` TOTAL (ADR-0033).
+- **`e1f deposits`** — compare invested capital with reported value and inspect each deposit's impact. `--against` / `--against-portfolio` / `--against-all` replay those buys onto other ISINs (ADR-0054). Buy-and-hold totals reconcile with the `performance` TOTAL (ADR-0033).
 - **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 - **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
 - **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.
@@ -143,6 +146,9 @@ e1f deposits --sort pnl --reverse    # biggest contributors to P&L first
 e1f deposits --as-of 2025-12-31      # value each deposit as of a past date
 e1f deposits --group year            # deposit vintages: one row per fund per year
 e1f deposits --group week            # same, per ISO week (YYYY-Www)
+e1f deposits --against IE00BK5BQT80  # replay every buy into one ISIN (ADR-0054)
+e1f deposits --against-portfolio     # same, each holding in this as-of book
+e1f deposits --against-all --sort delta --reverse  # same, every priced fund; winners first
 
 # 5. Inspect within-fund concentration (experimental; look-through cached by `e1f lookthrough`)
 e1f lookthrough                      # refresh yfinance look-through snapshots first

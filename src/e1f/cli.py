@@ -111,7 +111,7 @@ Commands:
   portfolio     Show ETF holdings and average cost from transactions
   performance   Report market value, P&L, and return metrics per holding
   benchmark     Compare the portfolio's returns against benchmark ETFs (beta, R², TE, IR)
-  deposits      Organic-vs-reported value, ROIC, and per-deposit contribution impact
+  deposits      Organic-vs-reported value, ROIC, per-deposit impact; --against replays buys
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
   scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)

@@ -493,7 +493,9 @@ def _portfolio_diff_rows(
         if (s is not None and s.eur_value is None) or (e is not None and e.eur_value is None):
             delta_value: float | None = None
         else:
-            delta_value = (e.eur_value or 0.0) - (s.eur_value or 0.0)
+            start_val = 0.0 if s is None else (s.eur_value or 0.0)
+            end_val = 0.0 if e is None else (e.eur_value or 0.0)
+            delta_value = end_val - start_val
 
         # ΔWeight%: cost-basis share of the whole book at each endpoint.
         s_weight = (100.0 * s_cost / start_total_cost) if start_total_cost > 0 else 0.0

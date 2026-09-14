@@ -26,7 +26,7 @@ src/e1f/
   portfolio.py      — holdings from transactions; EUR market value
   performance.py    — EUR valuation, XIRR/TWR/risk metrics
   benchmark.py      — portfolio vs benchmark ETFs
-  deposits.py       — organic-vs-reported value + ROIC
+  deposits.py       — organic-vs-reported value + ROIC; `--against` / `--against-portfolio` replay buys
   correlation.py    — return co-movement redundancy + clustering
   rebalance.py      — buy-only target rebalance + DCA plan
   scenario.py       — CRUD for named ISIN:pct baskets
