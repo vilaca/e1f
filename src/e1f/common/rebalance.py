@@ -14,7 +14,7 @@ from .holdings import (
 )
 
 
-_FLOAT_CLAMP = 1e-9  # clamp for binder-fund buy rounding and bound equality checks
+_FLOAT_CLAMP = 1e-9  # clamp for binder/residual buy rounding and bound equality checks
 
 
 @dataclass(frozen=True)
@@ -166,6 +166,9 @@ def compute_rebalance(
 
     if R >= _FLOAT_CLAMP and v_rest > 0.0:
         c_rest = R * v_prime - v_rest
+        # Same clamp when the residual bound binds: c_rest is analytically zero
+        if -_FLOAT_CLAMP <= c_rest < 0.0:
+            c_rest = 0.0
         for isin, v_j in v_held.items():
             if isin not in targets and v_j > 0.0:
                 buys[isin] = c_rest * v_j / v_rest

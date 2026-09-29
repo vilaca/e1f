@@ -565,6 +565,19 @@ def test_float_clamp_negative_binder_buy_clamped_to_zero():
     assert plan.buys[A] == 0.0  # exactly 0.0, not a tiny negative
 
 
+def test_float_clamp_negative_residual_buy_clamped_to_zero():
+    # R = 1 − 1/3 is not float-representable; the residual bound 700/R binds and
+    # c_rest = R·(700/R) − 700 ≈ -1.1e-13, which rendered as "-0.00" → clamp to 0.0.
+    plan = compute_rebalance(
+        targets={A: 1.0 / 3.0},
+        values={A: 1.0, C: 700.0},
+        held=frozenset({A, C}),
+    )
+    assert plan.feasible
+    assert plan.residual_bound_binds
+    assert plan.buys[C] == 0.0  # exactly 0.0, not a tiny negative
+
+
 # ---------------------------------------------------------------------------
 # --explain reconstructs the residual-bound binder and the DCA per-month split.
 # ---------------------------------------------------------------------------
