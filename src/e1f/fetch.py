@@ -9,9 +9,11 @@ Usage:
     e1f fetch --replace               # replace all series in the config
     e1f fetch --replace --portfolio   # replace all series with an open position
     e1f fetch --fallback      # fall back to yfinance when ftgo has no data
+    e1f fetch --backfill      # attach daily bars to stored days; nothing else changes
 
 Prices are sourced from ftgo (FT Markets), with an optional yfinance fallback
-(enabled via --fallback), and stored in a SQLite DB.
+(enabled via --fallback), and stored in a SQLite DB. ftgo rows also carry the
+day's open/high/low/volume bar; yfinance rows carry closes only (ADR-0056).
 """
 
 import argparse
@@ -46,6 +48,37 @@ from e1f.common import (
 
 logger = logging.getLogger(__name__)
 
+# The daily bar stored next to each close (ADR-0056): `prices` column -> SQLite
+# type, and the same fields as `_fetch_ftgo` returns them alongside 'Close'.
+_BAR_COLUMNS = {'open': 'REAL', 'high': 'REAL', 'low': 'REAL', 'volume': 'INTEGER'}
+_BAR_SOURCE = tuple(col.capitalize() for col in _BAR_COLUMNS)
+
+PriceRow = tuple[str, str, float, float | None, float | None, float | None, float | None]
+
+_PRICE_UPSERT = (
+    "INSERT INTO prices (isin, date, close, open, high, low, volume) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(isin, date) "
+)
+# --force / --replace: the fetched row wins whole, so a bar never outlives the
+# close it was fetched with (a yfinance close clears it).
+_OVERWRITE_ROW = (
+    "DO UPDATE SET close = excluded.close, open = excluded.open, high = excluded.high, "
+    "low = excluded.low, volume = excluded.volume"
+)
+# Default: the stored close is kept; a fetched bar attaches only to a row with no
+# bar whose stored close is the close that bar was fetched with (ADR-0056 §4).
+_ATTACH_BAR = (
+    "DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, "
+    "volume = excluded.volume WHERE prices.low IS NULL AND prices.close = excluded.close"
+)
+# --backfill: the same attach rule, but an UPDATE, so no day is ever inserted. A
+# stored series may come from an earlier pin; inserting days from the current one
+# would splice two listings into one series (ADR-0056 §5).
+_BACKFILL_BAR = (
+    "UPDATE prices SET open = ?, high = ?, low = ?, volume = ? "
+    "WHERE isin = ? AND date = ? AND low IS NULL AND close = ?"
+)
+
 
 class DataExtractor:
     """Fetch historical ETF prices and persist them to SQLite."""
@@ -60,7 +93,8 @@ class DataExtractor:
         replace: bool = False,
         allow_shrink: bool = False,
         fallback: bool = False,
-        currency_meta_path: str = DEFAULT_CURRENCY_META
+        currency_meta_path: str = DEFAULT_CURRENCY_META,
+        backfill: bool = False,
     ):
         self.config_path = config_path
         self.db_path = db_path
@@ -70,6 +104,7 @@ class DataExtractor:
         self.replace = replace
         self.allow_shrink = allow_shrink
         self.fallback = fallback
+        self.backfill = backfill
 
         # Load config
         self.config_manager = ConfigManager(config_path)
@@ -117,12 +152,13 @@ class DataExtractor:
     @classmethod
     def _summary(cls, isin: str, name: str, source: str, df: pd.DataFrame,
                  ticker: str | None = None, new: int | None = None,
-                 replaced: int = 0) -> str:
-        """One-line result: ISIN, name, ticker, day changes, source, date range."""
+                 replaced: int = 0, bars: int | None = None) -> str:
+        """One-line result: ISIN, name, ticker, day changes, source, date range, bars."""
         span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
         tag = f" ({ticker})" if ticker else ""
         changes = cls._changes(new, replaced, len(df))
-        return f"{isin} {name}{tag} — {source} - {changes} - {span}"
+        coverage = "" if bars is None else f" - daily bars {bars}/{len(df)}"
+        return f"{isin} {name}{tag} — {source} - {changes} - {span}{coverage}"
 
     def _load_universe(self) -> dict[str, ETFDefinition]:
         """Load ETF universe from config."""
@@ -205,14 +241,24 @@ class DataExtractor:
 
     def _init_database(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
+            # open/high/low/volume are the day's bar, NULL when the source had none
+            # (ADR-0056). A pre-bar DB gains them as NULL columns; closes are untouched.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prices (
                     isin TEXT,
                     date TEXT,
                     close REAL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    volume INTEGER,
                     PRIMARY KEY (isin, date)
                 )
             """)
+            have = {row[1] for row in conn.execute("PRAGMA table_info(prices)")}
+            for col, sql_type in _BAR_COLUMNS.items():
+                if col not in have:
+                    conn.execute(f"ALTER TABLE prices ADD COLUMN {col} {sql_type}")
             # Daily FX series for base-currency normalization (ADR-0010). Rates
             # are ftgo-native: quote units per 1 base (EURUSD ≈ 1.16).
             conn.execute("""
@@ -247,6 +293,10 @@ class DataExtractor:
     def _is_cached(self, isin: str) -> tuple[bool, pd.DataFrame | None]:
         if self.force_refresh or self.replace:
             return False, None
+        if self.backfill:
+            # Re-read the full range even when current; `existing` still feeds the
+            # new/replaced counts.
+            return False, self._stored_series(isin)
 
         with closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
@@ -269,28 +319,55 @@ class DataExtractor:
             return True, df
 
     @staticmethod
-    def _price_rows(isin: str, df: pd.DataFrame) -> list[tuple[str, str, float]]:
-        """(isin, 'YYYY-MM-DD', close) rows; flattens yfinance's MultiIndex too."""
+    def _price_rows(isin: str, df: pd.DataFrame) -> list[PriceRow]:
+        """(isin, 'YYYY-MM-DD', close, open, high, low, volume) rows.
+
+        Flattens yfinance's MultiIndex too. A bar is stored whole or not at all:
+        a source without bar columns (yfinance) or a day missing any bar field
+        stores NULLs (ADR-0056 §3).
+        """
         prices = df[['Close']].copy()
         prices.columns = ['close']
+        has_bars = all(col in df.columns for col in _BAR_SOURCE)
+        for col, source in zip(_BAR_COLUMNS, _BAR_SOURCE, strict=True):
+            prices[col] = df[source] if has_bars else float('nan')
         prices.index = pd.to_datetime(prices.index).strftime('%Y-%m-%d')
-        return [(isin, str(date), float(close)) for date, close in prices['close'].items()]
+
+        rows: list[PriceRow] = []
+        for date, close, open_, high, low, volume in prices.itertuples():
+            whole = not any(pd.isna(v) for v in (open_, high, low, volume))
+            rows.append((
+                isin, str(date), float(close),
+                float(open_) if whole else None,
+                float(high) if whole else None,
+                float(low) if whole else None,
+                float(volume) if whole else None,
+            ))
+        return rows
 
     def _save_prices(self, isin: str, df: pd.DataFrame) -> None:
         rows = self._price_rows(isin, df)
 
-        # By default keep already-stored closes and only add new dates; --force
-        # overwrites existing rows with the freshly fetched values.
-        on_conflict = (
-            "DO UPDATE SET close = excluded.close" if self.force_refresh else "DO NOTHING"
-        )
         with closing(sqlite3.connect(self.db_path)) as conn:
-            conn.executemany(
-                "INSERT INTO prices (isin, date, close) VALUES (?, ?, ?) "
-                f"ON CONFLICT(isin, date) {on_conflict}",
-                rows,
-            )
+            if self.backfill:
+                conn.executemany(_BACKFILL_BAR, [
+                    (open_, high, low, volume, row_isin, date, close)
+                    for row_isin, date, close, open_, high, low, volume in rows
+                    if low is not None
+                ])
+            else:
+                # By default keep already-stored closes, only add new dates, and
+                # attach a bar where one is missing; --force overwrites rows whole.
+                on_conflict = _OVERWRITE_ROW if self.force_refresh else _ATTACH_BAR
+                conn.executemany(_PRICE_UPSERT + on_conflict, rows)
             conn.commit()
+
+    def _bar_count(self, isin: str) -> int:
+        """Stored days of an ISIN that carry a daily bar."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM prices WHERE isin = ? AND low IS NOT NULL", (isin,)
+            ).fetchone()[0])
 
     def _replace_prices(self, isin: str, df: pd.DataFrame) -> None:
         """Atomically replace one ISIN's stored series after a successful fetch.
@@ -320,7 +397,7 @@ class DataExtractor:
                     for d in pd.to_datetime(stored_raw, format='mixed', errors='coerce')
                     if not pd.isna(d)
                 }
-                new_dates = {str(date) for _, date, _ in rows}
+                new_dates = {row[1] for row in rows}
                 dropped = sorted(stored_dates - new_dates)
                 if dropped:
                     raise RuntimeError(
@@ -334,11 +411,7 @@ class DataExtractor:
             # Collapse any duplicate dates in the fetched batch (e.g. two intraday
             # timestamps that strftime to the same day) instead of tripping the
             # UNIQUE(isin, date) constraint, matching _save_prices.
-            conn.executemany(
-                "INSERT INTO prices (isin, date, close) VALUES (?, ?, ?) "
-                "ON CONFLICT(isin, date) DO UPDATE SET close = excluded.close",
-                rows,
-            )
+            conn.executemany(_PRICE_UPSERT + _OVERWRITE_ROW, rows)
             conn.commit()
 
     def _fetch_ftgo(self, isin: str, start: pd.Timestamp | None = None) -> pd.DataFrame | None:
@@ -357,10 +430,12 @@ class DataExtractor:
             )
 
             if df is not None and not df.empty:
-                df = df.rename(columns={'date': 'Date', 'close': 'Close'})
+                # Keep the day's bar alongside the close (ADR-0056); a response
+                # without bar columns still yields closes.
+                df = df.rename(columns=lambda col: str(col).capitalize())
                 df['Date'] = pd.to_datetime(df['Date'])
                 df = df.set_index('Date')
-                return cast(pd.DataFrame, df[['Close']])
+                return cast(pd.DataFrame, df[['Close', *(c for c in _BAR_SOURCE if c in df)]])
         except ValueError as e:
             # get_xid raises this when the ISIN isn't on FT Markets; fall back
             # to yfinance rather than aborting. Other ValueErrors propagate.
@@ -616,15 +691,21 @@ class DataExtractor:
 
             cached, existing = self._is_cached(etf_isin)
             if cached and existing is not None and not existing.empty:
-                logger.info(self._summary(etf_isin, etf.name, "cache", existing))
+                logger.info(self._summary(etf_isin, etf.name, "cache", existing,
+                                          bars=self._bar_count(etf_isin)))
                 data_dict[etf_isin] = existing['close']
                 continue
 
             # Incremental: only pull dates after what we already have, unless
-            # --force (re-download the full range and overwrite).
+            # --force (re-download the full range and overwrite) or --backfill
+            # (re-read the full range to attach bars to stored days).
             have_existing = existing is not None and not existing.empty
+            if self.backfill and not have_existing:
+                logger.warning(f"✗ {etf_isin} {etf.name} — nothing stored to backfill; "
+                               "run 'e1f fetch' first")
+                continue
             since = None
-            if have_existing and not self.force_refresh:
+            if have_existing and not self.force_refresh and not self.backfill:
                 assert existing is not None
                 # ftgo returns empty when start == end; overlap by one day so the
                 # range is always start < end. The DO NOTHING upsert makes this safe.
@@ -659,12 +740,14 @@ class DataExtractor:
                 full = self._stored_series(etf_isin)
                 new, replaced = self._delta(existing, full, 'close')
                 logger.info(self._summary(
-                    etf_isin, etf.name, source, full, label, new, replaced))
+                    etf_isin, etf.name, source, full, label, new, replaced,
+                    bars=self._bar_count(etf_isin)))
                 data_dict[etf_isin] = full['close']
             elif have_existing:
                 assert existing is not None
                 # Nothing new upstream; keep what's already stored.
-                logger.info(self._summary(etf_isin, etf.name, "cache", existing))
+                logger.info(self._summary(etf_isin, etf.name, "cache", existing,
+                                          bars=self._bar_count(etf_isin)))
                 data_dict[etf_isin] = existing['close']
             else:
                 logger.warning(f"✗ {etf_isin} {etf.name} — all sources failed")
@@ -709,6 +792,10 @@ Examples:
   # truncated response) unless --allow-shrink is also given.
   e1f fetch IE00BM67HK77 --replace
   e1f fetch --replace --portfolio
+
+  # Re-read the full ftgo history and attach the daily open/high/low/volume bar
+  # to stored days that lack one; no close changes and no day is added.
+  e1f fetch --backfill
         """
     )
 
@@ -722,6 +809,11 @@ Examples:
         '--replace',
         action='store_true',
         help="Replace complete stored series after a successful fetch (one ISIN, --portfolio, or all)",  # noqa: E501
+    )
+    refresh_group.add_argument(
+        '--backfill',
+        action='store_true',
+        help='Attach daily bars from ftgo to stored days; changes no close, adds no day',
     )
     parser.add_argument(
         '--allow-shrink',
@@ -763,6 +855,10 @@ def main(argv: list[str] | None = None) -> int:
         print("✗ Error: --portfolio cannot be combined with an explicit ISIN")
         return 1
 
+    if args.backfill and args.fallback:
+        print("✗ Error: --backfill reads daily bars from ftgo only; drop --fallback")
+        return 1
+
     try:
         extractor = DataExtractor(
             config_path=args.config,
@@ -772,7 +868,8 @@ def main(argv: list[str] | None = None) -> int:
             replace=args.replace,
             allow_shrink=args.allow_shrink,
             fallback=args.fallback,
-            currency_meta_path=args.currency_meta
+            currency_meta_path=args.currency_meta,
+            backfill=args.backfill,
         )
         if args.portfolio:
             isins = portfolio_isins(args.db)

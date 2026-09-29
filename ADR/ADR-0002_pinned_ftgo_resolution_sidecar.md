@@ -47,3 +47,9 @@ not first-match.
   `e1f config trim` both clean up the sidecar alongside the config YAML.
 - To re-resolve an ISIN (e.g. if the chosen listing is wrong), delete its entry
   from `data/currency_metadata.yaml` and run `e1f fetch` again.
+
+## Schema migrations
+
+- **ADR-0056:** `prices` gains nullable `open`, `high`, `low`, `volume` columns
+  holding the pinned listing's daily bar. It is additive: an existing DB gets the
+  columns as NULL on the next `fetch`, and no stored close changes.

@@ -35,6 +35,20 @@ def close_df(closes, end='2026-08-12'):
     return pd.DataFrame({'Close': closes}, index=dates)
 
 
+def bar_df(bars, end='2026-08-12'):
+    """ftgo-shaped frame: one (open, high, low, close, volume) bar per business day."""
+    dates = pd.bdate_range(end=end, periods=len(bars))
+    return pd.DataFrame(bars, columns=['Open', 'High', 'Low', 'Close', 'Volume'], index=dates)
+
+
+def stored_rows(ext):
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        return conn.execute(
+            'SELECT date, close, open, high, low, volume FROM prices WHERE isin = ? ORDER BY date',
+            (ISIN,),
+        ).fetchall()
+
+
 # ---------------------------------------------------------------------------
 # Currency helpers
 # ---------------------------------------------------------------------------
@@ -85,7 +99,24 @@ def test_init_creates_prices_table(tmp_path):
     ext = make_extractor(tmp_path)
     with closing(sqlite3.connect(ext.db_path)) as conn:
         cols = conn.execute('PRAGMA table_info(prices)').fetchall()
-    assert [c[1] for c in cols] == ['isin', 'date', 'close']
+    assert [c[1] for c in cols] == ['isin', 'date', 'close', 'open', 'high', 'low', 'volume']
+
+
+def test_init_adds_bar_columns_to_a_pre_bar_db(tmp_path):
+    # A DB created before ADR-0056 gains NULL bar columns; its closes are untouched.
+    with closing(sqlite3.connect(tmp_path / 't.db')) as conn:
+        conn.execute(
+            'CREATE TABLE prices (isin TEXT, date TEXT, close REAL, PRIMARY KEY (isin, date))'
+        )
+        conn.execute('INSERT INTO prices VALUES (?, ?, ?)', (ISIN, '2026-08-12', 100.0))
+        conn.commit()
+
+    ext = make_extractor(tmp_path)
+    make_extractor(tmp_path)  # a second init finds the columns and adds none
+
+    assert stored_rows(ext) == [('2026-08-12', 100.0, None, None, None, None)]
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        assert len(conn.execute('PRAGMA table_info(prices)').fetchall()) == 7
 
 
 def test_save_and_read_back(tmp_path):
@@ -114,7 +145,7 @@ def test_read_series_parses_mixed_date_formats(tmp_path):
     # collapse to NaT), so cache-freshness math and strftime stay correct.
     ext = make_extractor(tmp_path)
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+        conn.executemany('INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', [
             (ISIN, '2026-08-10 00:00:00', 100.0),
             (ISIN, '2026-08-11', 101.0),  # date-only
         ])
@@ -129,7 +160,7 @@ def test_read_series_parses_mixed_date_formats(tmp_path):
 def test_read_series_drops_unparseable_dates(tmp_path):
     ext = make_extractor(tmp_path)
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+        conn.executemany('INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', [
             (ISIN, '2026-08-10', 100.0),
             (ISIN, 'not-a-date', 999.0),
         ])
@@ -204,7 +235,7 @@ def test_replace_ignores_corrupt_stored_dates_in_guard(tmp_path):
     # not block the repair (nor leak a literal 'None' into the guard message).
     ext = make_extractor(tmp_path, replace=True)
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+        conn.executemany('INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', [
             (ISIN, '2026-08-12', 100.0),
             (ISIN, None, 999.0),          # NULL date
             (ISIN, 'not-a-date', 998.0),  # unparseable date
@@ -222,7 +253,7 @@ def test_fetch_replace_repairs_corrupt_date_row(tmp_path, monkeypatch):
     # _read_series' docstring advertises.
     ext = make_extractor(tmp_path, replace=True)
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+        conn.executemany('INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', [
             (ISIN, '2026-08-12', 100.0),
             (ISIN, 'not-a-date', 999.0),
         ])
@@ -265,6 +296,155 @@ def test_replace_rolls_back_on_insert_failure(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Daily bars (ADR-0056)
+# ---------------------------------------------------------------------------
+
+def test_fetch_ftgo_keeps_daily_bar(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path)
+    monkeypatch.setattr(ext, '_resolve_ftgo', lambda isin: {'xid': 'x1'})
+    monkeypatch.setattr(
+        fetch_mod, 'get_historical_prices',
+        lambda xid, start, end: pd.DataFrame({
+            'date': ['2026-08-12'], 'open': [10.1], 'high': [10.4], 'low': [9.9],
+            'close': [10.2], 'volume': [1500],
+        }),
+    )
+
+    df = ext._fetch_ftgo(ISIN)
+    ext._save_prices(ISIN, df)
+
+    assert list(df.columns) == ['Close', 'Open', 'High', 'Low', 'Volume']
+    [row] = stored_rows(ext)
+    assert row == ('2026-08-12', 10.2, 10.1, 10.4, 9.9, 1500)
+    assert isinstance(row[5], int)  # INTEGER affinity keeps volume a count
+
+
+def test_price_rows_store_a_partial_bar_as_null():
+    # A bar is stored whole or not at all: one missing field nulls that day's bar.
+    df = bar_df([(10.0, 10.5, 9.5, 10.2, 100), (10.2, 10.6, float('nan'), 10.4, 200)])
+
+    rows = DataExtractor._price_rows(ISIN, df)
+
+    assert rows[0][2:] == (10.2, 10.0, 10.5, 9.5, 100.0)
+    assert rows[1][2:] == (10.4, None, None, None, None)
+
+
+def test_yfinance_bar_is_never_stored(tmp_path, monkeypatch):
+    # yfinance serves OHLC too, but bars come from ftgo only (ADR-0056 §2).
+    ext = make_extractor(tmp_path)
+    full = bar_df([(10.0, 10.5, 9.5, 10.2, 100)])
+    full.columns = pd.MultiIndex.from_product([full.columns, ['TST.DE']])
+    monkeypatch.setattr(fetch_mod.yf, 'download', lambda t, **k: full)
+
+    df, _ = ext._fetch_yfinance('TST.DE')
+    ext._save_prices(ISIN, df)
+
+    assert stored_rows(ext) == [('2026-08-12', 10.2, None, None, None, None)]
+
+
+def test_default_upsert_attaches_bar_to_its_close(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, close_df([10.2]))
+    ext._save_prices(ISIN, bar_df([(10.0, 10.5, 9.5, 10.2, 100)]))
+
+    assert stored_rows(ext) == [('2026-08-12', 10.2, 10.0, 10.5, 9.5, 100)]
+
+
+def test_default_upsert_skips_the_bar_of_a_different_close(tmp_path):
+    # A bar fetched with another close describes another print: the stored close
+    # stays and gets no bar.
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, close_df([10.2]))
+    ext._save_prices(ISIN, bar_df([(10.0, 10.5, 9.5, 10.3, 100)]))
+
+    assert stored_rows(ext) == [('2026-08-12', 10.2, None, None, None, None)]
+
+
+def test_default_upsert_keeps_a_stored_bar(tmp_path):
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, bar_df([(10.0, 10.5, 9.5, 10.2, 100)]))
+    ext._save_prices(ISIN, bar_df([(11.0, 11.5, 8.5, 10.2, 999)]))
+
+    assert stored_rows(ext) == [('2026-08-12', 10.2, 10.0, 10.5, 9.5, 100)]
+
+
+def test_force_overwrites_the_row_so_a_close_only_source_clears_the_bar(tmp_path):
+    ext = make_extractor(tmp_path, force_refresh=True)
+    ext._save_prices(ISIN, bar_df([(10.0, 10.5, 9.5, 10.2, 100)]))
+    ext._save_prices(ISIN, close_df([10.3]))
+
+    assert stored_rows(ext) == [('2026-08-12', 10.3, None, None, None, None)]
+
+
+def test_replace_stores_bars(tmp_path):
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([10.2]))
+    ext._replace_prices(ISIN, bar_df([(10.0, 10.5, 9.5, 10.3, 100)]))
+
+    assert stored_rows(ext) == [('2026-08-12', 10.3, 10.0, 10.5, 9.5, 100)]
+
+
+def test_backfill_attaches_bars_without_changing_a_close_or_adding_a_day(
+    tmp_path, monkeypatch
+):
+    make_extractor(tmp_path)._save_prices(ISIN, close_df([10.0, 10.2]))  # 08-11, 08-12
+    ext = make_extractor(tmp_path, backfill=True)
+    upstream = bar_df([
+        (9.8, 10.1, 9.7, 9.9, 50),     # 08-10 not stored: not added (no splice)
+        (9.9, 10.2, 9.8, 10.0, 60),    # 08-11 same close: bar attached
+        (10.1, 10.4, 10.0, 10.3, 70),  # 08-12 revised upstream: close kept, no bar
+    ])
+    starts = []
+
+    def full_range(isin, start=None):
+        starts.append(start)
+        return upstream
+
+    monkeypatch.setattr(ext, '_fetch_ftgo', full_range)
+
+    ext.fetch(ISIN)
+
+    assert starts == [None]
+    assert stored_rows(ext) == [
+        ('2026-08-11', 10.0, 9.9, 10.2, 9.8, 60),
+        ('2026-08-12', 10.2, None, None, None, None),
+    ]
+
+
+def test_backfill_skips_an_isin_with_nothing_stored(tmp_path, monkeypatch, caplog):
+    ext = make_extractor(tmp_path, backfill=True)
+    monkeypatch.setattr(ext, '_fetch_ftgo',
+                        lambda *a, **k: pytest.fail('nothing to backfill: no fetch'))
+
+    with pytest.raises(RuntimeError, match='No data fetched'):
+        ext.fetch(ISIN)
+
+    assert 'nothing stored to backfill' in caplog.text
+    assert stored_rows(ext) == []
+
+
+def test_backfill_ignores_a_current_cache(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, backfill=True)
+    today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.execute(
+            'INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', (ISIN, today, 100.0)
+        )
+        conn.commit()
+    starts = []
+
+    def full_range(isin, start=None):
+        starts.append(start)
+        return close_df([100.0])
+
+    monkeypatch.setattr(ext, '_fetch_ftgo', full_range)
+
+    ext.fetch(ISIN)
+
+    assert starts == [None]
+
+
+# ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
 
@@ -278,7 +458,9 @@ def test_is_cached_when_current(tmp_path):
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.execute('INSERT INTO prices VALUES (?, ?, ?)', (ISIN, today, 100.0))
+        conn.execute(
+            'INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', (ISIN, today, 100.0)
+        )
         conn.commit()
     cached, df = ext._is_cached(ISIN)
     assert cached is True and len(df) == 1
@@ -405,6 +587,12 @@ def test_summary_includes_day_changes():
     assert '— ftgo - +2 new, 2 total -' in line
 
 
+def test_summary_reports_daily_bar_coverage():
+    df = _series({'2026-08-11': 1.0, '2026-08-12': 2.0})
+    line = DataExtractor._summary(ISIN, 'Test ETF', 'ftgo', df, new=2, bars=1)
+    assert line.endswith('2026-08-11 to 2026-08-12 - daily bars 1/2')
+
+
 # ---------------------------------------------------------------------------
 # fetch() orchestration
 # ---------------------------------------------------------------------------
@@ -413,7 +601,9 @@ def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
     with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.execute('INSERT INTO prices VALUES (?, ?, ?)', (ISIN, today, 100.0))
+        conn.execute(
+            'INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', (ISIN, today, 100.0)
+        )
         conn.commit()
     monkeypatch.setattr(ext, '_fetch_ftgo',
                         lambda *a, **k: pytest.fail('should not hit network'))
@@ -777,6 +967,31 @@ def test_main_failure_returns_1(tmp_path, monkeypatch, capsys):
     rc = fetch_mod.main(['--config', str(tmp_path / 'u.yaml')])
     assert rc == 1
     assert 'No data fetched' in capsys.readouterr().out
+
+
+def test_main_passes_backfill(tmp_path, monkeypatch):
+    seen = {}
+
+    class Capture(FakeExtractor):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            seen.update(kwargs)
+
+    monkeypatch.setattr(fetch_mod, 'DataExtractor', Capture)
+    rc = fetch_mod.main(['--config', str(tmp_path / 'u.yaml'), '--backfill'])
+    assert rc == 0
+    assert seen['backfill'] is True
+
+
+def test_main_backfill_refuses_fallback(capsys):
+    assert fetch_mod.main(['--backfill', '--fallback']) == 1
+    assert '--backfill reads daily bars from ftgo only' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('flag', ['--force', '--replace'])
+def test_backfill_excludes_force_and_replace(flag):
+    with pytest.raises(SystemExit):
+        fetch_mod._build_parser().parse_args(['--backfill', flag])
 
 
 def test_main_replace_without_isin_accepted(capsys, tmp_path, monkeypatch):

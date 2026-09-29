@@ -108,6 +108,7 @@ e1f fetch                 # all ETFs in the config
 e1f fetch IE00BM67HK77    # a single ISIN
 e1f fetch --force         # ignore the cache and re-download
 e1f fetch IE00BM67HK77 --replace  # atomically replace one ISIN's stored series (repair)
+e1f fetch --backfill      # attach daily bars to stored days; nothing else changes
 
 # 3. Ingest broker transactions into the SQLite DB
 e1f transactions trade-republic ~/Downloads/transactions.csv
@@ -234,6 +235,13 @@ re-inserting the fetched range; unless `--allow-shrink` is given it refuses to
 drop any stored date (shorter range, narrower window, or interior hole), so a
 truncated response can't silently wipe history
 (`ADR/ADR-0008_price_series_replace_repair.md`).
+
+Alongside each close, ftgo rows store the day's bar: open, high, low and volume.
+Rows from yfinance store closes only. An incremental fetch never changes a stored
+close. It attaches a bar only to a row whose close matches the one the bar was
+fetched with. `e1f fetch --backfill` re-reads the full ftgo history and attaches
+bars to stored days on that same rule; it changes no close and adds no day. Each
+fetch summary line ends with `daily bars N/T` (`ADR/ADR-0056_daily_bars_in_prices.md`).
 
 Prices are stored in each fund's native quote currency. A bulk `e1f fetch` also
 refreshes a daily FX series (`fx_rates` table) for the currencies the **held**

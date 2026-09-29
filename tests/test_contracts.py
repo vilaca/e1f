@@ -250,9 +250,13 @@ def test_prices_schema_contract(tmp_path: Path) -> None:
 
     schema = {row[1]: {"type": row[2], "pk": row[5]} for row in cols}
     assert schema == {
-        "isin":  {"type": "TEXT", "pk": 1},
-        "date":  {"type": "TEXT", "pk": 2},
-        "close": {"type": "REAL", "pk": 0},
+        "isin":   {"type": "TEXT", "pk": 1},
+        "date":   {"type": "TEXT", "pk": 2},
+        "close":  {"type": "REAL", "pk": 0},
+        "open":   {"type": "REAL", "pk": 0},  # daily bar, NULL when absent (ADR-0056)
+        "high":   {"type": "REAL", "pk": 0},
+        "low":    {"type": "REAL", "pk": 0},
+        "volume": {"type": "INTEGER", "pk": 0},
     }
 
 
