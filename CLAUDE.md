@@ -36,6 +36,7 @@ src/e1f/
   concentration.py  — within-fund concentration (security, sector, asset-class)
   overlap.py        — cross-fund single-name exposure floor
   seasonality.py    — calendar-month effects and pre-specified/frozen-OOS rules (ADR-0026 through ADR-0028)
+  limitbuy.py       — close-only worst-case bound on buy-limit orders (ADR-0055)
   common/           — shared primitives; commands import from `e1f.common` (ADR-0025)
   experimental/     — isolated experimental tier; one-way import boundary (ADR-0024)
 data/

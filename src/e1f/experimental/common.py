@@ -1,9 +1,10 @@
 """Experimental-only shared primitives for the e1f experimental tier (ADR-0024).
 
 Holds the pieces used only by the experimental commands (``backtest``,
-``concentration``, ``overlap``, ``lookthrough``, ``seasonality``): the look-through snapshot
-model + ingest, the unresolved overlap-candidate signal, and the
-contribution-timing backtest simulator. Stable commands never import from here
+``concentration``, ``overlap``, ``lookthrough``, ``seasonality``, ``limitbuy``): the
+look-through snapshot model + ingest, the unresolved overlap-candidate signal, the
+contribution-timing backtest simulator, and the EUR price-history inputs the
+history commands share. Stable commands never import from here
 (enforced by the import-linter ``forbidden`` contract); this module may freely
 consume shared ``e1f.common`` primitives (e.g. ``xirr``).
 """
@@ -20,7 +21,13 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 
-from e1f.common import xirr
+from e1f.common import (
+    BASE_CURRENCY,
+    ConfigManager,
+    load_price_series,
+    pinned_quote_currency,
+    xirr,
+)
 
 # ---------------------------------------------------------------------------
 # Look-through snapshots (ADR-0012): immutable, append-only observations of a
@@ -829,3 +836,98 @@ def simulate_strategy(
         reserve_contributed=reserve_contributed,
         reserve_deployed=reserve_deployed,
     )
+
+# ---------------------------------------------------------------------------
+# Price-history inputs shared by ``backtest``, ``seasonality`` and ``limitbuy``
+# (ADR-0024 §2): the EUR daily-close series (native close × nearest-prior
+# EUR/FX), the stored-series catalog for the unknown-ISIN error, and the crash
+# windows every run discloses.
+# ---------------------------------------------------------------------------
+
+# Known global-equity crash windows, reported (not special-cased in the math) so
+# every run states which fall inside its span and which are excluded (ADR-0019 §8).
+CRASH_WINDOWS: tuple[tuple[str, str, str], ...] = (
+    ("dot-com 2000-2002", "2000-03-24", "2002-10-09"),
+    ("GFC 2007-2009", "2007-10-09", "2009-03-09"),
+    ("COVID 2020", "2020-02-19", "2020-03-23"),
+    ("2022 bear", "2022-01-03", "2022-10-12"),
+)
+
+
+def crash_split(first: str, last: str) -> tuple[list[str], list[str]]:
+    """Crash windows overlapping ``[first, last]`` (marked ~ if only partial) vs excluded."""
+    included, excluded = [], []
+    for name, cstart, cend in CRASH_WINDOWS:
+        if cend >= first and cstart <= last:
+            partial = cstart < first or cend > last
+            included.append(f"{name}{'~' if partial else ''}")
+        else:
+            excluded.append(name)
+    return included, excluded
+
+
+def _fx_series(db_path: str, quote: str) -> tuple[list[str], list[float]]:
+    """All stored EUR→``quote`` rates, sorted by date (quote units per 1 EUR)."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fx_rates'"
+        ).fetchone() is None:
+            return [], []
+        rows = conn.execute(
+            "SELECT date, rate FROM fx_rates WHERE base = ? AND quote = ? ORDER BY date",
+            (BASE_CURRENCY, quote),
+        ).fetchall()
+    return [str(d)[:10] for d, _ in rows], [float(r) for _, r in rows]
+
+
+def eur_series(
+    db_path: str, isin: str, as_of: str, currency_meta_path: str
+) -> tuple[list[str], list[float], str]:
+    """``(dates, eur_closes, currency)`` for an ISIN up to ``as_of``.
+
+    EUR funds pass through; a foreign fund converts each close at the nearest-prior
+    stored EUR/FX rate. A day preceding the FX series (no usable rate) is dropped —
+    an as-of valuation must never use a later rate (ADR-0010).
+    """
+    currency = pinned_quote_currency(isin, currency_meta_path)
+    dates, closes = load_price_series(db_path, isin, as_of)
+    if currency is None or currency == BASE_CURRENCY:
+        return dates, closes, currency or BASE_CURRENCY
+
+    fx_dates, fx_rates = _fx_series(db_path, currency)
+    eur_dates: list[str] = []
+    eur_closes: list[float] = []
+    for day, close in zip(dates, closes, strict=True):
+        k = bisect.bisect_right(fx_dates, day) - 1
+        if k < 0:
+            continue  # no rate on/before this day — cannot value it
+        eur_dates.append(day)
+        eur_closes.append(close / fx_rates[k])
+    return eur_dates, eur_closes, currency
+
+
+def price_catalog(db_path: str) -> list[tuple[str, int, str, str]]:
+    """``(isin, count, first, last)`` for every ISIN with a stored price series."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
+        ).fetchone() is None:
+            return []
+        rows = conn.execute(
+            "SELECT isin, COUNT(*), MIN(date), MAX(date) FROM prices GROUP BY isin ORDER BY isin"
+        ).fetchall()
+    return [(r[0], int(r[1]), str(r[2])[:10], str(r[3])[:10]) for r in rows]
+
+
+def candidate_listing(db_path: str, config: ConfigManager) -> str:
+    """Human-readable candidate list for the missing/unknown-ISIN error."""
+    catalog = price_catalog(db_path)
+    if not catalog:
+        return "  (no price series stored — run 'e1f fetch' first)"
+    lines = []
+    for isin, count, first, last in catalog:
+        cfg = config.get(isin) or {}
+        dist = (cfg.get("distribution") or "?")[:3].lower()
+        name = cfg.get("name") or "?"
+        lines.append(f"  {isin}  {first}→{last}  {count:>5}d  {dist:3}  {name}")
+    return "\n".join(lines)

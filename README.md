@@ -80,6 +80,7 @@ Experimental tier (ADR-0024):
 - **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 - **`e1f backtest`** — evaluate contribution-timing strategies against controlled DCA and blind-deployment baselines (ADR-0019 through ADR-0023).
 - **`e1f seasonality`** — analyze calendar-month effects and pre-specified or frozen-OOS rules without auto-trading the weakest in-sample month (ADR-0026 through ADR-0028).
+- **`e1f limitbuy`** — worst-case bound on a buy-limit order placed under the price, against buying at the close, from close-only data (ADR-0055).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -199,6 +200,11 @@ e1f seasonality --isin IE00B3YLTY66
 e1f seasonality --isin IE00B3YLTY66 --explain
 e1f seasonality --portfolio            # consensus + cross-sectional permutation (ADR-0027)
 e1f seasonality --isin IE00B3YLTY66 --evaluate   # frozen Aug/Nov vs DCA (ADR-0028)
+
+# 12. Buy-limit orders under the price (experimental; close-only worst case, ADR-0055)
+e1f limitbuy --isin IE0003XJA0J9                       # 0.5–5% under, open 5 or 21 trading days
+e1f limitbuy --isin IE0003XJA0J9 --limit 13.00 --expiry 5   # a EUR limit price vs the last close
+e1f limitbuy --isin IE0003XJA0J9 --explain             # + assumptions/provenance block
 ```
 
 Defaults (from `src/e1f/common/defaults.py`): config `data/etf_universe.yaml`, database
@@ -209,7 +215,8 @@ project root, so commands work from any directory. Flag overrides are per comman
 `e1f portfolio --help`, `e1f performance --help`, `e1f correlation --help`,
 `e1f rebalance --help`, `e1f scenario --help`, `e1f validate --help`, and for the
 experimental tier `e1f lookthrough --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f backtest --help`, `e1f seasonality --help`.
+`e1f overlap --help`, `e1f backtest --help`, `e1f seasonality --help`,
+`e1f limitbuy --help`.
 
 ## Price sources
 
@@ -378,6 +385,15 @@ the configured universe (inferential cohort only) and prints a balanced
 equal-weight book. `e1f seasonality --isin X --evaluate` scores the frozen
 August/November contribution rules against DCA. It does not modify the dip
 strategies. Flags: `e1f seasonality --help`.
+
+Limit-buy (experimental tier, ADR-0024): `ADR/ADR-0055_limitbuy_close_only_bound.md`
+(`src/e1f/experimental/limitbuy.py`). `e1f limitbuy --isin X` asks, for every start
+day of one ETF's EUR close history, whether a buy-limit placed under that day's
+close would have ended with more or fewer shares than buying at the close, if it
+buys at market when it expires unfilled. It reads only closes, so intraday
+fills are invisible: every figure is a worst case for the limit order (`≥`,
+`Status` BOUNDED), and a real order does at least as well on every start day.
+Flags: `e1f limitbuy --help`.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`

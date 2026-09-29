@@ -398,13 +398,13 @@ def test_price_catalog_and_listing(tmp_path):
         funds={EUR_ISIN: {"name": "Euro Fund", "distribution": "Accumulating"}},
     )
     assert sz.price_catalog(db) == [(EUR_ISIN, 1, "2024-01-01", "2024-01-01")]
-    listing = sz._candidate_listing(db, ConfigManager(config))
+    listing = sz.candidate_listing(db, ConfigManager(config))
     assert EUR_ISIN in listing and "Euro Fund" in listing
     empty = tmp_path / "empty.db"
     with closing(sqlite3.connect(str(empty))) as conn:
         conn.execute("CREATE TABLE unrelated (x INTEGER)")
     assert sz.price_catalog(str(empty)) == []
-    assert "no price series" in sz._candidate_listing(str(empty), ConfigManager(config))
+    assert "no price series" in sz.candidate_listing(str(empty), ConfigManager(config))
 
 
 # ---------------------------------------------------------------------------

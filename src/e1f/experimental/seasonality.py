@@ -23,19 +23,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import bisect
 import random
-import sqlite3
 import statistics
 import sys
 from collections.abc import Callable
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from e1f.common import (
-    BASE_CURRENCY,
     DEFAULT_CONFIG,
     DEFAULT_CURRENCY_META,
     DEFAULT_DB,
@@ -43,11 +39,14 @@ from e1f.common import (
     MetricContract,
     Status,
     _explain_metric,
-    load_price_series,
-    pinned_quote_currency,
     xirr,
 )
-from e1f.experimental.common import monthly_fill_indices
+from e1f.experimental.common import (
+    candidate_listing,
+    eur_series,
+    monthly_fill_indices,
+    price_catalog,
+)
 
 _TODAY = datetime.now(UTC).date().isoformat()
 
@@ -157,72 +156,6 @@ def _fmt_signed_money(value: float | None) -> str:
 
 def _month_name(month: int) -> str:
     return MONTH_NAMES[month - 1]
-
-
-# ---------------------------------------------------------------------------
-# EUR daily-close series (native close × nearest-prior EUR/FX). Duplicated
-# from the backtest command — experimental commands must not import each other.
-# ---------------------------------------------------------------------------
-
-
-def _fx_series(db_path: str, quote: str) -> tuple[list[str], list[float]]:
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fx_rates'"
-        ).fetchone() is None:
-            return [], []
-        rows = conn.execute(
-            "SELECT date, rate FROM fx_rates WHERE base = ? AND quote = ? ORDER BY date",
-            (BASE_CURRENCY, quote),
-        ).fetchall()
-    return [str(d)[:10] for d, _ in rows], [float(r) for _, r in rows]
-
-
-def eur_series(
-    db_path: str, isin: str, as_of: str, currency_meta_path: str
-) -> tuple[list[str], list[float], str]:
-    """``(dates, eur_closes, currency)`` for an ISIN up to ``as_of``."""
-    currency = pinned_quote_currency(isin, currency_meta_path)
-    dates, closes = load_price_series(db_path, isin, as_of)
-    if currency is None or currency == BASE_CURRENCY:
-        return dates, closes, currency or BASE_CURRENCY
-
-    fx_dates, fx_rates = _fx_series(db_path, currency)
-    eur_dates: list[str] = []
-    eur_closes: list[float] = []
-    for day, close in zip(dates, closes, strict=True):
-        k = bisect.bisect_right(fx_dates, day) - 1
-        if k < 0:
-            continue
-        eur_dates.append(day)
-        eur_closes.append(close / fx_rates[k])
-    return eur_dates, eur_closes, currency
-
-
-def price_catalog(db_path: str) -> list[tuple[str, int, str, str]]:
-    """``(isin, count, first, last)`` for every ISIN with a stored price series."""
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
-        ).fetchone() is None:
-            return []
-        rows = conn.execute(
-            "SELECT isin, COUNT(*), MIN(date), MAX(date) FROM prices GROUP BY isin ORDER BY isin"
-        ).fetchall()
-    return [(r[0], int(r[1]), str(r[2])[:10], str(r[3])[:10]) for r in rows]
-
-
-def _candidate_listing(db_path: str, config: ConfigManager) -> str:
-    catalog = price_catalog(db_path)
-    if not catalog:
-        return "  (no price series stored — run 'e1f fetch' first)"
-    lines = []
-    for isin, count, first, last in catalog:
-        cfg = config.get(isin) or {}
-        dist = (cfg.get("distribution") or "?")[:3].lower()
-        name = cfg.get("name") or "?"
-        lines.append(f"  {isin}  {first}→{last}  {count:>5}d  {dist:3}  {name}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -2381,7 +2314,7 @@ def _load_one_series(
     if args.isin not in catalog_isins:
         raise SeasonalityError(
             f"no stored price series for {args.isin}. Available series:\n"
-            f"{_candidate_listing(args.db, config)}"
+            f"{candidate_listing(args.db, config)}"
         )
     cfg = config.get(args.isin) or {}
     name = str(cfg.get("name") or args.isin)

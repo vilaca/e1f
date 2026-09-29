@@ -343,7 +343,7 @@ def test_price_catalog_and_candidate_listing(tmp_path):
     )
     catalog = bt.price_catalog(db)
     assert catalog == [(EUR_ISIN, 2, "2024-01-01", "2024-01-02")]
-    listing = bt._candidate_listing(db, bt.ConfigManager(config))
+    listing = bt.candidate_listing(db, bt.ConfigManager(config))
     assert EUR_ISIN in listing and "Euro Fund" in listing and "acc" in listing
 
 

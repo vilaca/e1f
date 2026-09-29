@@ -16,11 +16,9 @@ Usage:
 
 import argparse
 import bisect
-import sqlite3
 import statistics
 import sys
 from collections.abc import Callable
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
@@ -33,31 +31,25 @@ from e1f.common import (
     MetricContract,
     Status,
     _explain_metric,
-    load_price_series,
-    pinned_quote_currency,
 )
 from e1f.experimental.common import (
     BACKTEST_MIN_CONTRIBUTIONS,
+    CRASH_WINDOWS,
     BacktestResult,
     DeployMode,
     SignalSpec,
     StrategyParams,
+    candidate_listing,
+    crash_split,
+    eur_series,
     monthly_fill_indices,
+    price_catalog,
     simulate_strategy,
 )
 
 _NAME_W = 22
 _MONEY_W = 12
 _TODAY = datetime.now(UTC).date().isoformat()
-
-# Known global-equity crash windows, reported (not special-cased in the math) so
-# every run states which fall inside its span and which are excluded (ADR-0019 §8).
-_CRASHES: tuple[tuple[str, str, str], ...] = (
-    ("dot-com 2000-2002", "2000-03-24", "2002-10-09"),
-    ("GFC 2007-2009", "2007-10-09", "2009-03-09"),
-    ("COVID 2020", "2020-02-19", "2020-03-23"),
-    ("2022 bear", "2022-01-03", "2022-10-12"),
-)
 
 # Below this many overlapping windows the distribution is illustrative, not significant.
 _WINDOW_ILLUSTRATIVE_THRESHOLD = 24
@@ -125,78 +117,6 @@ def _fmt_pct(value: float | None) -> str:
 
 def _fmt_signed_pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value * 100.0:+.1f}%"
-
-
-# ---------------------------------------------------------------------------
-# EUR daily-close series assembly (native close × nearest-prior EUR/FX).
-# ---------------------------------------------------------------------------
-
-
-def _fx_series(db_path: str, quote: str) -> tuple[list[str], list[float]]:
-    """All stored EUR→``quote`` rates, sorted by date (quote units per 1 EUR)."""
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fx_rates'"
-        ).fetchone() is None:
-            return [], []
-        rows = conn.execute(
-            "SELECT date, rate FROM fx_rates WHERE base = ? AND quote = ? ORDER BY date",
-            (BASE_CURRENCY, quote),
-        ).fetchall()
-    return [str(d)[:10] for d, _ in rows], [float(r) for _, r in rows]
-
-
-def eur_series(
-    db_path: str, isin: str, as_of: str, currency_meta_path: str
-) -> tuple[list[str], list[float], str]:
-    """``(dates, eur_closes, currency)`` for an ISIN up to ``as_of``.
-
-    EUR funds pass through; a foreign fund converts each close at the nearest-prior
-    stored EUR/FX rate. A day preceding the FX series (no usable rate) is dropped —
-    an as-of valuation must never use a later rate (ADR-0010).
-    """
-    currency = pinned_quote_currency(isin, currency_meta_path)
-    dates, closes = load_price_series(db_path, isin, as_of)
-    if currency is None or currency == BASE_CURRENCY:
-        return dates, closes, currency or BASE_CURRENCY
-
-    fx_dates, fx_rates = _fx_series(db_path, currency)
-    eur_dates: list[str] = []
-    eur_closes: list[float] = []
-    for day, close in zip(dates, closes, strict=True):
-        k = bisect.bisect_right(fx_dates, day) - 1
-        if k < 0:
-            continue  # no rate on/before this day — cannot value it
-        eur_dates.append(day)
-        eur_closes.append(close / fx_rates[k])
-    return eur_dates, eur_closes, currency
-
-
-def price_catalog(db_path: str) -> list[tuple[str, int, str, str]]:
-    """``(isin, count, first, last)`` for every ISIN with a stored price series."""
-    with closing(sqlite3.connect(db_path)) as conn:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prices'"
-        ).fetchone() is None:
-            return []
-        rows = conn.execute(
-            "SELECT isin, COUNT(*), MIN(date), MAX(date) FROM prices GROUP BY isin ORDER BY isin"
-        ).fetchall()
-    return [(r[0], int(r[1]), str(r[2])[:10], str(r[3])[:10]) for r in rows]
-
-
-def _candidate_listing(db_path: str, config: ConfigManager) -> str:
-    """Human-readable candidate list for the missing/unknown-ISIN error."""
-    catalog = price_catalog(db_path)
-    if not catalog:
-        return "  (no price series stored — run 'e1f fetch' first)"
-    lines = []
-    for isin, count, first, last in catalog:
-        cfg = config.get(isin) or {}
-        dist = (cfg.get("distribution") or "?")[:3].lower()
-        name = cfg.get("name") or "?"
-        lines.append(f"  {isin}  {first}→{last}  {count:>5}d  {dist:3}  {name}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -437,18 +357,6 @@ def _years(first: str, last: str) -> float:
     return (date.fromisoformat(last) - date.fromisoformat(first)).days / 365.25
 
 
-def _crash_split(first: str, last: str) -> tuple[list[str], list[str]]:
-    """Crash windows overlapping ``[first, last]`` (marked ~ if only partial) vs excluded."""
-    included, excluded = [], []
-    for name, cstart, cend in _CRASHES:
-        if cend >= first and cstart <= last:
-            partial = cstart < first or cend > last
-            included.append(f"{name}{'~' if partial else ''}")
-        else:
-            excluded.append(name)
-    return included, excluded
-
-
 def _signal_label(signal: SignalSpec) -> str:
     if signal.lookback is None:
         return "drawdown vs all-time high"
@@ -479,12 +387,12 @@ def _window_crash_coverage(
 ) -> list[str]:
     """Per-crash count of windows whose ``[start, end]`` test interval overlaps it.
 
-    Uses the same overlap rule as ``_crash_split``; every crash is listed (a 0/N
+    Uses the same overlap rule as ``crash_split``; every crash is listed (a 0/N
     line makes an absent crash — e.g. dot-com for a post-2011 series — impossible
     to miss). Full vs partial exposure is broken out only when partials occur.
     """
     lines = ["Crashes:  coverage across windows (test interval overlaps the crash):"]
-    for cname, cstart, cend in _CRASHES:
+    for cname, cstart, cend in CRASH_WINDOWS:
         full = partial = 0
         for ws, we in zip(starts, ends, strict=True):
             if cend >= ws and cstart <= we:  # overlap
@@ -506,7 +414,7 @@ def _run_header(
     first, last, eff = dates[0], dates[-1], dates[fills[0]]
     # Crash inclusion uses the effective TEST span (first contribution → valuation),
     # not the data span — so --from and the warm-up burn are honoured (ADR-0019 §8).
-    tested, absent = _crash_split(eff, last)
+    tested, absent = crash_split(eff, last)
     warmup = (
         f", warm-up burned {span.signal_warmup_closes} closes"
         if span.signal_warmup_closes
@@ -884,7 +792,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     if args.isin not in catalog_isins:
         raise BacktestError(
             f"no stored price series for {args.isin}. Available series:\n"
-            f"{_candidate_listing(args.db, config)}"
+            f"{candidate_listing(args.db, config)}"
         )
 
     dates, closes, currency = eur_series(args.db, args.isin, args.to, args.currency_meta)

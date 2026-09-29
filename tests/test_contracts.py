@@ -121,6 +121,7 @@ def test_cli_commands_surface():
         "backtest",
         "lookthrough",
         "seasonality",
+        "limitbuy",
     }
 
 

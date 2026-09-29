@@ -40,7 +40,7 @@ A quick map before the detail:
 
 Covers `performance` (table, `--metrics`, `--series`, `--contrib`, `--diff`),
 `portfolio` (value / weight / fees), `deposits`, `benchmark`, and `correlation`.
-Experimental commands (`concentration`, `overlap`, `backtest`, `seasonality`)
+Experimental commands (`concentration`, `overlap`, `backtest`, `seasonality`, `limitbuy`)
 and rebalance plan columns are out of scope.
 
     e1f glossary            # list every term, grouped
