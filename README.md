@@ -80,7 +80,7 @@ Experimental tier (ADR-0024):
 - **`e1f overlap`** — cross-fund single-name exposure floor (`≥ €`, `≥ %`), summing a security across funds only via a reviewed canonical identity.
 - **`e1f backtest`** — evaluate contribution-timing strategies against controlled DCA and blind-deployment baselines (ADR-0019 through ADR-0023).
 - **`e1f seasonality`** — analyze calendar-month effects and pre-specified or frozen-OOS rules without auto-trading the weakest in-sample month (ADR-0026 through ADR-0028).
-- **`e1f limitbuy`** — worst-case bound on a buy-limit order placed under the price, against buying at the close, from close-only data (ADR-0055).
+- **`e1f limitbuy`** — a buy-limit order placed under the price against buying at the close: a worst-case bound from closes (ADR-0055) and an estimate from daily bars (ADR-0057).
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -398,10 +398,14 @@ Limit-buy (experimental tier, ADR-0024): `ADR/ADR-0055_limitbuy_close_only_bound
 (`src/e1f/experimental/limitbuy.py`). `e1f limitbuy --isin X` asks, for every start
 day of one ETF's EUR close history, whether a buy-limit placed under that day's
 close would have ended with more or fewer shares than buying at the close, if it
-buys at market when it expires unfilled. It reads only closes, so intraday
-fills are invisible: every figure is a worst case for the limit order (`≥`,
-`Status` BOUNDED), and a real order does at least as well on every start day.
-Flags: `e1f limitbuy --help`.
+buys at market when it expires unfilled. Its first table reads only closes, so
+intraday fills are invisible: every figure is a worst case for the limit order
+(`≥`, `Status` BOUNDED), and a real order does at least as well on every start day.
+Where daily bars are stored (`e1f fetch --backfill`), a second table estimates the
+same orders from each day's open and low (`Status` CALCULATED,
+`ADR/ADR-0057_limitbuy_daily_bar_estimate.md`). Windows with a day lacking a usable
+bar are left out and counted in `Excl`, and the estimate assumes the order rests on
+the listing whose bars ftgo reports. Flags: `e1f limitbuy --help`.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`

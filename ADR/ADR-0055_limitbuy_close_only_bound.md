@@ -168,7 +168,8 @@ in `e1f.experimental.common`. Behaviour is unchanged.
 - **Intraday lows.** ftgo's `get_historical_prices` already returns daily
   open/high/low/volume from the call `fetch` makes; `fetch` keeps only the close.
   Storing the low (a schema change) would turn these bounds into point
-  estimates. yfinance is not a source for it.
+  estimates. yfinance is not a source for it. Done: ADR-0056 stores the bars and
+  ADR-0057 adds the estimate beside this bound, which is unchanged.
 - **Fees and spread.** Both brokers' stored trades carry no fee today; a spread
   model would shift both paths and is left out.
 - **Ladders.** Splitting one amount across several limits combines rows; it is

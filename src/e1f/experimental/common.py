@@ -19,7 +19,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, NamedTuple
 
 from e1f.common import (
     BASE_CURRENCY,
@@ -904,6 +904,40 @@ def eur_series(
         eur_dates.append(day)
         eur_closes.append(close / fx_rates[k])
     return eur_dates, eur_closes, currency
+
+
+class DailyBar(NamedTuple):
+    """One stored day (ADR-0056) in the listing's own currency, close included."""
+
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+def load_daily_bars(db_path: str, isin: str, as_of: str) -> dict[str, DailyBar]:
+    """Stored daily bars for an ISIN up to ``as_of``, by day; days without one are absent.
+
+    A DB from before ADR-0056 has no bar columns and yields an empty map. Values are
+    in the listing's currency; a caller valuing in EUR converts them at the rate
+    its EUR close used.
+    """
+    with closing(sqlite3.connect(db_path)) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(prices)")}
+        if not {"open", "high", "low", "volume"} <= columns:
+            return {}
+        rows = conn.execute(
+            "SELECT date, open, high, low, close, volume FROM prices "
+            "WHERE isin = ? AND low IS NOT NULL ORDER BY date",
+            (isin,),
+        ).fetchall()
+    bars: dict[str, DailyBar] = {}
+    for raw_date, *values in rows:
+        day = str(raw_date)[:10]
+        if day <= as_of and all(v is not None for v in values):
+            bars[day] = DailyBar(*(float(v) for v in values))  # last write wins per day
+    return bars
 
 
 def price_catalog(db_path: str) -> list[tuple[str, int, str, str]]:
