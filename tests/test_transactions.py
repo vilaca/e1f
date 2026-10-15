@@ -600,6 +600,20 @@ def test_parse_xtb_trade_comment_no_match_returns_none():
     assert transactions_mod.parse_xtb_trade_comment("dividend payout") is None
 
 
+@pytest.mark.parametrize(
+    ("comment", "expected"),
+    [
+        ("OPEN BUY 1 @ 72.2000", (1.0, 72.2)),
+        ("OPEN BUY 0.9987/7.9987 @ 12.502", (0.9987, 12.502)),
+        ("OPEN BUY WEBN.DE 0.3513/30.3513 @ 13.220", (0.3513, 13.22)),
+        ("CLOSE SELL EXUS.DE 2 @ 30.10", (2.0, 30.1)),
+    ],
+)
+def test_parse_xtb_trade_comment_with_and_without_ticker(comment, expected):
+    shares, price = transactions_mod.parse_xtb_trade_comment(comment)
+    assert (shares, price) == pytest.approx(expected)
+
+
 def test_xtb_shares_and_price_without_amount_uses_comment_price():
     row = pd.Series({"comment": "OPEN BUY 2/2 @ 10.0", "amount": ""})
     shares, price = transactions_mod.xtb_shares_and_price(row)

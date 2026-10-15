@@ -38,6 +38,7 @@ XTB_SELL_TYPES = frozenset({"stock sale", "stocks/etf sale", "ações/etf vende"
 XTB_ETF_CATEGORY = "etf"
 _XTB_COMMENT_RE = re.compile(
     r"(?:OPEN|CLOSE)\s+(?:BUY|SELL)\s+"
+    r"(?:\S*[A-Z]\S*\s+)?"
     r"([0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)\s+@\s+"
     r"([0-9]+(?:\.[0-9]+)?)",
     re.IGNORECASE,
