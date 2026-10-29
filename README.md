@@ -234,7 +234,9 @@ dates). `e1f fetch <ISIN> --replace` repairs one series by deleting its stored r
 re-inserting the fetched range; unless `--allow-shrink` is given it refuses to
 drop any stored date (shorter range, narrower window, or interior hole), so a
 truncated response can't silently wipe history
-(`ADR/ADR-0008_price_series_replace_repair.md`).
+(`ADR/ADR-0008_price_series_replace_repair.md`). A Saturday or Sunday row from the
+source is never stored, and a stored one doesn't count as a date `--replace` must
+keep, so `--replace` removes it (`ADR/ADR-0059_drop_weekend_source_rows.md`).
 
 Alongside each close, ftgo rows store the day's bar: open, high, low and volume.
 Rows from yfinance store closes only. An incremental fetch treats the last stored

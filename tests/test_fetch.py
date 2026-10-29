@@ -266,6 +266,40 @@ def test_fetch_replace_repairs_corrupt_date_row(tmp_path, monkeypatch):
     assert list(ext._stored_series(ISIN)['close']) == [200.0]
 
 
+def test_fetch_replace_removes_a_stored_weekend_row(tmp_path, monkeypatch):
+    # A weekend row stored before ADR-0059 is corruption: --replace removes it
+    # without --allow-shrink even though upstream still serves it.
+    ext = make_extractor(tmp_path, replace=True)
+    with closing(sqlite3.connect(ext.db_path)) as conn:
+        conn.executemany('INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', [
+            (ISIN, '2010-10-01', 51.06),
+            (ISIN, '2010-10-02', 54.65),
+            (ISIN, '2010-10-04', 50.53),
+        ])
+        conn.commit()
+    upstream = pd.DataFrame(
+        {'Close': [51.06, 54.65, 50.53]},
+        index=pd.to_datetime(['2010-10-01', '2010-10-02', '2010-10-04']),
+    )
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda *a, **k: upstream)
+
+    ext.fetch(ISIN)
+
+    assert [row[:2] for row in stored_rows(ext)] == [('2010-10-01', 51.06), ('2010-10-04', 50.53)]
+
+
+def test_replace_still_refuses_to_drop_a_stored_weekday(tmp_path):
+    # Excluding weekend rows from the guard must not weaken it for real days.
+    ext = make_extractor(tmp_path, replace=True)
+    ext._save_prices(ISIN, close_df([100.0, 101.0]))
+    weekend_only = pd.DataFrame({'Close': [999.0]}, index=pd.to_datetime(['2026-08-08']))
+
+    with pytest.raises(RuntimeError, match='does not cover 2 valid stored date'):
+        ext._replace_prices(ISIN, weekend_only)
+
+    assert list(ext._stored_series(ISIN)['close']) == [100.0, 101.0]
+
+
 def test_replace_collapses_duplicate_fetched_dates(tmp_path):
     # Two intraday timestamps strftime to the same day; the last one wins via
     # ON CONFLICT instead of tripping the UNIQUE(isin, date) constraint.
@@ -327,6 +361,19 @@ def test_price_rows_store_a_partial_bar_as_null():
 
     assert rows[0][2:] == (10.2, 10.0, 10.5, 9.5, 100.0)
     assert rows[1][2:] == (10.4, None, None, None, None)
+
+
+def test_price_rows_drop_a_weekend_row(caplog):
+    # ftgo serves a Saturday bar for some listings (ADR-0059); no venue trades then.
+    df = pd.DataFrame(
+        {'Close': [51.06, 54.65, 50.53]},
+        index=pd.to_datetime(['2010-10-01', '2010-10-02', '2010-10-04']),
+    )
+
+    rows = DataExtractor._price_rows(ISIN, df)
+
+    assert [(row[1], row[2]) for row in rows] == [('2010-10-01', 51.06), ('2010-10-04', 50.53)]
+    assert 'dropped 1 weekend row(s) from the source: 2010-10-02' in caplog.text
 
 
 def test_yfinance_bar_is_never_stored(tmp_path, monkeypatch):

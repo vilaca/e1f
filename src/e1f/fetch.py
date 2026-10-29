@@ -324,14 +324,21 @@ class DataExtractor:
 
         Flattens yfinance's MultiIndex too. A bar is stored whole or not at all:
         a source without bar columns (yfinance) or a day missing any bar field
-        stores NULLs (ADR-0056 §3).
+        stores NULLs (ADR-0056 §3). A Saturday or Sunday row is dropped, since no
+        venue trades then (ADR-0059).
         """
         prices = df[['Close']].copy()
         prices.columns = ['close']
         has_bars = all(col in df.columns for col in _BAR_SOURCE)
         for col, source in zip(_BAR_COLUMNS, _BAR_SOURCE, strict=True):
             prices[col] = df[source] if has_bars else float('nan')
-        prices.index = pd.to_datetime(prices.index).strftime('%Y-%m-%d')
+        dates = pd.DatetimeIndex(pd.to_datetime(prices.index))
+        weekend = dates.weekday >= 5
+        if weekend.any():
+            logger.warning(f"{isin}: dropped {int(weekend.sum())} weekend row(s) from the "
+                           f"source: {', '.join(dates[weekend].strftime('%Y-%m-%d'))}")
+        prices = prices[~weekend]
+        prices.index = dates[~weekend].strftime('%Y-%m-%d')
 
         rows: list[PriceRow] = []
         for date, close, open_, high, low, volume in prices.itertuples():
@@ -399,11 +406,12 @@ class DataExtractor:
 
         with closing(sqlite3.connect(self.db_path)) as conn:
             if not self.allow_shrink:
-                # Only *parseable* stored dates must be preserved. Unparseable or
-                # NULL rows are corruption that --replace exists to clean out, so
-                # they don't count against the fetched series' coverage (and can't
-                # leak a literal 'None' into the message). Dates may carry a time
-                # component; parse per-value and compare date parts only.
+                # Only *parseable* weekday stored dates must be preserved.
+                # Unparseable, NULL or weekend rows are corruption that --replace
+                # exists to clean out, so they don't count against the fetched
+                # series' coverage (and can't leak a literal 'None' into the
+                # message). Dates may carry a time component; parse per-value and
+                # compare date parts only.
                 stored_raw = [
                     row[0] for row in conn.execute(
                         "SELECT date FROM prices WHERE isin = ?", (isin,)
@@ -412,7 +420,7 @@ class DataExtractor:
                 stored_dates = {
                     d.strftime('%Y-%m-%d')
                     for d in pd.to_datetime(stored_raw, format='mixed', errors='coerce')
-                    if not pd.isna(d)
+                    if not pd.isna(d) and d.weekday() < 5
                 }
                 new_dates = {row[1] for row in rows}
                 dropped = sorted(stored_dates - new_dates)
