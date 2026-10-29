@@ -345,7 +345,15 @@ class DataExtractor:
             ))
         return rows
 
-    def _save_prices(self, isin: str, df: pd.DataFrame) -> None:
+    def _save_prices(
+        self, isin: str, df: pd.DataFrame, provisional: str | None = None
+    ) -> None:
+        """Persist fetched rows; ``provisional`` is the last stored day ('YYYY-MM-DD').
+
+        A fetch during trading hours stores the day's live price as its close, so
+        the last stored day is provisional: it and any later day are written whole
+        from the fetch, while earlier days keep their stored close (ADR-0058).
+        """
         rows = self._price_rows(isin, df)
 
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -355,12 +363,21 @@ class DataExtractor:
                     for row_isin, date, close, open_, high, low, volume in rows
                     if low is not None
                 ])
+            elif self.force_refresh:
+                conn.executemany(_PRICE_UPSERT + _OVERWRITE_ROW, rows)
             else:
-                # By default keep already-stored closes, only add new dates, and
-                # attach a bar where one is missing; --force overwrites rows whole.
-                on_conflict = _OVERWRITE_ROW if self.force_refresh else _ATTACH_BAR
-                conn.executemany(_PRICE_UPSERT + on_conflict, rows)
+                # Settled days keep their stored close, only new dates are added,
+                # and a bar attaches where one is missing.
+                settled = [row for row in rows if provisional is None or row[1] < provisional]
+                fresh = [row for row in rows if provisional is not None and row[1] >= provisional]
+                conn.executemany(_PRICE_UPSERT + _ATTACH_BAR, settled)
+                conn.executemany(_PRICE_UPSERT + _OVERWRITE_ROW, fresh)
             conn.commit()
+
+    @staticmethod
+    def _day(since: pd.Timestamp | None) -> str | None:
+        """The provisional last stored day as 'YYYY-MM-DD', or None without one."""
+        return None if since is None else f"{since:%Y-%m-%d}"
 
     def _bar_count(self, isin: str) -> int:
         """Stored days of an ISIN that carry a daily bar."""
@@ -573,19 +590,24 @@ class DataExtractor:
             (base, quote, str(date), float(rate)) for date, rate in rates["rate"].items()
         ]
 
-    def _save_fx(self, base: str, quote: str, df: pd.DataFrame) -> None:
+    def _save_fx(
+        self, base: str, quote: str, df: pd.DataFrame, provisional: str | None = None
+    ) -> None:
         rows = self._fx_rows(base, quote, df)
-        # Same incremental contract as prices: keep stored rates and add new
-        # dates by default; --force overwrites matching dates.
-        on_conflict = (
-            "DO UPDATE SET rate = excluded.rate" if self.force_refresh else "DO NOTHING"
-        )
+        # Same incremental contract as prices: keep stored rates and add new dates
+        # by default, but overwrite from the provisional last stored day on
+        # (ADR-0058); --force overwrites every matching date.
+        insert = "INSERT INTO fx_rates (base, quote, date, rate) VALUES (?, ?, ?, ?) "
+        overwrite = "ON CONFLICT(base, quote, date) DO UPDATE SET rate = excluded.rate"
+        keep = "ON CONFLICT(base, quote, date) DO NOTHING"
         with closing(sqlite3.connect(self.db_path)) as conn:
-            conn.executemany(
-                "INSERT INTO fx_rates (base, quote, date, rate) VALUES (?, ?, ?, ?) "
-                f"ON CONFLICT(base, quote, date) {on_conflict}",
-                rows,
-            )
+            if self.force_refresh:
+                conn.executemany(insert + overwrite, rows)
+            else:
+                settled = [row for row in rows if provisional is None or row[2] < provisional]
+                fresh = [row for row in rows if provisional is not None and row[2] >= provisional]
+                conn.executemany(insert + keep, settled)
+                conn.executemany(insert + overwrite, fresh)
             conn.commit()
 
     def _fx_stored(self, base: str, quote: str) -> pd.DataFrame:
@@ -663,7 +685,7 @@ class DataExtractor:
             source = "yfinance"
 
         if df is not None and not df.empty:
-            self._save_fx(base, quote, df)
+            self._save_fx(base, quote, df, self._day(since))
             stored = self._fx_stored(base, quote)
             new, replaced = self._delta(existing, stored, 'rate')
             logger.info(self._fx_summary(base, quote, source, stored, new, replaced))
@@ -708,8 +730,10 @@ class DataExtractor:
             if have_existing and not self.force_refresh and not self.backfill:
                 assert existing is not None
                 # ftgo returns empty when start == end; overlap by one day so the
-                # range is always start < end. The DO NOTHING upsert makes this safe.
+                # range is always start < end. That overlap re-reads the last stored
+                # day, which the save overwrites as provisional (ADR-0058).
                 since = existing.index.max()
+            provisional = self._day(since)
 
             fetched: tuple[str, str | None] | None = None
             # ftgo resolves by ISIN (a single, pinned security), so try it once.
@@ -718,7 +742,7 @@ class DataExtractor:
                 if self.replace:
                     self._replace_prices(etf_isin, df)
                 else:
-                    self._save_prices(etf_isin, df)
+                    self._save_prices(etf_isin, df, provisional)
                 fetched = ("ftgo", self._ftgo_meta.funds.get(etf_isin, {}).get('symbol'))
             elif self.fallback:
                 # yfinance is ticker-based; try each configured ticker.
@@ -731,7 +755,7 @@ class DataExtractor:
                         if self.replace:
                             self._replace_prices(etf_isin, df)
                         else:
-                            self._save_prices(etf_isin, df)
+                            self._save_prices(etf_isin, df, provisional)
                         fetched = ("yfinance", actual_ticker)
                         break
 

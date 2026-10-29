@@ -237,9 +237,11 @@ truncated response can't silently wipe history
 (`ADR/ADR-0008_price_series_replace_repair.md`).
 
 Alongside each close, ftgo rows store the day's bar: open, high, low and volume.
-Rows from yfinance store closes only. An incremental fetch never changes a stored
-close. It attaches a bar only to a row whose close matches the one the bar was
-fetched with. `e1f fetch --backfill` re-reads the full ftgo history and attaches
+Rows from yfinance store closes only. An incremental fetch treats the last stored
+day as provisional, since a fetch during trading hours stores a live price, and
+overwrites it with the day it re-reads. It changes no earlier close, and attaches a
+bar only to a row whose close matches the one the bar was fetched with
+(`ADR/ADR-0058_provisional_last_stored_day.md`). `e1f fetch --backfill` re-reads the full ftgo history and attaches
 bars to stored days on that same rule; it changes no close and adds no day. Each
 fetch summary line ends with `daily bars N/T` (`ADR/ADR-0056_daily_bars_in_prices.md`).
 

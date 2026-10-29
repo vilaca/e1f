@@ -57,7 +57,8 @@ all, so "has a bar" is one test: `low IS NOT NULL`.
 ### 4. A bar belongs to the close it was fetched with
 
 - **Default upsert** (incremental fetch; `--backfill` applies the same rule, §5): a
-  stored close never changes. A fetched bar attaches to a stored row only when that row has no bar and
+  stored close never changes, except on the last stored day, which an incremental
+  fetch overwrites as provisional (ADR-0058). A fetched bar attaches to a stored row only when that row has no bar and
   its close equals the fetched close. Otherwise the bar describes a different print,
   such as an upstream revision or a yfinance close, and it is dropped.
 - **`--force` and `--replace`** overwrite the whole row, so the bar is always the one

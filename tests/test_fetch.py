@@ -611,6 +611,43 @@ def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
     assert list(combined.columns) == [ISIN]
 
 
+def test_incremental_fetch_overwrites_the_provisional_last_day(tmp_path, monkeypatch, caplog):
+    # ADR-0058: 08-11 was stored mid-session (a live price, no bar). The next fetch
+    # re-reads it and the final close + bar win; the settled 08-10 keeps its close
+    # even though upstream now reports another one.
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, close_df([99.0, 100.0], end='2026-08-11'))
+    upstream = bar_df([
+        (98.8, 99.9, 98.5, 99.5, 50),     # 08-10 settled: close stays 99.0, no bar
+        (99.6, 100.9, 99.1, 100.4, 60),   # 08-11 provisional: overwritten whole
+        (100.4, 101.2, 100.0, 101.0, 70), # 08-12 new
+    ])
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda isin, start=None: upstream)
+
+    with caplog.at_level('INFO'):
+        ext.fetch(ISIN)
+
+    assert stored_rows(ext) == [
+        ('2026-08-10', 99.0, None, None, None, None),
+        ('2026-08-11', 100.4, 99.6, 100.9, 99.1, 60),
+        ('2026-08-12', 101.0, 100.4, 101.2, 100.0, 70),
+    ]
+    assert '+1 new, 1 replaced, 3 total' in caplog.text
+
+
+def test_provisional_day_replaces_a_partial_intraday_bar(tmp_path, monkeypatch):
+    # A mid-session fetch stores a partial bar (the low so far) with the live price;
+    # the next fetch replaces both with the day's final bar.
+    ext = make_extractor(tmp_path)
+    ext._save_prices(ISIN, bar_df([(99.6, 100.2, 99.8, 100.0, 20)], end='2026-08-11'))
+    final = bar_df([(99.6, 100.9, 99.1, 100.4, 60), (100.4, 101.2, 100.0, 101.0, 70)])
+    monkeypatch.setattr(ext, '_fetch_ftgo', lambda isin, start=None: final)
+
+    ext.fetch(ISIN)
+
+    assert stored_rows(ext)[0] == ('2026-08-11', 100.4, 99.6, 100.9, 99.1, 60)
+
+
 def test_incremental_fetch_overlaps_last_stored_date(tmp_path, monkeypatch):
     # ftgo returns empty when start == end (same-day range). The incremental
     # fetch must pass start = last_stored_date (not +1 day) so the range is
@@ -910,6 +947,18 @@ def test_refresh_fx_pair_uses_cache_without_network(tmp_path, monkeypatch):
     monkeypatch.setattr(ext, '_fetch_fx_ftgo',
                         lambda *a, **k: pytest.fail('should not hit network'))
     ext._refresh_fx_pair('EUR', 'USD')
+
+
+def test_fx_refresh_overwrites_the_provisional_last_rate(tmp_path, monkeypatch):
+    # ADR-0058 applies to FX too: the last stored rate may be a live one.
+    ext = make_extractor(tmp_path)
+    ext._save_fx('EUR', 'USD', close_df([1.15, 1.16], end='2026-08-11'))
+    upstream = close_df([1.14, 1.15, 1.17])   # 08-10 settled, 08-11 provisional, 08-12 new
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', lambda *a, **k: upstream)
+
+    ext._refresh_fx_pair('EUR', 'USD')
+
+    assert list(ext._fx_stored('EUR', 'USD')['rate']) == [1.15, 1.15, 1.17]
 
 
 def test_fetch_auto_refreshes_fx_for_held_currency(tmp_path, monkeypatch):
