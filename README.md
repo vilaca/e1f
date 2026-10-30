@@ -241,7 +241,7 @@ keep, so `--replace` removes it (`ADR/ADR-0059_drop_weekend_source_rows.md`).
 Alongside each close, ftgo rows store the day's bar: open, high, low and volume.
 Rows from yfinance store closes only. An incremental fetch treats the last stored
 day as provisional, since a fetch during trading hours stores a live price, and
-overwrites it with the day it re-reads. It changes no earlier close, and attaches a
+overwrites it with the day it re-reads, even when that day is today. It changes no earlier close, and attaches a
 bar only to a row whose close matches the one the bar was fetched with
 (`ADR/ADR-0058_provisional_last_stored_day.md`). `e1f fetch --backfill` re-reads the full ftgo history and attaches
 bars to stored days on that same rule; it changes no close and adds no day. Each

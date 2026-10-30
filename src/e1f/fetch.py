@@ -308,13 +308,10 @@ class DataExtractor:
 
             df = self._read_series(conn, isin)
 
-            if not df.empty:
-                latest = df.index.max()
-                days_behind = (self.end_date - latest).days
-                # Refetch whenever we're not current; the DO NOTHING upsert
-                # cheaply adds only the missing days.
-                if days_behind > 0:
-                    return False, df
+            # Refetch up to and including end_date: the last stored day is
+            # provisional even when it is today (ADR-0058).
+            if not df.empty and not self._past_end(df.index):
+                return False, df
 
             return True, df
 
@@ -385,6 +382,22 @@ class DataExtractor:
     def _day(since: pd.Timestamp | None) -> str | None:
         """The provisional last stored day as 'YYYY-MM-DD', or None without one."""
         return None if since is None else f"{since:%Y-%m-%d}"
+
+    def _past_end(self, stored: pd.Index) -> bool:
+        """Whether the last stored day lies after end_date, the only cache hit."""
+        return cast(pd.Timestamp, stored.max()).normalize() > self.end_date.normalize()
+
+    def _request_start(self, stored: pd.Index) -> pd.Timestamp:
+        """Start of an incremental request, which re-reads the last stored day.
+
+        ftgo returns nothing when start equals end, so a series already stored up
+        to end_date starts at the stored day before it (ADR-0058).
+        """
+        last = cast(pd.Timestamp, stored.max())
+        if last.normalize() < self.end_date.normalize():
+            return last
+        earlier = stored[stored < last]
+        return cast(pd.Timestamp, earlier.max()) if len(earlier) else last - pd.Timedelta(days=1)
 
     def _bar_count(self, isin: str) -> int:
         """Stored days of an ISIN that carry a daily bar."""
@@ -638,8 +651,8 @@ class DataExtractor:
         df = self._fx_stored(base, quote)
         if df.empty:
             return False, None
-        if (self.end_date - df.index.max()).days > 0:
-            return False, df  # stale; existing rates still returned for incremental
+        if not self._past_end(df.index):
+            return False, df  # existing rates still returned for incremental
         return True, df
 
     @classmethod
@@ -681,10 +694,11 @@ class DataExtractor:
             return
 
         have_existing = existing is not None and not existing.empty
-        since = None
+        since = provisional = None
         if have_existing and not self.force_refresh:
             assert existing is not None
-            since = existing.index.max()
+            since = self._request_start(existing.index)
+            provisional = self._day(existing.index.max())
 
         df = self._fetch_fx_ftgo(base, quote, since)
         source = "ftgo"
@@ -693,7 +707,7 @@ class DataExtractor:
             source = "yfinance"
 
         if df is not None and not df.empty:
-            self._save_fx(base, quote, df, self._day(since))
+            self._save_fx(base, quote, df, provisional)
             stored = self._fx_stored(base, quote)
             new, replaced = self._delta(existing, stored, 'rate')
             logger.info(self._fx_summary(base, quote, source, stored, new, replaced))
@@ -734,14 +748,13 @@ class DataExtractor:
                 logger.warning(f"✗ {etf_isin} {etf.name} — nothing stored to backfill; "
                                "run 'e1f fetch' first")
                 continue
-            since = None
+            since = provisional = None
             if have_existing and not self.force_refresh and not self.backfill:
                 assert existing is not None
-                # ftgo returns empty when start == end; overlap by one day so the
-                # range is always start < end. That overlap re-reads the last stored
-                # day, which the save overwrites as provisional (ADR-0058).
-                since = existing.index.max()
-            provisional = self._day(since)
+                # Re-read the last stored day, which the save overwrites as
+                # provisional (ADR-0058), with start < end even when it is today.
+                since = self._request_start(existing.index)
+                provisional = self._day(existing.index.max())
 
             fetched: tuple[str, str | None] | None = None
             # ftgo resolves by ISIN (a single, pinned security), so try it once.

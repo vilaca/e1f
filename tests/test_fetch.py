@@ -501,7 +501,8 @@ def test_is_cached_empty_db(tmp_path):
     assert cached is False and df is None
 
 
-def test_is_cached_when_current(tmp_path):
+def test_not_cached_when_current_to_today(tmp_path):
+    # Today's row may be a live price, so it is re-read rather than served (ADR-0058).
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
     with closing(sqlite3.connect(ext.db_path)) as conn:
@@ -510,7 +511,7 @@ def test_is_cached_when_current(tmp_path):
         )
         conn.commit()
     cached, df = ext._is_cached(ISIN)
-    assert cached is True and len(df) == 1
+    assert cached is False and len(df) == 1
 
 
 def test_not_cached_when_stale(tmp_path):
@@ -644,18 +645,63 @@ def test_summary_reports_daily_bar_coverage():
 # fetch() orchestration
 # ---------------------------------------------------------------------------
 
-def test_fetch_uses_cache_without_network(tmp_path, monkeypatch):
-    ext = make_extractor(tmp_path)
-    today = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.execute(
-            'INSERT INTO prices (isin, date, close) VALUES (?, ?, ?)', (ISIN, today, 100.0)
-        )
-        conn.commit()
+def test_fetch_uses_cache_only_past_end_date(tmp_path, monkeypatch):
+    # ADR-0058: a series stored beyond --end is the only cache hit.
+    ext = make_extractor(tmp_path, end_date='2026-10-29')
+    ext._save_prices(ISIN, close_df([100.0], end='2026-10-30'))
     monkeypatch.setattr(ext, '_fetch_ftgo',
                         lambda *a, **k: pytest.fail('should not hit network'))
     combined = ext.fetch()
     assert list(combined.columns) == [ISIN]
+
+
+def test_same_day_fetch_replaces_an_intraday_row(tmp_path, monkeypatch, caplog):
+    # ADR-0058, as observed on 2026-10-30: a fetch during trading hours stored ACWI's
+    # live 13.05 with a partial bar. A second fetch that evening re-reads the day
+    # from 10-29 (start < end) and stores the close 13.02 with its final bar; the
+    # settled 10-29 keeps 13.00 though upstream now reports 13.01.
+    ext = make_extractor(tmp_path, end_date='2026-10-30')
+    ext._save_prices(ISIN, bar_df([
+        (12.95, 13.04, 12.93, 13.00, 900),
+        (13.00, 13.06, 12.99, 13.05, 400),   # live price, low and volume so far
+    ], end='2026-10-30'))
+    captured = {}
+
+    def closing_bars(isin, start=None):
+        captured['start'] = start
+        return bar_df([
+            (12.95, 13.04, 12.93, 13.01, 900),
+            (13.00, 13.06, 12.97, 13.02, 1100),
+        ], end='2026-10-30')
+
+    monkeypatch.setattr(ext, '_fetch_ftgo', closing_bars)
+
+    with caplog.at_level('INFO'):
+        ext.fetch(ISIN)
+
+    assert captured['start'] == pd.Timestamp('2026-10-29')
+    assert stored_rows(ext) == [
+        ('2026-10-29', 13.00, 12.95, 13.04, 12.93, 900),
+        ('2026-10-30', 13.02, 13.00, 13.06, 12.97, 1100),
+    ]
+    assert '— ftgo - +0 new, 1 replaced, 2 total' in caplog.text
+
+
+def test_same_day_fetch_of_a_single_stored_day_starts_a_day_earlier(tmp_path, monkeypatch):
+    # With no earlier stored day to start from, the request still keeps start < end.
+    ext = make_extractor(tmp_path, end_date='2026-10-30')
+    ext._save_prices(ISIN, close_df([87.60], end='2026-10-30'))
+    captured = {}
+
+    def capture_start(isin, start=None):
+        captured['start'] = start
+        return close_df([86.19], end='2026-10-30')
+
+    monkeypatch.setattr(ext, '_fetch_ftgo', capture_start)
+    ext.fetch(ISIN)
+
+    assert captured['start'] == pd.Timestamp('2026-10-29')
+    assert [row[:2] for row in stored_rows(ext)] == [('2026-10-30', 86.19)]
 
 
 def test_incremental_fetch_overwrites_the_provisional_last_day(tmp_path, monkeypatch, caplog):
@@ -933,14 +979,14 @@ def test_is_fx_cached_empty(tmp_path):
     assert cached is False and df is None
 
 
-def test_is_fx_cached_when_current(tmp_path):
+def test_fx_not_cached_when_current_to_today(tmp_path):
     ext = make_extractor(tmp_path)
     today = pd.Timestamp.now().strftime('%Y-%m-%d')
     with closing(sqlite3.connect(ext.db_path)) as conn:
         conn.execute('INSERT INTO fx_rates VALUES (?, ?, ?, ?)', ('EUR', 'USD', today, 1.16))
         conn.commit()
     cached, df = ext._is_fx_cached('EUR', 'USD')
-    assert cached is True and len(df) == 1
+    assert cached is False and len(df) == 1
 
 
 def test_is_fx_cached_when_stale(tmp_path):
@@ -985,15 +1031,30 @@ def test_refresh_fx_pair_no_fallback_skips_yfinance(tmp_path, monkeypatch):
     assert ext._fx_stored('EUR', 'USD').empty
 
 
-def test_refresh_fx_pair_uses_cache_without_network(tmp_path, monkeypatch):
-    ext = make_extractor(tmp_path)
-    today = pd.Timestamp.now().strftime('%Y-%m-%d')
-    with closing(sqlite3.connect(ext.db_path)) as conn:
-        conn.execute('INSERT INTO fx_rates VALUES (?, ?, ?, ?)', ('EUR', 'USD', today, 1.16))
-        conn.commit()
+def test_refresh_fx_pair_uses_cache_only_past_end_date(tmp_path, monkeypatch):
+    ext = make_extractor(tmp_path, end_date='2026-10-29')
+    ext._save_fx('EUR', 'USD', close_df([1.16], end='2026-10-30'))
     monkeypatch.setattr(ext, '_fetch_fx_ftgo',
                         lambda *a, **k: pytest.fail('should not hit network'))
     ext._refresh_fx_pair('EUR', 'USD')
+
+
+def test_same_day_fx_refresh_replaces_a_live_rate(tmp_path, monkeypatch):
+    # ADR-0058 for FX: today's live 1.165 gives way to the closing 1.17 on a second
+    # same-day refresh, requested from 10-29; the settled 10-29 rate is kept.
+    ext = make_extractor(tmp_path, end_date='2026-10-30')
+    ext._save_fx('EUR', 'USD', close_df([1.16, 1.165], end='2026-10-30'))
+    captured = {}
+
+    def closing_rates(base, quote, start=None):
+        captured['start'] = start
+        return close_df([1.15, 1.17], end='2026-10-30')
+
+    monkeypatch.setattr(ext, '_fetch_fx_ftgo', closing_rates)
+    ext._refresh_fx_pair('EUR', 'USD')
+
+    assert captured['start'] == pd.Timestamp('2026-10-29')
+    assert list(ext._fx_stored('EUR', 'USD')['rate']) == [1.16, 1.17]
 
 
 def test_fx_refresh_overwrites_the_provisional_last_rate(tmp_path, monkeypatch):

@@ -38,6 +38,13 @@ Rows before that day follow the default rule unchanged. A stored close is kept, 
 missing day is added, and a bar attaches only to its own close. The summary line's
 `replaced` count shows when the provisional day changed.
 
+This holds when the last stored day is today too: a fetch run during trading hours
+and again after the close stores the close on the second run. ftgo returns nothing
+when start equals end, so a series already stored up to the end date is requested
+from the stored day before its last one, or from the calendar day before when it has
+only one. That earlier day is re-read but stays settled. The only cache hit is a
+series stored beyond the end date, so every plain `fetch` makes one request per fund.
+
 ### 2. No market-hours or timezone gating
 
 Refusing to store today's row before the venue closes would need per-venue close
@@ -49,10 +56,8 @@ upstream correction to the last day.
 
 - **`--force` and `--replace`** already overwrite whole rows.
 - **`--backfill`** still changes no close (ADR-0056 §5).
-- **The cache.** A second fetch on the same day is still a cache hit. ftgo also
-  returns nothing when start equals end, so a live price stored during trading hours
-  is corrected by the next fetch on a later day. Until then, the last row can be a
-  live price, which is also what a current valuation wants.
+- **Weekends and holidays.** On a day with no trading, the last stored day is
+  already behind the end date, so it is re-read as on any other day.
 
 ### 4. One-time repair
 
@@ -69,10 +74,13 @@ or transaction row changed. A backup of the DB as it was before the repair is ke
 ## Consequences
 
 - `src/e1f/fetch.py`: `_save_prices` and `_save_fx` take the provisional day and
-  split rows into settled and fresh. `fetch` and `_refresh_fx_pair` pass the day.
+  split rows into settled and fresh. `fetch` and `_refresh_fx_pair` pass the day and
+  take the request start from `_request_start`; `_past_end` is the cache rule.
 - `tests/test_fetch.py` covers:
   - a provisional close and its missing bar being overwritten while the settled
     day before it is kept;
   - a partial bar recorded during trading hours being replaced by the day's final bar;
+  - a same-day fetch replacing today's intraday row and bar with the close, keeping
+    the day before it, and the same for an FX rate;
   - the same rule for FX.
 - ADR-0056 §4 and the README note the exception.
