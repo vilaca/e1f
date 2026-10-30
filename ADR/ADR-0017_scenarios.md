@@ -39,6 +39,8 @@ scenario is a *basket*, not a saved command line.
 A scenario with a `frozen` list is a sleeve plan (ADR-0060): its percents are of
 the non-frozen funds and sum to 100, and it may store a `monthly` budget. The
 frozen list and the budget describe the basket, so both consumers read them.
+A sleeve plan may group its funds into categories instead of flat targets
+(ADR-0061). Consumers read the flat targets the categories imply.
 
 ### 2. One file, many scenarios
 

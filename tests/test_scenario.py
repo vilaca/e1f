@@ -259,3 +259,113 @@ def test_cmd_save_sleeve_rejects_sum_not_100(tmp_path, capsys):
                      "--file", str(tmp_path / "s.yaml")])
     assert code == 1
     assert "must sum to 100%" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Category scenarios (ADR-0061)
+# ---------------------------------------------------------------------------
+
+
+def _categorized(name="g", months=None, monthly=None):
+    from e1f.common import Category
+    return Scenario.from_categories(
+        name,
+        (Category("core", 60.0, {A: 100.0}), Category("rest", 40.0, {B: 75.0, C: 25.0})),
+        months=months,
+        frozen=(),
+        monthly=monthly,
+    )
+
+
+def test_category_scenario_derives_targets_and_roundtrips(tmp_path):
+    path = str(tmp_path / "s.yaml")
+    scenario = _categorized(months=12, monthly=250.0)
+    assert scenario.targets == {A: 60.0, B: 30.0, C: 10.0}
+    save_scenario(scenario, path)
+    stored = yaml.safe_load((tmp_path / "s.yaml").read_text())["scenarios"]["g"]
+    assert stored == {
+        "months": 12, "monthly": 250.0, "frozen": [],
+        "categories": {"core": {"pct": 60.0, "funds": {A: 100.0}},
+                       "rest": {"pct": 40.0, "funds": {B: 75.0, C: 25.0}}},
+    }
+    # Saving another scenario rewrites the file; the category tree must survive it.
+    save_scenario(Scenario("other", {A: 100.0}), path)
+    assert get_scenario("g", path) == scenario
+
+
+def test_category_scenario_keeps_yaml_order(tmp_path):
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "scenarios:\n  g:\n    frozen: []\n    categories:\n"
+        f"      z: {{pct: 30, funds: {{{B}: 100}}}}\n"
+        f"      a: {{pct: 70, funds: {{{C}: 40, {A}: 60}}}}\n"
+    )
+    loaded = get_scenario("g", str(path))
+    assert [c.name for c in loaded.categories] == ["z", "a"]
+    assert list(loaded.categories[1].funds) == [C, A]
+    assert loaded.targets == pytest.approx({B: 30.0, C: 28.0, A: 42.0})
+
+
+def _cat(pct, funds):
+    return {"pct": pct, "funds": funds}
+
+
+@pytest.mark.parametrize(
+    "body, match",
+    [
+        ({"targets": {A: 100}, "frozen": [], "categories": {"c": _cat(100, {A: 100})}},
+         "both 'targets' and 'categories'"),
+        ({"categories": {"c": _cat(100, {A: 100})}}, "needs 'frozen'"),
+        ({"frozen": [], "categories": {}}, "non-empty mapping"),
+        ({"frozen": [], "categories": {"c": {"pct": 100}}}, "non-empty 'funds'"),
+        ({"frozen": [], "categories": {"c": _cat("x", {A: 100})}}, "non-numeric 'pct'"),
+        ({"frozen": [], "categories": {"c": _cat(100, {A: "x"})}}, "non-numeric percent"),
+        ({"frozen": [], "categories": {"c": _cat(0, {A: 100})}}, "'pct' must be finite"),
+        ({"frozen": [], "categories": {"c": _cat(100, {A: 0})}}, "share must be finite"),
+        ({"frozen": [], "categories": {"c": _cat(90, {A: 100})}},
+         "category percentages sum to 90.00%"),
+        ({"frozen": [], "categories": {"c": _cat(100, {A: 60, B: 30})}},
+         "fund shares sum to 90.00%"),
+        ({"frozen": [], "categories": {"c": _cat(50, {A: 100}), "d": _cat(50, {A: 100})}},
+         "more than one category"),
+        ({"frozen": [A], "categories": {"c": _cat(100, {A: 100})}}, "targeted and frozen"),
+    ],
+)
+def test_malformed_category_scenario_raises(tmp_path, body, match):
+    path = tmp_path / "s.yaml"
+    path.write_text(yaml.dump({"scenarios": {"g": body}}))
+    with pytest.raises(ScenarioError, match=match):
+        load_scenarios(str(path))
+
+
+def test_save_rejects_targets_that_disagree_with_categories(tmp_path):
+    from e1f.common import Category
+    bad = Scenario("g", {A: 50.0, B: 50.0}, frozen=(),
+                   categories=(Category("c", 100.0, {A: 100.0}),))
+    with pytest.raises(ScenarioError, match="do not match its categories"):
+        save_scenario(bad, str(tmp_path / "s.yaml"))
+    dupe = Scenario("g", {A: 100.0}, frozen=(),
+                    categories=(Category("c", 50.0, {A: 100.0}), Category("c", 50.0, {B: 100.0})))
+    with pytest.raises(ScenarioError, match="category name twice"):
+        save_scenario(dupe, str(tmp_path / "s.yaml"))
+
+
+def test_cmd_show_and_list_category_scenario(tmp_path, capsys):
+    path = str(tmp_path / "s.yaml")
+    save_scenario(_categorized(), path)
+    assert scn.main(["list", "--file", path]) == 0
+    assert "3 target(s) in 2 categories · Σ 100.0% of sleeve · 0 frozen" in capsys.readouterr().out
+    config = tmp_path / "cfg.yaml"
+    config.write_text(yaml.dump({"etfs": {B: {"name": "Fund B"}}}))
+    assert scn.main(["show", "g", "--file", path, "--config", str(config)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    header = next(i for i, ln in enumerate(lines) if "Share%" in ln)
+    tree = [ln.split() for ln in lines[header + 2:header + 7]]
+    assert tree == [
+        ["core", "60.0%"],
+        [A, "60.0%", "100.0%"],
+        ["rest", "40.0%"],
+        [B, "Fund", "B", "30.0%", "75.0%"],
+        [C, "10.0%", "25.0%"],
+    ]
+    assert lines[header + 3].startswith(f"    {A}")

@@ -1252,3 +1252,114 @@ def test_scenario_and_frozen_mutually_exclusive(tmp_path):
     with pytest.raises(SystemExit):
         reb.main(_args(db, config, meta, "--scenario", "s", "--scenarios-file", sf,
                        "--frozen", B))
+
+
+# ---------------------------------------------------------------------------
+# Category scenarios (ADR-0061): grouped display over the same sleeve plan.
+# ---------------------------------------------------------------------------
+
+
+def _category_scenario(tmp_path, **kwargs):
+    from e1f.common import Category, Scenario, save_scenario
+    # core 60% = A; rest 40% = B 75 / D 25 → flat sleeve targets A 60, B 30, D 10.
+    path = str(tmp_path / "s.yaml")
+    save_scenario(Scenario.from_categories(
+        "g",
+        (Category("core", 60.0, {A: 100.0}), Category("rest", 40.0, {B: 75.0, D: 25.0})),
+        frozen=(F,),
+        **kwargs,
+    ), path)
+    return path
+
+
+def _plan_block(out):
+    lines = out.splitlines()
+    header = next(i for i, ln in enumerate(lines) if "Current€" in ln)
+    end = next(i for i in range(header + 2, len(lines)) if lines[i].startswith("---"))
+    return lines[header + 2:end]
+
+
+def test_main_category_table_groups_funds_under_subtotals(tmp_path, capsys):
+    # S = 7000 (A 6000, B 1000, D unheld), F €3000 frozen. Bounds: A 6000/0.6 = 10000,
+    # B 1000/0.3 = 3333.33, D 0 → L = 10000, C_min = 3000; A binds, B buys
+    # 3000 − 1000 = 2000, D 1000. V' = 13000. core: 6000 (85.7% of S) → 6000 (46.2%);
+    # rest: 1000 (14.3%) → 4000 (30.8%).
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = _category_scenario(tmp_path)
+    code = reb.main(_args(db, config, meta, "--scenario", "g", "--scenarios-file", sf,
+                          "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Each category row totals the funds under it" in out
+    block = _plan_block(out)
+    assert [ln.split()[0] for ln in block] == ["core", A, "rest", B, D]
+    assert block[0].split() == ["core", "6,000.00", "85.7%", "60.0%", "0.00", "6,000.00", "46.2%"]
+    assert block[2].split() == ["rest", "1,000.00", "14.3%", "40.0%", "3,000.00", "4,000.00",
+                                "30.8%"]
+    assert block[1].startswith(f"  {A}") and block[1].endswith("◄ binds")
+    b = block[3].split()
+    assert b[0] == B and b[-4:] == ["30.0%", "2,000.00", "3,000.00", "23.1%"]
+    d = block[4].split()
+    assert d[0] == D and d[-4:] == ["10.0%", "1,000.00", "1,000.00", "7.7%"]
+    sleeve_row = next(ln for ln in out.splitlines() if ln.startswith("SLEEVE"))
+    assert sleeve_row.split()[1:] == ["7,000.00", "100.0%", "100.0%", "3,000.00", "10,000.00",
+                                      "76.9%"]
+
+
+def test_main_category_monthly_column_and_sort_within_category(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = _category_scenario(tmp_path, months=2)
+    code = reb.main(_args(db, config, meta, "--scenario", "g", "--scenarios-file", sf,
+                          "--as-of", "2024-01-01", "--sort", "buy"))
+    out = capsys.readouterr().out
+    assert code == 0
+    block = _plan_block(out)
+    # --sort reorders funds inside their category; categories keep scenario order.
+    assert [ln.split()[0] for ln in block] == ["core", A, "rest", D, B]
+    assert block[2].split()[4:6] == ["3,000.00", "1,500.00"]  # Buy€, Monthly€ = Buy€ / 2
+
+
+def test_main_category_unavailable_recap_is_grouped(tmp_path, capsys):
+    from e1f.common import Category, Scenario, save_scenario
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = str(tmp_path / "s.yaml")
+    save_scenario(Scenario.from_categories(
+        "g", (Category("core", 100.0, {A: 100.0}),), frozen=(F,)), sf)
+    code = reb.main(_args(db, config, meta, "--scenario", "g", "--scenarios-file", sf,
+                          "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"UNAVAILABLE — unclassified — held fund(s) are neither targeted nor frozen: {B}" in out
+    recap = out.splitlines()
+    core = next(i for i, ln in enumerate(recap) if ln.startswith("core"))
+    assert recap[core].split() == ["core", "100.0%"]
+    assert recap[core + 1].startswith(f"  {A}") and recap[core + 1].endswith("100.0%")
+
+
+def test_categories_reproduce_the_flat_residual_buys():
+    # The 2026-10-30 growth-aggressive basket, flat at Σ 95% of the book (ADR-0060 §2),
+    # rewritten as categories with exact fractions: core 60/95, regions 16/95
+    # (11/16 · 5/16), sectors 19/95 = 20 (7/19 · 6/19 · 3/19 · 3/19). With the residual
+    # plan's C_min as the budget, the category sleeve buys exactly what the flat plan did.
+    from e1f.common import Category, Scenario, plan_rebalance
+    acwi, exusa, europe = "IE0003XJA0J9", "IE0006WW1TQ4", "IE00B4K48X80"
+    hc, semis, util, stoxx_hc = "IE00BM67HK77", "IE00BMC38736", "IE00BM67HQ30", "LU0292103222"
+    flat = {acwi: 0.60, exusa: 0.11, hc: 0.07, semis: 0.06, europe: 0.05, stoxx_hc: 0.03,
+            util: 0.03}
+    categories = (
+        Category("core", 6000 / 95, {acwi: 100.0}),
+        Category("regions", 1600 / 95, {exusa: 1100 / 16, europe: 500 / 16}),
+        Category("sectors", 20.0, {hc: 700 / 19, semis: 600 / 19, util: 300 / 19,
+                                   stoxx_hc: 300 / 19}),
+    )
+    values = {acwi: 10000.0, exusa: 1000.0, hc: 800.0, semis: 500.0, europe: 900.0,
+              stoxx_hc: 444.0, util: 100.0, F: 1500.0, G: 615.0}
+    held = frozenset(values)
+    residual = plan_rebalance(flat, values, held, None, None)
+    # The frozen €2115 binds the residual plan: V' = 2115 / 0.05 = 42300.
+    assert residual.v_prime == pytest.approx(42300.0)
+    scenario = Scenario.from_categories("ga", categories, frozen=(F, G))
+    sleeve_targets = {isin: pct / 100.0 for isin, pct in scenario.targets.items()}
+    sleeve = plan_rebalance(sleeve_targets, values, held, frozenset({F, G}), residual.c_min)
+    assert sleeve.buys == pytest.approx(residual.buys, rel=1e-12, abs=1e-9)
+    assert sleeve.v_final == pytest.approx(residual.v_prime)

@@ -11,6 +11,9 @@ Usage:
     e1f scenario list
     e1f scenario show core
     e1f scenario delete core
+
+Category scenarios (ADR-0061) are written by hand in the YAML file; ``list`` and
+``show`` display them, and ``save`` writes flat targets only.
 """
 
 import argparse
@@ -113,9 +116,11 @@ def _cmd_save(
 
 
 def _summary(scenario: Scenario) -> str:
-    """One-line shape: target count and Σ, frozen count, months, monthly budget."""
+    """One-line shape: target and category counts, Σ, frozen count, months, budget."""
     total = sum(scenario.targets.values())
     parts = [f"{len(scenario.targets)} target(s)"]
+    if scenario.categories is not None:
+        parts[0] += f" in {len(scenario.categories)} categories"
     if scenario.frozen is None:
         parts.append(f"Σ {total:.1f}%")
     else:
@@ -155,12 +160,25 @@ def _cmd_show(name: str, scenarios_path: str, config_path: str) -> int:
     def fund_name(isin: str) -> str:
         return str((config.get(isin) or {}).get("name", ""))[:_NAME_W]
 
+    def by_target(isins: list[str]) -> list[str]:
+        return sorted(isins, key=lambda isin: (-scenario.targets[isin], isin))
+
+    label_w = 14 + 1 + _NAME_W
+    share = f" {'Share%':>7}" if scenario.categories is not None else ""
+    rule = "  " + "-" * (label_w + 1 + 7 + len(share))
     print()
-    print(f"  {'ISIN':<14} {'Name':<{_NAME_W}} {'Tgt%':>7}")
-    print("  " + "-" * (14 + 1 + _NAME_W + 1 + 7))
-    for isin, pct in sorted(scenario.targets.items(), key=lambda kv: (-kv[1], kv[0])):
-        print(f"  {isin:<14} {fund_name(isin):<{_NAME_W}} {pct:>6.1f}%")
-    print("  " + "-" * (14 + 1 + _NAME_W + 1 + 7))
+    print(f"  {'ISIN':<14} {'Name':<{_NAME_W}} {'Tgt%':>7}{share}")
+    print(rule)
+    if scenario.categories is None:
+        for isin in by_target(list(scenario.targets)):
+            print(f"  {isin:<14} {fund_name(isin):<{_NAME_W}} {scenario.targets[isin]:>6.1f}%")
+    else:
+        for category in scenario.categories:
+            print(f"  {category.name[:label_w]:<{label_w}} {category.pct:>6.1f}%")
+            for isin in by_target(list(category.funds)):
+                print(f"  {'  ' + isin:<14} {fund_name(isin):<{_NAME_W}}"
+                      f" {scenario.targets[isin]:>6.1f}% {category.funds[isin]:>6.1f}%")
+    print(rule)
     print(f"  {'TOTAL':<14} {'':<{_NAME_W}} {total:>6.1f}%")
     if scenario.frozen is not None:
         print("\n  Frozen (never bought):" + ("" if scenario.frozen else " —"))
@@ -185,8 +203,17 @@ def _build_parser() -> argparse.ArgumentParser:
 A scenario is a named basket of target weights (percent of the whole book), with
 an optional default DCA horizon. With --frozen it is a sleeve plan instead: the
 frozen funds are never bought, the targets are percents of the other funds and
-sum to 100, and --monthly stores a monthly budget (ADR-0060). This command only
-writes the file; run the plan with the consumers:
+sum to 100, and --monthly stores a monthly budget (ADR-0060). A sleeve plan can
+group its funds into categories instead of flat targets, edited by hand in the
+file (ADR-0061):
+
+  growth:
+    frozen: [IE00B3YCGJ38]
+    categories:
+      core:    {pct: 80, funds: {IE0003XJA0J9: 100}}
+      regions: {pct: 20, funds: {IE0006WW1TQ4: 70, IE00B4K48X80: 30}}
+
+This command only writes the file; run the plan with the consumers:
 
   e1f scenario save core --target IE00BM67HK77:12 --target IE0003XJA0J9:40 --months 10
   e1f rebalance --scenario core

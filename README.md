@@ -180,7 +180,7 @@ e1f rebalance --target IE00B4L5Y983:60 --as-of 2025-12-31   # historical snapsho
 e1f scenario save core --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --months 10
 e1f scenario save core --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --frozen IE00B3YCGJ38 --monthly 2500 --months 12
 e1f scenario list                    # names, target counts, sums
-e1f scenario show core               # targets with fund names
+e1f scenario show core               # targets with fund names (category tree, ADR-0061)
 e1f rebalance --scenario core        # recall the saved basket (--months here overrides)
 e1f correlation --scenario core      # correlate the POST-rebalance portfolio it implies
 
@@ -360,6 +360,12 @@ held fund must be targeted, or the plan is UNAVAILABLE (`unclassified`). A budge
 `C_min` the budget keeps every target; below it, buys close the largest gaps first
 and the summary states the shortfall. The table adds a `SLEEVE` subtotal, the
 frozen rows and `Book%`, each fund's share of the whole book after buying.
+A sleeve scenario can group its funds into **categories**, each with a percent of
+the sleeve and fixed shares for its funds
+(`ADR/ADR-0061_scenario_category_targets.md`, edited in `data/scenarios.yaml`). A
+fund's target is the category's percent × its share. The table shows a subtotal row
+for each category above its funds, and `--sort` reorders funds within their
+category.
 
 Scenarios: `ADR/ADR-0017_scenarios.md` (`src/e1f/scenario.py`; shared I/O in
 `src/e1f/common/scenarios.py` and the rebalance plan core in

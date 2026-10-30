@@ -73,6 +73,7 @@ from .returns import (
 )
 from .retry import call_with_retry
 from .scenarios import (
+    Category,
     Scenario,
     ScenarioError,
     delete_scenario,
@@ -102,6 +103,7 @@ __all__ = [
     "UNSUPPORTED_FX_CURRENCIES",
     "XTB_EXCHANGE_SUFFIX",
     "_FLOAT_CLAMP",
+    "Category",
     "ConfigManager",
     "CurrencyMetadata",
     "CurrencyMetadataError",

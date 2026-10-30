@@ -1,4 +1,4 @@
-"""Named ISIN→percent baskets persisted in one YAML file (ADR-0017)."""
+"""Named ISIN→percent baskets persisted in one YAML file (ADR-0017, ADR-0061)."""
 
 import math
 import os
@@ -12,6 +12,25 @@ from .persistence import atomic_write_yaml
 
 
 @dataclass(frozen=True)
+class Category:
+    """A named group of a sleeve scenario's funds (ADR-0061): ``pct`` percent of the
+    sleeve, split by fixed ``funds`` shares (ISIN → percent of the category, Σ 100)."""
+
+    name: str
+    pct: float
+    funds: dict[str, float]
+
+
+def category_targets(categories: tuple[Category, ...]) -> dict[str, float]:
+    """The flat sleeve targets the categories imply: ``pct × share / 100`` per fund."""
+    return {
+        isin: category.pct * share / 100.0
+        for category in categories
+        for isin, share in category.funds.items()
+    }
+
+
+@dataclass(frozen=True)
 class Scenario:
     """A named basket: ISIN → target percent, plus an optional default DCA horizon
     in months (consumed by ``rebalance``; ignored by ``correlation``).
@@ -20,6 +39,9 @@ class Scenario:
     With ``frozen`` (possibly empty) the scenario is a sleeve plan (ADR-0060): the
     frozen funds are never bought, the percents are of the non-frozen sleeve and
     Σ = 100, and ``monthly`` optionally sets the EUR budget per month.
+
+    A sleeve scenario may group its funds into ``categories`` instead (ADR-0061);
+    ``targets`` is then the flat mapping they imply, and every consumer reads it.
     """
 
     name: str
@@ -27,6 +49,20 @@ class Scenario:
     months: int | None = None
     frozen: tuple[str, ...] | None = None
     monthly: float | None = None
+    categories: tuple[Category, ...] | None = None
+
+    @classmethod
+    def from_categories(
+        cls,
+        name: str,
+        categories: tuple[Category, ...],
+        *,
+        months: int | None = None,
+        frozen: tuple[str, ...] | None = None,
+        monthly: float | None = None,
+    ) -> Scenario:
+        """A scenario whose ``targets`` are derived from ``categories``."""
+        return cls(name, category_targets(categories), months, frozen, monthly, categories)
 
     @property
     def budget(self) -> float | None:
@@ -54,45 +90,126 @@ def load_scenarios(path: str = DEFAULT_SCENARIOS) -> dict[str, Scenario]:
 
 
 def _parse_scenario(name: str, body: Any, path: str) -> Scenario:
+    prefix = f"{path}: scenario {name!r}"
     if not isinstance(body, dict):
-        raise ScenarioError(f"{path}: scenario {name!r} must be a mapping")
-    targets_raw = body.get("targets")
-    if not isinstance(targets_raw, dict) or not targets_raw:
-        raise ScenarioError(f"{path}: scenario {name!r} needs a non-empty 'targets' mapping")
-    targets: dict[str, float] = {}
-    for isin, pct in targets_raw.items():
-        try:
-            targets[str(isin)] = float(pct)
-        except (TypeError, ValueError):
-            raise ScenarioError(
-                f"{path}: scenario {name!r} target {isin!r} has non-numeric percent {pct!r}"
-            ) from None
+        raise ScenarioError(f"{prefix} must be a mapping")
     frozen_raw = body.get("frozen")
     if frozen_raw is not None and not isinstance(frozen_raw, list):
-        raise ScenarioError(f"{path}: scenario {name!r} 'frozen' must be a list of ISINs")
-    scenario = Scenario(
-        name=name,
-        targets=targets,
-        months=body.get("months"),
-        frozen=None if frozen_raw is None else tuple(str(isin) for isin in frozen_raw),
-        monthly=body.get("monthly"),
-    )
+        raise ScenarioError(f"{prefix} 'frozen' must be a list of ISINs")
+    frozen = None if frozen_raw is None else tuple(str(isin) for isin in frozen_raw)
+    if "categories" in body:
+        if "targets" in body:
+            raise ScenarioError(f"{prefix} has both 'targets' and 'categories' — use one")
+        categories_raw = body["categories"]
+        if not isinstance(categories_raw, dict) or not categories_raw:
+            raise ScenarioError(
+                f"{prefix} 'categories' must be a non-empty mapping of name → {{pct, funds}}"
+            )
+        scenario = Scenario.from_categories(
+            name,
+            tuple(_parse_category(str(cat), raw, prefix) for cat, raw in categories_raw.items()),
+            months=body.get("months"),
+            frozen=frozen,
+            monthly=body.get("monthly"),
+        )
+    else:
+        targets_raw = body.get("targets")
+        if not isinstance(targets_raw, dict) or not targets_raw:
+            raise ScenarioError(f"{prefix} needs a non-empty 'targets' mapping")
+        scenario = Scenario(
+            name=name,
+            targets=_parse_percents(targets_raw, f"{prefix} target"),
+            months=body.get("months"),
+            frozen=frozen,
+            monthly=body.get("monthly"),
+        )
     _validate_scenario(scenario, path)
     return scenario
+
+
+def _parse_percents(raw: dict[Any, Any], label: str) -> dict[str, float]:
+    percents: dict[str, float] = {}
+    for isin, pct in raw.items():
+        try:
+            percents[str(isin)] = float(pct)
+        except (TypeError, ValueError):
+            raise ScenarioError(f"{label} {isin!r} has non-numeric percent {pct!r}") from None
+    return percents
+
+
+def _parse_category(name: str, raw: Any, prefix: str) -> Category:
+    label = f"{prefix} category {name!r}"
+    if not isinstance(raw, dict) or not isinstance(raw.get("funds"), dict) or not raw["funds"]:
+        raise ScenarioError(f"{label} needs 'pct' and a non-empty 'funds' mapping")
+    try:
+        pct = float(raw["pct"])
+    except (KeyError, TypeError, ValueError):
+        raise ScenarioError(f"{label} has non-numeric 'pct' {raw.get('pct')!r}") from None
+    return Category(name, pct, _parse_percents(raw["funds"], f"{label} fund"))
+
+
+def _is_percent(value: Any) -> bool:
+    """True for a finite number in (0, 100]."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and 0.0 < float(value) <= 100.0
+    )
+
+
+def _validate_categories(scenario: Scenario, prefix: str) -> None:
+    """The ADR-0061 contract: a sleeve plan, Σ pct = 100, Σ shares = 100 per category,
+    each fund in one category, and ``targets`` equal to what the categories imply."""
+    categories = scenario.categories or ()
+    if scenario.frozen is None:
+        raise ScenarioError(f"{prefix} 'categories' needs 'frozen' (a sleeve plan)")
+    if not categories:
+        raise ScenarioError(f"{prefix} 'categories' must not be empty")
+    names = [category.name for category in categories]
+    if len(set(names)) != len(names):
+        raise ScenarioError(f"{prefix} lists a category name twice")
+    seen: set[str] = set()
+    for category in categories:
+        label = f"{prefix} category {category.name!r}"
+        if not _is_percent(category.pct):
+            raise ScenarioError(f"{label} 'pct' must be finite and in (0, 100]")
+        if not category.funds:
+            raise ScenarioError(f"{label} needs a non-empty 'funds' mapping")
+        for isin, share in category.funds.items():
+            if not _is_percent(share):
+                raise ScenarioError(f"{label} fund {isin!r} share must be finite and in (0, 100]")
+            if isin in seen:
+                raise ScenarioError(f"{prefix} fund {isin!r} is in more than one category")
+            seen.add(isin)
+        shares = sum(float(share) for share in category.funds.values())
+        if abs(shares - 100.0) > 1e-6:
+            raise ScenarioError(
+                f"{label} fund shares sum to {shares:.2f}% — must sum to 100%"
+            )
+    total = sum(float(category.pct) for category in categories)
+    if abs(total - 100.0) > 1e-6:
+        raise ScenarioError(
+            f"{prefix} category percentages sum to {total:.2f}% — they are of the "
+            f"non-frozen sleeve and must sum to 100%"
+        )
+    implied = category_targets(categories)
+    if set(implied) != set(scenario.targets) or any(
+        not math.isclose(scenario.targets[isin], pct, rel_tol=0.0, abs_tol=1e-9)
+        for isin, pct in implied.items()
+    ):
+        raise ScenarioError(f"{prefix} targets do not match its categories")
 
 
 def _validate_scenario(scenario: Scenario, path: str) -> None:
     """Enforce the complete stored-basket contract at every persistence boundary."""
     prefix = f"{path}: scenario {scenario.name!r}"
+    if scenario.categories is not None:
+        _validate_categories(scenario, prefix)
     if not scenario.targets:
         raise ScenarioError(f"{prefix} needs a non-empty 'targets' mapping")
     for isin, pct in scenario.targets.items():
-        if (
-            isinstance(pct, bool)
-            or not isinstance(pct, (int, float))
-            or not math.isfinite(float(pct))
-            or not 0.0 < float(pct) <= 100.0
-        ):
+        if not _is_percent(pct):
             raise ScenarioError(
                 f"{prefix} target {isin!r} percent must be finite and in (0, 100]"
             )
@@ -172,5 +289,11 @@ def _scenario_to_yaml(scenario: Scenario) -> dict[str, Any]:
         entry["monthly"] = scenario.monthly
     if scenario.frozen is not None:
         entry["frozen"] = list(scenario.frozen)
-    entry["targets"] = dict(scenario.targets)
+    if scenario.categories is None:
+        entry["targets"] = dict(scenario.targets)
+    else:
+        entry["categories"] = {
+            category.name: {"pct": category.pct, "funds": dict(category.funds)}
+            for category in scenario.categories
+        }
     return entry
