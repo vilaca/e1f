@@ -841,3 +841,687 @@ etfs:
     distribution: Accumulating
     ter: 0.09
     asset_class: Equity
+  IE00BMC38736:
+    name: VANECK SEMICONDUCTOR ETF
+    tickers:
+    - SMH
+    - SMGB
+    - VVSM
+    - VVSMF
+    exchange: LN
+    figi: BBG00YCY2LS8
+    listings:
+    - ticker: SMH
+      exchange: LN
+    - ticker: SMGB
+      exchange: LN
+    - ticker: VVSM
+      exchange: GR
+    - ticker: VVSMF
+      exchange: US
+    resolved_at: '2026-10-29T16:38:21.762522+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
+  IE00BYTRR863:
+    name: SS SPDR MS WRLD ENRG UCT ETF
+    tickers:
+    - WNRG
+    - SS42
+    - SMWFF
+    - ENGW
+    exchange: NA
+    figi: BBG00CRG8K96
+    listings:
+    - ticker: WNRG
+      exchange: NA
+    - ticker: WNRG
+      exchange: LN
+    - ticker: SS42
+      exchange: GR
+    - ticker: SMWFF
+      exchange: US
+    - ticker: ENGW
+      exchange: LN
+    resolved_at: '2026-10-29T16:38:23.228573+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.3
+    asset_class: Equity
+  IE00BG0J4C88:
+    name: ISHARES DIGITAL SCRTY USD-A
+    tickers:
+    - LOCK
+    - L0CK
+    - ISHDF
+    exchange: LN
+    figi: BBG00L50HTB3
+    listings:
+    - ticker: LOCK
+      exchange: LN
+    - ticker: L0CK
+      exchange: GR
+    - ticker: ISHDF
+      exchange: US
+    - ticker: LOCK
+      exchange: NA
+    resolved_at: '2026-10-29T16:38:24.753523+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.4
+    asset_class: Equity
+  IE00BM67HM91:
+    name: X MSCI WORLD ENERGY 1C
+    tickers:
+    - XDW0
+    - XWES
+    exchange: GR
+    figi: BBG00CBTHJ07
+    listings:
+    - ticker: XDW0
+      exchange: GR
+    - ticker: XDW0
+      exchange: LN
+    - ticker: XWES
+      exchange: LN
+    resolved_at: '2026-10-29T16:43:20.880498+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HQ30:
+    name: X MSCI WORLD UTILITIES 1C
+    tickers:
+    - XDWU
+    - XWUS
+    exchange: GR
+    figi: BBG00CBTVD13
+    listings:
+    - ticker: XDWU
+      exchange: GR
+    - ticker: XDWU
+      exchange: LN
+    - ticker: XWUS
+      exchange: LN
+    resolved_at: '2026-10-29T17:19:27.772436+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00B1XNHC34:
+    name: ISHAR GL CL EN TR UCI ETF-US
+    tickers:
+    - INRG
+    - IQQH
+    - IMSIF
+    exchange: SW
+    figi: BBG000PRXFM8
+    listings:
+    - ticker: INRG
+      exchange: LN
+    - ticker: IQQH
+      exchange: GR
+    - ticker: IMSIF
+      exchange: US
+    resolved_at: '2026-10-29T17:40:55.749132+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Distributing
+    ter: 0.65
+    asset_class: Equity
+  IE000NDWFGA5:
+    name: GLOBAL X URANIUM UCITS USD-A
+    tickers:
+    - URNU
+    - URNG
+    - URNUF
+    exchange: LN
+    figi: BBG016N2PDY2
+    listings:
+    - ticker: URNU
+      exchange: LN
+    - ticker: URNG
+      exchange: LN
+    - ticker: URNU
+      exchange: GR
+    - ticker: URNUF
+      exchange: US
+    resolved_at: '2026-10-29T17:40:57.134846+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.65
+    asset_class: Equity
+  IE000M7V94E1:
+    name: VANECK URANIUM & NUCLEAR ETF
+    tickers:
+    - NUCL
+    - NUCG
+    - NUKL
+    - URNCF
+    exchange: LN
+    figi: BBG01DR6D574
+    listings:
+    - ticker: NUCL
+      exchange: LN
+    - ticker: NUCG
+      exchange: LN
+    - ticker: NUKL
+      exchange: GR
+    - ticker: URNCF
+      exchange: US
+    resolved_at: '2026-10-29T17:40:58.489967+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.55
+    asset_class: Equity
+  IE00BYZK4552:
+    name: ISHARES AUTOMATION&ROBOTIC-A
+    tickers:
+    - RBOT
+    - RBTX
+    - 2B76
+    - IIVPF
+    - RBOE
+    exchange: LN
+    figi: BBG00DQFXF63
+    listings:
+    - ticker: RBOT
+      exchange: LN
+    - ticker: RBTX
+      exchange: LN
+    - ticker: 2B76
+      exchange: GR
+    - ticker: IIVPF
+      exchange: US
+    - ticker: RBOE
+      exchange: NA
+    resolved_at: '2026-10-29T17:40:59.872941+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.4
+    asset_class: Equity
+  IE00BGV5VN51:
+    name: X ARTIFICIAL INTEL BIG DA 1C
+    tickers:
+    - XAIX
+    - XAIXF
+    - XAID
+    exchange: GR
+    figi: BBG00N2PX1M8
+    listings:
+    - ticker: XAIX
+      exchange: GR
+    - ticker: XAIXF
+      exchange: US
+    - ticker: XAIX
+      exchange: LN
+    - ticker: XAID
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:01.563356+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
+  IE00B1TXK627:
+    name: ISHARES GLOBAL WATER
+    tickers:
+    - IH2O
+    - DH2O
+    - IQQQ
+    - IWATF
+    exchange: SW
+    figi: BBG000F1VFJ2
+    listings:
+    - ticker: IH2O
+      exchange: LN
+    - ticker: DH2O
+      exchange: LN
+    - ticker: IQQQ
+      exchange: GR
+    - ticker: IWATF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:03.023914+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Distributing
+    ter: 0.65
+    asset_class: Equity
+  IE00BYPLS672:
+    name: L&G CYBER SECURITY UCITS ETF
+    tickers:
+    - ISPY
+    - USPY
+    - LCYFF
+    exchange: LN
+    figi: BBG00B3PKWB1
+    listings:
+    - ticker: ISPY
+      exchange: LN
+    - ticker: USPY
+      exchange: LN
+    - ticker: ISPY
+      exchange: NA
+    - ticker: USPY
+      exchange: GR
+    - ticker: LCYFF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:04.526789+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.69
+    asset_class: Equity
+  IE0003Z9E2Y3:
+    name: GX COPPER MINERS UCITS
+    tickers:
+    - COPX
+    - 4COP
+    - COPG
+    - GBXCF
+    exchange: LN
+    figi: BBG013KKT4D1
+    listings:
+    - ticker: COPX
+      exchange: LN
+    - ticker: 4COP
+      exchange: GR
+    - ticker: COPG
+      exchange: LN
+    - ticker: GBXCF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:05.959832+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.55
+    asset_class: Equity
+  IE00BQQP9F84:
+    name: VANECK GOLD MINERS UCITS ETF
+    tickers:
+    - GDX
+    - G2X
+    - GDGB
+    - GTXAF
+    exchange: LN
+    figi: BBG007QT8236
+    listings:
+    - ticker: GDX
+      exchange: LN
+    - ticker: G2X
+      exchange: GR
+    - ticker: GDGB
+      exchange: LN
+    - ticker: GTXAF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:07.304860+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.53
+    asset_class: Equity
+  IE00B1FZS467:
+    name: ISHARES GLBL INFRASTRUCTURE
+    tickers:
+    - IQQI
+    - IDIN
+    - INFR
+    - IISGF
+    exchange: SW
+    figi: BBG000CQ4LZ9
+    listings:
+    - ticker: IQQI
+      exchange: GR
+    - ticker: IDIN
+      exchange: LN
+    - ticker: INFR
+      exchange: NA
+    - ticker: INFR
+      exchange: LN
+    - ticker: IISGF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:08.745709+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Distributing
+    ter: 0.65
+    asset_class: Equity
+  IE000U9ODG19:
+    name: ISHARES GLOBAL AEROSPACE&DEF
+    tickers:
+    - 5J50
+    - IVGAF
+    - DFND
+    exchange: S4
+    figi: BBG01LC728B1
+    listings:
+    - ticker: 5J50
+      exchange: GR
+    - ticker: IVGAF
+      exchange: US
+    - ticker: DFND
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:10.305773+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
+  IE00BDVPNG13:
+    name: WT ART INTELLIGENCE -USD ACC
+    tickers:
+    - WTAI
+    - INTL
+    - WTI2
+    - WTAIF
+    exchange: LN
+    figi: BBG00MNPPHT4
+    listings:
+    - ticker: WTAI
+      exchange: LN
+    - ticker: INTL
+      exchange: LN
+    - ticker: WTI2
+      exchange: GR
+    - ticker: WTAIF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:12.438208+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.4
+    asset_class: Equity
+  IE000O7Q2E56:
+    name: X ELECTRIC & SMART GRID 1C
+    tickers:
+    - WIRE
+    - WIRG
+    exchange: GR
+    figi: BBG02171KT18
+    listings:
+    - ticker: WIRE
+      exchange: GR
+    - ticker: WIRE
+      exchange: LN
+    - ticker: WIRG
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:13.800953+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
+  IE000J80JTL1:
+    name: FT NSDQ CLN EDG SMRT GRID
+    tickers:
+    - GRDU
+    - FGRD
+    - GRID
+    - FTNQF
+    exchange: LN
+    figi: BBG0168WYH56
+    listings:
+    - ticker: GRDU
+      exchange: LN
+    - ticker: FGRD
+      exchange: LN
+    - ticker: GRID
+      exchange: GR
+    - ticker: FTNQF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:15.955595+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.63
+    asset_class: Equity
+  IE00BM67HL84:
+    name: X MSCI WORLD FINANCIALS
+    tickers:
+    - XDWF
+    - XWFS
+    exchange: GR
+    figi: BBG00C9Y0RW4
+    listings:
+    - ticker: XDWF
+      exchange: GR
+    - ticker: XDWF
+      exchange: LN
+    - ticker: XWFS
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:17.296952+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HV82:
+    name: X MSCI WORLD INDUSTRIALS 1C
+    tickers:
+    - XDWI
+    - XWIS
+    - XMWIF
+    exchange: GR
+    figi: BBG00CCJJQV6
+    listings:
+    - ticker: XDWI
+      exchange: GR
+    - ticker: XDWI
+      exchange: LN
+    - ticker: XWIS
+      exchange: LN
+    - ticker: XMWIF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:18.745666+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HT60:
+    name: X MSCI WORLD INFO TECH 1C
+    tickers:
+    - XDWT
+    - XXTW
+    exchange: GR
+    figi: BBG00CB7XY13
+    listings:
+    - ticker: XDWT
+      exchange: GR
+    - ticker: XDWT
+      exchange: LN
+    - ticker: XXTW
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:20.209591+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HN09:
+    name: X MSCI WORLD CONS STAP 1C
+    tickers:
+    - XDWS
+    - XWCS
+    exchange: GR
+    figi: BBG00CB7XJP0
+    listings:
+    - ticker: XDWS
+      exchange: GR
+    - ticker: XDWS
+      exchange: LN
+    - ticker: XWCS
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:21.619662+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HS53:
+    name: X MSCI WORLD MATERIALS 1C
+    tickers:
+    - XDWM
+    - XSMW
+    exchange: GR
+    figi: BBG00CBTXSY2
+    listings:
+    - ticker: XDWM
+      exchange: GR
+    - ticker: XDWM
+      exchange: LN
+    - ticker: XSMW
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:23.025758+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HR47:
+    name: X MSCI WORLD COM SERV 1C
+    tickers:
+    - XWTS
+    - XSSW
+    - XWTSF
+    exchange: GR
+    figi: BBG00CBTXPX9
+    listings:
+    - ticker: XWTS
+      exchange: GR
+    - ticker: XWTS
+      exchange: LN
+    - ticker: XSSW
+      exchange: LN
+    - ticker: XWTSF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:24.599065+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BM67HP23:
+    name: X MSCI WORLD CONS DISC 1C
+    tickers:
+    - XDWC
+    - XWDS
+    exchange: GR
+    figi: BBG00CCJJGZ4
+    listings:
+    - ticker: XDWC
+      exchange: GR
+    - ticker: XDWC
+      exchange: LN
+    - ticker: XWDS
+      exchange: LN
+    resolved_at: '2026-10-29T17:41:26.171270+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.25
+    asset_class: Equity
+  IE00BYWQWR46:
+    name: VANECK VIDEO GAME ESPORT ETF
+    tickers:
+    - ESPO
+    - ESGB
+    - ESP0
+    exchange: LN
+    figi: BBG00PH639T8
+    listings:
+    - ticker: ESPO
+      exchange: LN
+    - ticker: ESGB
+      exchange: LN
+    - ticker: ESP0
+      exchange: GR
+    resolved_at: '2026-10-29T17:41:27.746847+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.55
+    asset_class: Equity
+  IE00BYXG2H39:
+    name: ISHARES NSDQ US BIOTECH UCIT
+    tickers:
+    - BTEK
+    - BTEC
+    - 2B70
+    - IVBUF
+    exchange: LN
+    figi: BBG00J051HL4
+    listings:
+    - ticker: BTEK
+      exchange: LN
+    - ticker: BTEC
+      exchange: LN
+    - ticker: 2B70
+      exchange: GR
+    - ticker: IVBUF
+      exchange: US
+    resolved_at: '2026-10-29T17:41:29.325968+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.35
+    asset_class: Equity
+  IE00BYZK4776:
+    name: ISHR HEALTHCARE INNOVATION
+    tickers:
+    - HEAL
+    - DRDR
+    - 2B78
+    - BLKIF
+    exchange: LN
+    figi: BBG00DQG1336
+    listings:
+    - ticker: HEAL
+      exchange: LN
+    - ticker: DRDR
+      exchange: LN
+    - ticker: 2B78
+      exchange: GR
+    - ticker: BLKIF
+      exchange: US
+    - ticker: HEAL
+      exchange: NA
+    resolved_at: '2026-10-29T17:41:30.891406+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.4
+    asset_class: Equity
+  IE00BD1F4L37:
+    name: ISHARES EDGE MSCI USA QLY
+    tickers:
+    - IUQA
+    - IUQF
+    - QDVB
+    - IUQFF
+    exchange: LN
+    figi: BBG00DZWF602
+    listings:
+    - ticker: IUQA
+      exchange: LN
+    - ticker: IUQF
+      exchange: LN
+    - ticker: QDVB
+      exchange: GR
+    - ticker: IUQFF
+      exchange: US
+    resolved_at: '2026-10-30T00:32:14.278910+00:00'
+    source: OpenFIGI
+    fund_currency: USD
+    distribution: Accumulating
+    ter: 0.2
+    asset_class: Equity

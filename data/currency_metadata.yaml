@@ -6,14 +6,50 @@ IE0003XJA0J9:
   currency: EUR
   symbol: WEBN:GER:EUR
   xid: '894412378'
+IE0003Z9E2Y3:
+  currency: USD
+  symbol: COPX:LSE:USD
+  xid: '692018634'
 IE0006WW1TQ4:
   currency: EUR
   symbol: EXUS:FRA:EUR
   xid: '870965546'
+IE000J80JTL1:
+  currency: USD
+  symbol: GRDU:LSE:USD
+  xid: '721582682'
+IE000M7V94E1:
+  currency: USD
+  symbol: NUCL:LSE:USD
+  xid: '784540410'
+IE000NDWFGA5:
+  currency: USD
+  symbol: URNU:LSE:USD
+  xid: '721527690'
+IE000O7Q2E56:
+  currency: EUR
+  symbol: WIRE:GER:EUR
+  xid: '1070728316'
+IE000U9ODG19:
+  currency: USD
+  symbol: DFND:SWX:USD
+  xid: '881779203'
 IE000YYE6WK5:
   currency: USD
   symbol: DFNS:LSE:USD
   xid: '794599596'
+IE00B1FZS467:
+  currency: USD
+  symbol: IDIN:LSE:USD
+  xid: '5869645'
+IE00B1TXK627:
+  currency: USD
+  symbol: DH2O:LSE:USD
+  xid: '7012028'
+IE00B1XNHC34:
+  currency: EUR
+  symbol: IQQH:GER:EUR
+  xid: '9155309'
 IE00B3VSSL01:
   currency: USD
   symbol: XLKS:LSE:USD
@@ -62,10 +98,18 @@ IE00B6R52259:
   currency: USD
   symbol: ISAC:LSE:USD
   xid: '39134732'
+IE00BD1F4L37:
+  currency: USD
+  symbol: IUQA:LSE:USD
+  xid: '367280941'
 IE00BDBRDM35:
   currency: EUR
   symbol: EUNA:GER:EUR
   xid: '443269222'
+IE00BDVPNG13:
+  currency: USD
+  symbol: WTAI:LSE:USD
+  xid: '504998045'
 IE00BF4RFH31:
   currency: USD
   symbol: WSML:LSE:USD
@@ -74,6 +118,14 @@ IE00BFMXXD54:
   currency: USD
   symbol: VUAA:LSE:USD
   xid: '534460756'
+IE00BG0J4C88:
+  currency: USD
+  symbol: LOCK:LSE:USD
+  xid: '489052244'
+IE00BGV5VN51:
+  currency: EUR
+  symbol: XAIX:GER:EUR
+  xid: '515873934'
 IE00BHZRR030:
   currency: EUR
   symbol: FLXK:GER:EUR
@@ -98,6 +150,46 @@ IE00BM67HK77:
   currency: EUR
   symbol: XDWH:GER:EUR
   xid: '95685933'
+IE00BM67HL84:
+  currency: EUR
+  symbol: XDWF:GER:EUR
+  xid: '95685932'
+IE00BM67HM91:
+  currency: EUR
+  symbol: XDW0:GER:EUR
+  xid: '95865869'
+IE00BM67HN09:
+  currency: EUR
+  symbol: XDWS:GER:EUR
+  xid: '95865870'
+IE00BM67HP23:
+  currency: EUR
+  symbol: XDWC:GER:EUR
+  xid: '95921135'
+IE00BM67HQ30:
+  currency: EUR
+  symbol: XDWU:GER:EUR
+  xid: '95921138'
+IE00BM67HR47:
+  currency: EUR
+  symbol: XWTS:GER:EUR
+  xid: '95921139'
+IE00BM67HS53:
+  currency: EUR
+  symbol: XDWM:GER:EUR
+  xid: '95921137'
+IE00BM67HT60:
+  currency: EUR
+  symbol: XDWT:GER:EUR
+  xid: '95865871'
+IE00BM67HV82:
+  currency: EUR
+  symbol: XDWI:GER:EUR
+  xid: '95921136'
+IE00BMC38736:
+  currency: EUR
+  symbol: SMH:MIL:EUR
+  xid: '632106586'
 IE00BP3QZ825:
   currency: USD
   symbol: IWMO:LSE:USD
@@ -106,6 +198,34 @@ IE00BQN1K562:
   currency: EUR
   symbol: CEMQ:GER:EUR
   xid: '82850564'
+IE00BQQP9F84:
+  currency: EUR
+  symbol: G2X:GER:EUR
+  xid: '88580746'
+IE00BYPLS672:
+  currency: EUR
+  symbol: USPY:GER:EUR
+  xid: '92296956'
+IE00BYTRR863:
+  currency: EUR
+  symbol: WNRG:AEX:EUR
+  xid: '97327052'
+IE00BYWQWR46:
+  currency: USD
+  symbol: ESPO:LSE:USD
+  xid: '540740995'
+IE00BYXG2H39:
+  currency: USD
+  symbol: BTEC:LSE:USD
+  xid: '435093520'
+IE00BYZK4552:
+  currency: USD
+  symbol: RBOT:LSE:USD
+  xid: '363146652'
+IE00BYZK4776:
+  currency: USD
+  symbol: HEAL:LSE:USD
+  xid: '363117803'
 IE00BYZK4883:
   currency: USD
   symbol: DGTL:LSE:USD
