@@ -1,7 +1,7 @@
 """Buy-only rebalance core (ADR-0016), graduated so correlation can consume it."""
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .holdings import (
     _SHARE_EPSILON,
@@ -28,6 +28,11 @@ class RebalancePlan:
     ``binders``: pinned ISIN(s) whose bound v_i/t_i equals V'_min (sorted).
     ``residual_bound_binds``: True when the residual bound v_rest/R also equals
     V'_min (so the whole residual bucket gets zero buys).
+
+    A sleeve plan (ADR-0060) sets ``sleeve``: targets are fractions of the
+    non-frozen sleeve, ``frozen`` held funds get 0.0 buys, ``sleeve_v`` is the
+    sleeve's current value S and ``level`` its final value L.  ``budget`` is the
+    cash to invest when one was given, else the plan invests ``c_min``.
     """
 
     feasible: bool
@@ -39,6 +44,27 @@ class RebalancePlan:
     buys: dict[str, float]  # ISIN → EUR buy
     binders: list[str]  # sorted pinned ISINs binding V'_min
     residual_bound_binds: bool  # True if v_rest/R == V'_min
+    sleeve: bool = False
+    frozen: frozenset[str] = frozenset()  # held frozen ISINs (sleeve plans)
+    unclassified: list[str] = field(default_factory=list)  # held, neither targeted nor frozen
+    budget: float | None = None  # cash to invest (sleeve plans); None = c_min
+    sleeve_v: float = 0.0  # S: current value of the non-frozen sleeve
+    level: float = 0.0  # L: final value of the non-frozen sleeve
+
+    @property
+    def injection(self) -> float:
+        """Cash the plan invests: the budget when given, else ``c_min``."""
+        return self.c_min if self.budget is None else self.budget
+
+    @property
+    def v_final(self) -> float:
+        """Book value after the plan's buys."""
+        return self.v + self.injection
+
+    @property
+    def shortfall(self) -> float:
+        """How far a budget falls short of ``c_min`` (0.0 when it reaches targets)."""
+        return 0.0 if self.budget is None else max(0.0, self.c_min - self.budget)
 
 
 def compute_rebalance(
@@ -184,6 +210,135 @@ def compute_rebalance(
         binders=binders,
         residual_bound_binds=residual_bound_binds,
     )
+
+
+def compute_sleeve_rebalance(
+    targets: dict[str, float],
+    values: dict[str, float | None],
+    held: frozenset[str],
+    frozen: frozenset[str],
+    budget: float | None = None,
+) -> RebalancePlan:
+    """Buy-only rebalance of the non-frozen sleeve (ADR-0060).
+
+    ``targets``: ISIN → fraction of the sleeve in (0, 1], Σ = 1, disjoint from
+    ``frozen``.  ``values`` / ``held`` as in ``compute_rebalance``.  Frozen funds
+    are never bought; every other held fund must be targeted.
+
+    The sleeve's final value L solves Σ max(0, s_i·L − v_i) = B, and fund i buys
+    c_i = max(0, s_i·L − v_i).  Without a budget B is the minimum ``c_min`` =
+    max(v_i/s_i) − S, where every fund reaches its target; a smaller budget
+    closes the largest gaps first.
+
+    Feasibility check order (first match wins):
+      target_unvaluable → unclassified → empty_sleeve.
+    """
+    if not targets:
+        raise ValueError("targets must be non-empty")
+    if any(
+        isinstance(target, bool)
+        or not math.isfinite(target)
+        or not 0.0 < target <= 1.0
+        for target in targets.values()
+    ):
+        raise ValueError("target fractions must be finite and in (0, 1]")
+    if abs(sum(targets.values()) - 1.0) > _FLOAT_CLAMP:
+        raise ValueError("sleeve target fractions must sum to 1")
+    if frozen & set(targets):
+        raise ValueError("a fund cannot be both targeted and frozen")
+    if budget is not None and (not math.isfinite(budget) or budget < 0.0):
+        raise ValueError("budget must be finite and >= 0")
+
+    def unavailable(
+        reason: str,
+        *,
+        unvaluable: list[str] | None = None,
+        unclassified: list[str] | None = None,
+        v: float = 0.0,
+        frozen_held: frozenset[str] = frozenset(),
+    ) -> RebalancePlan:
+        return RebalancePlan(
+            feasible=False, reason=reason, unvaluable_targets=unvaluable or [], v=v,
+            v_prime=0.0, c_min=0.0, buys={}, binders=[], residual_bound_binds=False,
+            sleeve=True, frozen=frozen_held, unclassified=unclassified or [], budget=budget,
+        )
+
+    unvaluable_targets = sorted(
+        isin for isin in targets if isin in held and values.get(isin) is None
+    )
+    if unvaluable_targets:
+        return unavailable("target_unvaluable", unvaluable=unvaluable_targets)
+    unclassified = sorted(held - set(targets) - frozen)
+    if unclassified:
+        return unavailable("unclassified", unclassified=unclassified)
+
+    v_held: dict[str, float] = {
+        isin: v for isin, v in values.items() if v is not None and isin in held
+    }
+    V = sum(v_held.values())
+    frozen_held = frozenset(isin for isin in v_held if isin in frozen)
+    sleeve = {isin: _v_for_bound(values.get(isin)) for isin in targets}
+    S = sum(sleeve.values())
+    if S <= 0.0 and not budget:
+        return unavailable("empty_sleeve", v=V, frozen_held=frozen_held)
+
+    # Fund i starts buying once L passes its bound v_i/s_i; walk the bounds upward.
+    bounds = sorted((sleeve[isin] / s_i, isin) for isin, s_i in targets.items())
+    level_min = bounds[-1][0]
+    c_min = level_min - S
+    if -_FLOAT_CLAMP <= c_min < 0.0:
+        c_min = 0.0
+    cash = c_min if budget is None else budget
+    if cash >= c_min:
+        level = S + cash
+    else:
+        s_sum = v_sum = 0.0
+        level = 0.0
+        for k, (_, isin) in enumerate(bounds):
+            s_sum += targets[isin]
+            v_sum += sleeve[isin]
+            level = (cash + v_sum) / s_sum
+            if k + 1 == len(bounds) or level <= bounds[k + 1][0]:
+                break
+
+    buys: dict[str, float] = {}
+    for isin, s_i in targets.items():
+        c_i = s_i * level - sleeve[isin]
+        buys[isin] = c_i if c_i > _FLOAT_CLAMP else 0.0
+    buys.update({isin: 0.0 for isin in frozen_held})
+    binders = sorted(isin for b, isin in bounds if b >= level - _FLOAT_CLAMP)
+
+    return RebalancePlan(
+        feasible=True,
+        reason=None,
+        unvaluable_targets=[],
+        v=V,
+        v_prime=V + c_min,
+        c_min=c_min,
+        buys=buys,
+        binders=binders,
+        residual_bound_binds=False,
+        sleeve=True,
+        frozen=frozen_held,
+        budget=budget,
+        sleeve_v=S,
+        level=level,
+    )
+
+
+def plan_rebalance(
+    targets: dict[str, float],
+    values: dict[str, float | None],
+    held: frozenset[str],
+    frozen: frozenset[str] | None = None,
+    budget: float | None = None,
+) -> RebalancePlan:
+    """A sleeve plan when a frozen set is given (ADR-0060), else the residual plan."""
+    if frozen is None:
+        if budget is not None:
+            raise ValueError("a budget needs a frozen set (sleeve mode)")
+        return compute_rebalance(targets, values, held)
+    return compute_sleeve_rebalance(targets, values, held, frozen, budget)
 
 
 def _v_for_bound(v: float | None) -> float:

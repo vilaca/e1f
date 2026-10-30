@@ -178,6 +178,7 @@ e1f rebalance --target IE00B4L5Y983:60 --as-of 2025-12-31   # historical snapsho
 
 # 9. Save a basket once, reuse it across commands (ADR-0017)
 e1f scenario save core --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --months 10
+e1f scenario save core --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --frozen IE00B3YCGJ38 --monthly 2500 --months 12
 e1f scenario list                    # names, target counts, sums
 e1f scenario show core               # targets with fund names
 e1f rebalance --scenario core        # recall the saved basket (--months here overrides)
@@ -350,6 +351,15 @@ N equal monthly buys (a today's-prices snapshot — re-run to refresh). Infeasib
 targets are reported UNAVAILABLE with the reason and fix (never an approximate plan
 that hides a sale), exit code `0`. Provenance is opt-in per ADR-0014
 (`--show-status` / `--explain`).
+
+A **sleeve plan** (`ADR/ADR-0060_rebalance_frozen_sleeve_and_budget.md`) names
+**frozen** funds with `--frozen ISIN` or a scenario's `frozen` list. They are never
+bought, and the targets are percents of the other funds and sum to 100. Every other
+held fund must be targeted, or the plan is UNAVAILABLE (`unclassified`). A budget
+(`--monthly EUR`, or a scenario's `monthly`, × months) replaces `C_min`. Above
+`C_min` the budget keeps every target; below it, buys close the largest gaps first
+and the summary states the shortfall. The table adds a `SLEEVE` subtotal, the
+frozen rows and `Book%`, each fund's share of the whole book after buying.
 
 Scenarios: `ADR/ADR-0017_scenarios.md` (`src/e1f/scenario.py`; shared I/O in
 `src/e1f/common/scenarios.py` and the rebalance plan core in

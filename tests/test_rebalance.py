@@ -1037,3 +1037,218 @@ def test_main_sort_value_reverse_orders_plan_rows(tmp_path, capsys):
     header = next(i for i, ln in enumerate(lines) if "Current€" in ln)
     plan = [ln.split()[0] for ln in lines[header + 2:] if ln.startswith("IE00")]
     assert plan == [A, B, C]
+
+
+# ---------------------------------------------------------------------------
+# Sleeve plans: frozen funds + budget (ADR-0060). Hand-computed pins.
+# ---------------------------------------------------------------------------
+
+F = "IE00FUND000F0"
+G = "IE00FUND000G0"
+
+
+def _sleeve(targets, values, frozen, budget=None, held=None):
+    from e1f.common import compute_sleeve_rebalance
+    held = frozenset(values) if held is None else frozenset(held)
+    return compute_sleeve_rebalance(targets, values, held, frozenset(frozen), budget)
+
+
+def test_sleeve_minimum_plan_ignores_the_frozen_fund():
+    # S = 6000 + 1000 = 7000. Bounds: A 6000/0.6 = 10000, B 1000/0.4 = 2500, so
+    # L = 10000, C_min = 3000; A binds, B buys 0.4·10000 − 1000 = 3000. The frozen
+    # €3000 forces nothing (the residual rule would have made it ≤ its share).
+    plan = _sleeve({A: 0.6, B: 0.4}, {A: 6000.0, B: 1000.0, F: 3000.0}, {F})
+    assert plan.feasible and plan.sleeve
+    assert plan.sleeve_v == pytest.approx(7000.0)
+    assert plan.level == pytest.approx(10000.0)
+    assert plan.c_min == pytest.approx(3000.0)
+    assert plan.buys == pytest.approx({A: 0.0, B: 3000.0, F: 0.0})
+    assert plan.binders == [A]
+    assert plan.v == pytest.approx(10000.0) and plan.v_final == pytest.approx(13000.0)
+    assert plan.shortfall == 0.0
+
+
+def test_sleeve_budget_above_minimum_keeps_the_targets():
+    # B = 5000 ≥ C_min 3000 → L = 7000 + 5000 = 12000: A 7200 − 6000, B 4800 − 1000.
+    plan = _sleeve({A: 0.6, B: 0.4}, {A: 6000.0, B: 1000.0, F: 3000.0}, {F}, budget=5000.0)
+    assert plan.level == pytest.approx(12000.0)
+    assert plan.buys == pytest.approx({A: 1200.0, B: 3800.0, F: 0.0})
+    assert plan.injection == pytest.approx(5000.0)
+    assert plan.binders == [] and plan.shortfall == 0.0
+
+
+def test_sleeve_budget_below_minimum_closes_the_largest_gap_first():
+    # B = 1000 < C_min 3000. Only B is below the level: L = (1000 + 1000)/0.4 = 5000
+    # ≤ A's bound 10000, so B buys 0.4·5000 − 1000 = 1000 and A nothing.
+    plan = _sleeve({A: 0.6, B: 0.4}, {A: 6000.0, B: 1000.0, F: 3000.0}, {F}, budget=1000.0)
+    assert plan.level == pytest.approx(5000.0)
+    assert plan.buys == pytest.approx({A: 0.0, B: 1000.0, F: 0.0})
+    assert plan.binders == [A]
+    assert plan.shortfall == pytest.approx(2000.0)
+
+
+def test_sleeve_budget_below_minimum_crosses_a_bound():
+    # Bounds C 0 (unheld), B 1000/0.3 = 3333.33, A 5000/0.5 = 10000; B = 2000.
+    # C alone: L = 2000/0.2 = 10000 > 3333.33, so B joins: L = (2000 + 1000)/0.5 = 6000.
+    # Buys C 0.2·6000 = 1200, B 0.3·6000 − 1000 = 800, A 0.
+    plan = _sleeve({A: 0.5, B: 0.3, C: 0.2}, {A: 5000.0, B: 1000.0, C: 0.0}, set(),
+                   budget=2000.0, held={A, B})
+    assert plan.level == pytest.approx(6000.0)
+    assert plan.buys == pytest.approx({A: 0.0, B: 800.0, C: 1200.0})
+    assert sum(plan.buys.values()) == pytest.approx(2000.0)
+
+
+def test_sleeve_with_budget_reproduces_a_binding_residual_plan():
+    # Residual plan: A 57%, B 38% of the book, F untargeted (R = 5%). Values A 6000,
+    # B 1000, F 1000: the residual bound 1000/0.05 = 20000 binds (pins 10526.32,
+    # 2631.58), so C_min = 12000, A buys 0.57·20000 − 6000 = 5400, B 6600, F 0.
+    # The same targets as a sleeve (60/40, F frozen) with that €12000 budget give
+    # L = 7000 + 12000 = 19000 and the same buys.
+    values = {A: 6000.0, B: 1000.0, F: 1000.0}
+    residual = compute_rebalance({A: 0.57, B: 0.38}, values, frozenset(values))
+    sleeve = _sleeve({A: 0.6, B: 0.4}, values, {F}, budget=residual.c_min)
+    assert residual.c_min == pytest.approx(12000.0)
+    assert residual.buys == pytest.approx({A: 5400.0, B: 6600.0, F: 0.0})
+    assert sleeve.buys == pytest.approx(residual.buys)
+    assert sleeve.v_final == pytest.approx(residual.v_prime)
+
+
+def test_sleeve_unclassified_held_fund_is_unavailable():
+    plan = _sleeve({A: 1.0}, {A: 6000.0, F: 3000.0, G: 50.0}, {F})
+    assert not plan.feasible
+    assert plan.reason == "unclassified" and plan.unclassified == [G]
+
+
+def test_sleeve_target_unvaluable_comes_before_unclassified():
+    plan = _sleeve({A: 1.0}, {A: None, G: 50.0}, set())
+    assert plan.reason == "target_unvaluable" and plan.unvaluable_targets == [A]
+
+
+def test_sleeve_empty_without_budget_is_unavailable():
+    plan = _sleeve({A: 1.0}, {A: 0.0, F: 3000.0}, {F}, held={F})
+    assert not plan.feasible and plan.reason == "empty_sleeve"
+
+
+def test_sleeve_empty_with_budget_opens_the_sleeve():
+    plan = _sleeve({A: 0.75, B: 0.25}, {A: 0.0, B: 0.0, F: 3000.0}, {F},
+                   budget=1000.0, held={F})
+    assert plan.buys == pytest.approx({A: 750.0, B: 250.0, F: 0.0})
+
+
+def test_sleeve_frozen_fund_unheld_or_unvaluable_gets_no_row():
+    plan = _sleeve({A: 1.0}, {A: 6000.0, F: None}, {F, G})
+    assert plan.buys == pytest.approx({A: 0.0})
+    assert plan.v == pytest.approx(6000.0) and plan.frozen == frozenset()
+
+
+@pytest.mark.parametrize(
+    "targets, frozen, budget",
+    [({A: 0.6, B: 0.3}, set(), None), ({A: 1.0}, {A}, None), ({A: 1.0}, set(), -1.0)],
+)
+def test_sleeve_rejects_invalid_inputs(targets, frozen, budget):
+    with pytest.raises(ValueError):
+        _sleeve(targets, {A: 6000.0, B: 1000.0}, frozen, budget)
+
+
+def test_plan_rebalance_budget_needs_a_frozen_set():
+    from e1f.common import plan_rebalance
+    with pytest.raises(ValueError, match="frozen"):
+        plan_rebalance({A: 0.5}, {A: 1.0}, frozenset({A}), None, 100.0)
+
+
+def _sleeve_seed(tmp_path):
+    # A €6000, B €1000, F €3000 (frozen) — the pinned example above.
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-01", A, 100.0, 60.0),
+            _buy("t2", "2024-01-01", B, 100.0, 10.0),
+            _buy("t3", "2024-01-01", F, 100.0, 30.0),
+        ],
+        prices=[(A, "2024-01-01", 60.0), (B, "2024-01-01", 10.0), (F, "2024-01-01", 30.0)],
+        currencies={A: "EUR", B: "EUR", F: "EUR"},
+        names={A: "Fund A", B: "Fund B", F: "Fund F"},
+    )
+
+
+def test_main_sleeve_table_shows_subtotal_frozen_rows_and_book_share(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Sleeve%" in out and "Book%" in out
+    sleeve_row = next(line for line in out.splitlines() if line.startswith("SLEEVE"))
+    assert "7,000.00" in sleeve_row and "3,000.00" in sleeve_row and "76.9%" in sleeve_row
+    frozen_row = next(line for line in out.splitlines() if line.startswith(F))
+    assert "Fund F (frozen)" in frozen_row and "23.1%" in frozen_row
+    assert "Inject €3,000.00 to reach targets buy-only." in out
+    assert "Frozen: €3,000.00 · 30.0% of the book now → 23.1% after." in out
+
+
+def test_main_sleeve_budget_short_of_minimum_is_disclosed(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--monthly", "500", "--months", "2",
+                          "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert ("Budget €1,000.00 (€500.00 / month × 2) is €2,000.00 short of the €3,000.00"
+            in out)
+    a_row = next(line for line in out.splitlines() if line.startswith(A))
+    assert a_row.endswith("◄ no buy")
+
+
+def test_main_sleeve_scenario_with_monthly(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="s", targets={A: 60.0, B: 40.0}, months=2,
+                         frozen=(F,), monthly=2500.0)
+    code = reb.main(_args(db, config, meta, "--scenario", "s", "--scenarios-file", sf,
+                          "--as-of", "2024-01-01", "--explain"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Budget €5,000.00 (€2,500.00 / month × 2) reaches the targets" in out
+    assert "L = €12,000.00" in out and "buy_only_sleeve_v1" in out
+
+
+def test_main_sleeve_unclassified_message(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:100", "--frozen", F,
+                          "--as-of", "2024-01-01", "--explain"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"UNAVAILABLE — unclassified — held fund(s) are neither targeted nor frozen: {B}" in out
+    assert "Targets (Tgt% = of the non-frozen sleeve)" in out
+
+
+def test_main_empty_sleeve_message(tmp_path, capsys):
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{D}:100",
+                          "--frozen", A, "--frozen", B, "--frozen", F,
+                          "--as-of", "2024-01-01"))
+    assert code == 0
+    assert "UNAVAILABLE — empty_sleeve" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--target", f"{A}:60", "--monthly", "100"],                       # no sleeve
+        ["--target", f"{A}:60", "--frozen", F],                            # Σ ≠ 100
+        ["--target", f"{A}:100", "--frozen", A],                           # both
+        ["--target", f"{A}:100", "--frozen", F, "--frozen", F],            # dupe
+        ["--target", f"{A}:100", "--frozen", F, "--monthly", "0"],         # amount
+    ],
+)
+def test_argparse_sleeve_rejections(tmp_path, extra):
+    db, config, meta = _sleeve_seed(tmp_path)
+    with pytest.raises(SystemExit):
+        reb.main(_args(db, config, meta, *extra))
+
+
+def test_scenario_and_frozen_mutually_exclusive(tmp_path):
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = _write_scenario(tmp_path, name="s", targets={A: 100.0}, frozen=(F,))
+    with pytest.raises(SystemExit):
+        reb.main(_args(db, config, meta, "--scenario", "s", "--scenarios-file", sf,
+                       "--frozen", B))

@@ -822,6 +822,23 @@ def test_scenario_includes_diluted_residual_funds(tmp_path, capsys):
     assert "post-rebalance weights, 3 funds" in out
 
 
+def test_sleeve_scenario_keeps_frozen_funds_in_the_universe(tmp_path, capsys):
+    # A, B, C held; A targeted at 100% of the sleeve, B and C frozen (ADR-0060):
+    # nothing buys B or C, but they stay in the post-rebalance book.
+    from e1f.common import Scenario, save_scenario
+    returns = _pattern(70, 0)
+    db, meta = _seed_funds(tmp_path, {A: returns, B: returns, C: returns})
+    sf = str(tmp_path / "s.yaml")
+    save_scenario(Scenario(name="s", targets={A: 100.0}, frozen=(B, C), monthly=100.0), sf)
+    code = correlation.main([
+        "--db", db, "--currency-meta", meta, "--as-of", "2024-12-31",
+        "--scenario", "s", "--scenarios-file", sf,
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "post-rebalance weights, 3 funds" in out
+
+
 def test_scenario_infeasible_rebalance_is_unavailable(tmp_path, capsys):
     # A is the only held fund; targeting A:70 leaves a 30% residual with no
     # untargeted fund to absorb it → rebalance infeasible → correlation UNAVAILABLE.

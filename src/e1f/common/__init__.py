@@ -58,6 +58,8 @@ from .rebalance import (
     _FLOAT_CLAMP,
     assemble_rebalance_valuations,
     compute_rebalance,
+    compute_sleeve_rebalance,
+    plan_rebalance,
     post_rebalance_weights,
 )
 from .returns import (
@@ -122,6 +124,7 @@ __all__ = [
     "clip_price_frame",
     "close_asof",
     "compute_rebalance",
+    "compute_sleeve_rebalance",
     "consensus_gaps",
     "contribution_on",
     "contribution_to_return",
@@ -142,6 +145,7 @@ __all__ = [
     "load_scenarios",
     "load_trades",
     "pinned_quote_currency",
+    "plan_rebalance",
     "portfolio_isins",
     "portfolio_return_series",
     "position_asof",

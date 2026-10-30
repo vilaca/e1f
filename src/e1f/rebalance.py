@@ -9,9 +9,11 @@ Usage:
     e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40
     e1f rebalance --target IE00B4L5Y983:30 --target IE00BK5BQT80:40 --months 10
     e1f rebalance --target IE00B4L5Y983:30 --explain
+    e1f rebalance --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --frozen IE00B3YCGJ38
 """
 
 import argparse
+import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,13 +31,14 @@ from e1f.common import (
     _explain_metric,
     _FLOAT_CLAMP,
     assemble_rebalance_valuations as _assemble,
-    compute_rebalance,
+    compute_rebalance as compute_rebalance,  # re-exported (ADR-0017)
     get_scenario,
+    plan_rebalance,
 )
 
-_NAME_W = 24   # name column width; " (resid)" (8 chars) fits within it
+_NAME_W = 24   # name column width; " (resid)" / " (frozen)" fit within it
 _EUR_W = 12    # money columns: Current€, Buy€, Monthly€, Final€
-_PCT_W = 7     # percent columns: Cur%, Tgt%
+_PCT_W = 7     # percent columns: Cur% / Sleeve%, Tgt%, Book%
 _STATUS_W = 11
 SORT_FIELDS = ("isin", "name", "value", "weight", "tgt", "buy", "final")
 
@@ -53,6 +56,22 @@ REBALANCE_CONTRACT = MetricContract(
         "untargeted holdings share the residual pro-rata by current EUR value",
         "C_min is fresh cash to inject on top of current fund values; idle broker "
         "cash (e.g. XTB cash operations) is not a holding and is not counted",
+        "keyed by net-ISIN across brokers; which broker to buy at is not chosen",
+    ),
+)
+
+SLEEVE_CONTRACT = MetricContract(
+    method_version="buy_only_sleeve_v1",
+    requires=REBALANCE_CONTRACT.requires,
+    does_not_require=REBALANCE_CONTRACT.does_not_require,
+    supports=("minimum-cash or budgeted buy plan", "per-fund buy amounts",
+              "N-month DCA schedule", "feasibility verdict"),
+    limitations=(
+        "buy-only: an overweight holding is diluted, never sold",
+        "plan computed at the as-of snapshot; realized weights drift as prices move — re-run",
+        "targets are user-supplied, not optimized",
+        "frozen funds are never bought; their share of the book only shrinks",
+        "a budget below C_min leaves the most overweight funds above target",
         "keyed by net-ISIN across brokers; which broker to buy at is not chosen",
     ),
 )
@@ -79,6 +98,8 @@ class RebalanceRow:
     price_date: str | None
     estimated: bool     # price_date is not None and price_date < as_of
     status: Status
+    is_frozen: bool = False  # sleeve plan: never bought; cur_pct/t_pct unused
+    book_pct: float = 0.0    # sleeve plan: final_v / V' * 100
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +115,9 @@ def _fmt_pct(v: float) -> str:
     return f"{v:.1f}%"
 
 
-def _display_name(name: str, *, is_residual: bool) -> str:
+def _display_name(name: str, *, is_residual: bool, is_frozen: bool = False) -> str:
+    if is_frozen:
+        return f"{name[:(_NAME_W - 9)]} (frozen)"
     if is_residual:
         return f"{name[:(_NAME_W - 8)]} (resid)"
     return name[:_NAME_W]
@@ -105,37 +128,48 @@ def _display_name(name: str, *, is_residual: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _header_line(*, months: int, show_status: bool) -> str:
+def _header_line(*, months: int, show_status: bool, sleeve: bool = False) -> str:
     monthly = f" {'Monthly€':>{_EUR_W}}" if months > 1 else ""
     status = f" {'Status':>{_STATUS_W}}" if show_status else ""
+    cur = "Sleeve%" if sleeve else "Cur%"
+    book = f" {'Book%':>{_PCT_W}}" if sleeve else ""
     return (
-        f"{'ISIN':<14} {'Name':<{_NAME_W}} {'Current€':>{_EUR_W}} {'Cur%':>{_PCT_W}}"
+        f"{'ISIN':<14} {'Name':<{_NAME_W}} {'Current€':>{_EUR_W}} {cur:>{_PCT_W}}"
         f" {'Tgt%':>{_PCT_W}} {'Buy€':>{_EUR_W}}{monthly}"
-        f" {'Final€':>{_EUR_W}}{status}"
+        f" {'Final€':>{_EUR_W}}{book}{status}"
     )
 
 
-def _format_row(row: RebalanceRow, *, months: int, show_status: bool) -> str:
-    name_cell = _display_name(row.name, is_residual=row.is_residual)
+def _format_row(
+    row: RebalanceRow, *, months: int, show_status: bool, sleeve: bool = False,
+    marker: str = "◄ binds",
+) -> str:
+    name_cell = _display_name(row.name, is_residual=row.is_residual, is_frozen=row.is_frozen)
     money_cur = _fmt_money(row.v, stale=row.estimated)
     monthly = f" {_fmt_money(row.buy / months):>{_EUR_W}}" if months > 1 else ""
-    binder = "  ◄ binds" if row.is_binder else ""
+    binder = f"  {marker}" if row.is_binder else ""
     status = f" {row.status.value:>{_STATUS_W}}" if show_status else ""
+    cur, tgt = (
+        ("—", "—") if row.is_frozen else (_fmt_pct(row.cur_pct), _fmt_pct(row.t_pct))
+    )
+    book = f" {_fmt_pct(row.book_pct):>{_PCT_W}}" if sleeve else ""
     return (
         f"{row.isin:<14} {name_cell:<{_NAME_W}}"
-        f" {money_cur:>{_EUR_W}} {_fmt_pct(row.cur_pct):>{_PCT_W}}"
-        f" {_fmt_pct(row.t_pct):>{_PCT_W}} {_fmt_money(row.buy):>{_EUR_W}}{monthly}"
-        f" {_fmt_money(row.final_v):>{_EUR_W}}{status}{binder}"
+        f" {money_cur:>{_EUR_W}} {cur:>{_PCT_W}}"
+        f" {tgt:>{_PCT_W}} {_fmt_money(row.buy):>{_EUR_W}}{monthly}"
+        f" {_fmt_money(row.final_v):>{_EUR_W}}{book}{status}{binder}"
     )
 
 
-def _rule_width(*, months: int, show_status: bool) -> int:
+def _rule_width(*, months: int, show_status: bool, sleeve: bool = False) -> int:
     # 14 (ISIN) + 1 + NAME_W + 1 + EUR_W + 1 + PCT_W (Cur) + 1 + PCT_W (Tgt)
-    # + 1 + EUR_W (Buy) + [1+EUR_W (Monthly)] + 1 + EUR_W (Final)
+    # + 1 + EUR_W (Buy) + [1+EUR_W (Monthly)] + 1 + EUR_W (Final) + [1+PCT_W (Book)]
     w = 14 + 1 + _NAME_W + 1 + _EUR_W + 1 + _PCT_W + 1 + _PCT_W + 1 + _EUR_W
     w += 1 + _EUR_W  # Final€
     if months > 1:
         w += 1 + _EUR_W
+    if sleeve:
+        w += 1 + _PCT_W
     if show_status:
         w += 1 + _STATUS_W
     return w
@@ -239,25 +273,136 @@ def render_table(
     # Footer: untargeted unvaluable (excluded from table, disclosed here)
     footer = ", ".join(untargeted_unvaluable) if untargeted_unvaluable else "—"
     lines.append(f"Untargeted (unvaluable, excluded): {footer}")
+    lines.extend(_stale_lines(stale_rows, as_of))
+    return lines
 
-    # Stale-close disclosure (~ rows)
-    if stale_rows:
-        if len(stale_rows) == 1:
-            row = stale_rows[0]
-            lines.append(
-                f"\n~ Current€ estimated: no close on {as_of} — "
-                f"freshest data is {row.price_date} for {row.isin} (fetch to refresh)."
-            )
+
+def _stale_lines(stale_rows: list[RebalanceRow], as_of: str) -> list[str]:
+    """Stale-close disclosure for the ``~`` rows."""
+    if not stale_rows:
+        return []
+    if len(stale_rows) == 1:
+        row = stale_rows[0]
+        return [
+            f"\n~ Current€ estimated: no close on {as_of} — "
+            f"freshest data is {row.price_date} for {row.isin} (fetch to refresh)."
+        ]
+    items = ", ".join(
+        f"{row.isin} ({row.price_date})" for row in sorted(stale_rows, key=lambda r: r.isin)
+    )
+    return [
+        f"\n~ Current€ estimated from the latest price before {as_of} "
+        f"(no close on the as-of day — fetch to refresh): {items}"
+    ]
+
+
+def _cash_phrase(amount: float, months: int) -> str:
+    phrase = f"€{_fmt_money(amount)}"
+    if months > 1:
+        phrase += f" (€{_fmt_money(amount / months)} / month × {months})"
+    return phrase
+
+
+def render_sleeve_targets(
+    targets: dict[str, float], frozen: tuple[str, ...], names: dict[str, str]
+) -> list[str]:
+    """Recap of a sleeve plan's inputs, shown when the plan is UNAVAILABLE (ADR-0060)."""
+    rule = "-" * (14 + 1 + _NAME_W + 1 + _PCT_W)
+    lines = [
+        "Targets (Tgt% = of the non-frozen sleeve):",
+        "",
+        f"{'ISIN':<14} {'Name':<{_NAME_W}} {'Tgt%':>{_PCT_W}}",
+        rule,
+    ]
+    for isin, frac in sorted(targets.items(), key=lambda kv: (-kv[1], kv[0])):
+        lines.append(
+            f"{isin:<14} {names.get(isin, ''):<{_NAME_W}} {_fmt_pct(frac * 100):>{_PCT_W}}"
+        )
+    lines.append(rule)
+    lines.append(f"{'TOTAL':<14} {'':<{_NAME_W}} {_fmt_pct(sum(targets.values()) * 100):>{_PCT_W}}")
+    lines.append(f"Frozen (never bought): {', '.join(sorted(frozen)) or '—'}")
+    return lines
+
+
+def render_sleeve_table(
+    rows: list[RebalanceRow],
+    plan: RebalancePlan,
+    *,
+    as_of: str,
+    months: int,
+    show_status: bool,
+    frozen_unvaluable: list[str],
+    stale_rows: list[RebalanceRow],
+) -> list[str]:
+    """Render a feasible sleeve plan (ADR-0060): active rows, a SLEEVE subtotal,
+    frozen rows and the book TOTAL."""
+    dca = f"   ·   DCA: {months} month{'s' if months > 1 else ''}" if months > 1 else ""
+    lines: list[str] = [
+        f"\nBuy-only rebalance of the non-frozen sleeve as of {as_of} (EUR){dca}",
+        "Sleeve% and Tgt% are of the sleeve, Book% of the whole book after buying;"
+        " frozen funds are never bought.",
+        "",
+        _header_line(months=months, show_status=show_status, sleeve=True),
+    ]
+    rule = "-" * _rule_width(months=months, show_status=show_status, sleeve=True)
+    marker = "◄ no buy" if plan.shortfall > 0.0 else "◄ binds"
+    lines.append(rule)
+    for row in (r for r in rows if not r.is_frozen):
+        lines.append(_format_row(row, months=months, show_status=show_status, sleeve=True,
+                                 marker=marker))
+    lines.append(rule)
+
+    v_final = plan.v_final
+    monthly = f" {_fmt_money(plan.injection / months):>{_EUR_W}}" if months > 1 else ""
+    status = f" {'':>{_STATUS_W}}" if show_status else ""
+
+    def total(label: str, current: float, cur: str, tgt: str, final: float) -> str:
+        book = _fmt_pct(100.0 * final / v_final if v_final > 0.0 else 0.0)
+        return (
+            f"{label:<14} {'':>{_NAME_W}} {_fmt_money(current):>{_EUR_W}}"
+            f" {cur:>{_PCT_W}} {tgt:>{_PCT_W}} {_fmt_money(plan.injection):>{_EUR_W}}"
+            f"{monthly} {_fmt_money(final):>{_EUR_W}} {book:>{_PCT_W}}{status}"
+        )
+
+    frozen_rows = [r for r in rows if r.is_frozen]
+    if frozen_rows:
+        lines.append(total("SLEEVE", plan.sleeve_v, _fmt_pct(100.0), _fmt_pct(100.0),
+                           plan.level))
+        lines.append(rule)
+        for row in frozen_rows:
+            lines.append(_format_row(row, months=months, show_status=show_status, sleeve=True))
+        lines.append(rule)
+    lines.append(total("TOTAL", plan.v, "", "", v_final))
+    lines.append("")
+
+    if plan.budget is None:
+        if plan.c_min <= 0.0:
+            lines.append("Sleeve already at target — no purchases needed.")
         else:
-            items = ", ".join(
-                f"{row.isin} ({row.price_date})"
-                for row in sorted(stale_rows, key=lambda r: r.isin)
-            )
             lines.append(
-                f"\n~ Current€ estimated from the latest price before {as_of} "
-                f"(no close on the as-of day — fetch to refresh): {items}"
+                f"Inject {_cash_phrase(plan.c_min, months)} to reach targets buy-only."
             )
+    elif plan.shortfall > 0.0:
+        lines.append(
+            f"Budget {_cash_phrase(plan.budget, months)} is €{_fmt_money(plan.shortfall)}"
+            f" short of the €{_fmt_money(plan.c_min)} that reaches the targets: buys close"
+            f" the largest gaps first and ◄ funds stay above target."
+        )
+    else:
+        lines.append(
+            f"Budget {_cash_phrase(plan.budget, months)} reaches the targets buy-only"
+            f" (minimum €{_fmt_money(plan.c_min)})."
+        )
 
+    frozen_v = plan.v - plan.sleeve_v
+    if frozen_rows and plan.v > 0.0:
+        lines.append(
+            f"Frozen: €{_fmt_money(frozen_v)} · {_fmt_pct(100.0 * frozen_v / plan.v)} of the"
+            f" book now → {_fmt_pct(100.0 * frozen_v / v_final)} after."
+        )
+    footer = ", ".join(frozen_unvaluable) if frozen_unvaluable else "—"
+    lines.append(f"Frozen (unvaluable, excluded): {footer}")
+    lines.extend(_stale_lines(stale_rows, as_of))
     return lines
 
 
@@ -274,6 +419,9 @@ def render_explain(
     infeasible plans.
     """
     lines = ["\nProvenance (--explain) — reconstructed from source, not a log:"]
+    if plan.sleeve:
+        lines.extend(_explain_sleeve(plan, targets, months=months))
+        return lines
 
     if not plan.feasible:
         lines.extend(_explain_metric(
@@ -329,6 +477,52 @@ def render_explain(
         REBALANCE_CONTRACT,
     ))
     return lines
+
+
+_SLEEVE_METHOD = (
+    "L solves Σ max(0, s_i·L − v_i) = B, with B = C_min = max(v_i/s_i) − S when no "
+    "budget is set; c_i = max(0, s_i·L − v_i); frozen funds get no buy (ADR-0060)"
+)
+
+
+def _explain_sleeve(
+    plan: RebalancePlan, targets: dict[str, float], *, months: int
+) -> list[str]:
+    """The --explain block for a sleeve plan (ADR-0060)."""
+    if not plan.feasible:
+        affected = plan.unvaluable_targets or plan.unclassified
+        return _explain_metric(
+            "Buy-only sleeve plan",
+            Status.UNAVAILABLE,
+            f"UNAVAILABLE ({plan.reason})"
+            + (f" — affected: {', '.join(affected)}" if affected else ""),
+            f"feasibility check: {plan.reason}",
+            "every held fund is targeted or frozen; the sleeve has a value or a budget",
+            SLEEVE_CONTRACT,
+        )
+    binders = ", ".join(
+        f"{isin} (v/s = {plan.level * targets[isin]:.2f}/{targets[isin]:.4f})"
+        if plan.shortfall <= 0.0 else isin
+        for isin in plan.binders
+    ) or "none (the budget is above C_min)"
+    budget = (
+        "none (B = C_min)" if plan.budget is None
+        else _cash_phrase(plan.budget, months)
+    )
+    result = (
+        f"V = €{_fmt_money(plan.v)} · S = €{_fmt_money(plan.sleeve_v)} · "
+        f"L = €{_fmt_money(plan.level)} · C_min = €{_fmt_money(plan.c_min)} · "
+        f"budget: {budget} · "
+        + ("no buy" if plan.shortfall > 0.0 else "binding")
+        + f": {binders}"
+    )
+    inputs = (
+        f"sleeve targets: {list(targets)} · frozen held: {sorted(plan.frozen)}"
+    )
+    return _explain_metric(
+        "Buy-only sleeve plan", Status.CALCULATED, result, inputs, _SLEEVE_METHOD,
+        SLEEVE_CONTRACT,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +592,42 @@ def _build_rows(
     return rows
 
 
+def _build_sleeve_rows(
+    plan: RebalancePlan,
+    targets: dict[str, float],
+    values: dict[str, float | None],
+    price_dates: dict[str, str | None],
+    config_path: str,
+    as_of: str,
+) -> list[RebalanceRow]:
+    """Display rows of a sleeve plan: targeted funds by Tgt%, then frozen by Current€."""
+    v_final = plan.v_final
+    rows: list[RebalanceRow] = []
+    for isin, buy in plan.buys.items():
+        is_frozen = isin in plan.frozen
+        v_cur = values.get(isin) or 0.0
+        pd = price_dates.get(isin)
+        rows.append(RebalanceRow(
+            isin=isin,
+            name=_etf_name(config_path, isin),
+            v=v_cur,
+            cur_pct=(100.0 * v_cur / plan.sleeve_v
+                     if plan.sleeve_v > 0.0 and not is_frozen else 0.0),
+            t_pct=0.0 if is_frozen else 100.0 * targets[isin],
+            buy=buy,
+            final_v=v_cur + buy,
+            is_residual=False,
+            is_binder=isin in plan.binders,
+            price_date=pd,
+            estimated=pd is not None and pd < as_of,
+            status=Status.CALCULATED,
+            is_frozen=is_frozen,
+            book_pct=100.0 * (v_cur + buy) / v_final if v_final > 0.0 else 0.0,
+        ))
+    rows.sort(key=lambda r: (r.is_frozen, -r.v if r.is_frozen else -r.t_pct, r.isin))
+    return rows
+
+
 def _column_sort_key(row: RebalanceRow, sort_by: str) -> str | float:
     if sort_by == "isin":
         return row.isin
@@ -450,6 +680,16 @@ def _reason_message(plan: RebalancePlan, targets: dict[str, float]) -> str:
             f"fund to absorb it.  Add a target covering the gap (so Σ targets = 100%), "
             f"or hold a valued untargeted fund."
         )
+    if plan.reason == "unclassified":
+        return (
+            f"unclassified — held fund(s) are neither targeted nor frozen: "
+            f"{', '.join(plan.unclassified)}.  Give each a target or add it to 'frozen'."
+        )
+    if plan.reason == "empty_sleeve":
+        return (
+            "empty_sleeve — no targeted fund is held and no budget is set.  Set "
+            "'monthly' in the scenario (or --monthly) to open the sleeve."
+        )
     return plan.reason or "unknown"
 
 
@@ -465,6 +705,8 @@ def _cmd_rebalance(
     explain: bool,
     sort_by: str | None = None,
     reverse: bool = False,
+    frozen: tuple[str, ...] | None = None,
+    budget: float | None = None,
 ) -> int:
     show_status = show_status or explain
 
@@ -472,10 +714,15 @@ def _cmd_rebalance(
     values, held, untargeted_unvaluable, price_dates = _assemble(
         db_path, currency_meta_path, targets, as_of
     )
-    plan = compute_rebalance(targets, values, held)
+    plan = plan_rebalance(
+        targets, values, held, None if frozen is None else frozenset(frozen), budget
+    )
 
     names = {isin: _etf_name(config_path, isin) for isin in targets}
-    target_summary = render_target_summary(targets, names)
+    target_summary = (
+        render_target_summary(targets, names) if frozen is None
+        else render_sleeve_targets(targets, frozen, names)
+    )
 
     if not plan.feasible:
         print(f"\nBuy-only rebalance as of {as_of} (EUR)\n")
@@ -487,22 +734,34 @@ def _cmd_rebalance(
                 print(line)
         return 0
 
-    rows = _build_rows(plan, targets, values, price_dates, config_path, as_of)
+    build = _build_rows if frozen is None else _build_sleeve_rows
+    rows = build(plan, targets, values, price_dates, config_path, as_of)
     if sort_by is not None:
         rows = sort_rows(rows, sort_by=sort_by, reverse=reverse)
     elif reverse:
         rows.reverse()
     stale_rows = [r for r in rows if r.estimated]
 
-    for line in render_table(
-        rows, plan,
-        as_of=as_of,
-        months=months,
-        show_status=show_status,
-        untargeted_unvaluable=untargeted_unvaluable,
-        stale_rows=stale_rows,
-        target_summary=target_summary,
-    ):
+    if frozen is None:
+        lines = render_table(
+            rows, plan,
+            as_of=as_of,
+            months=months,
+            show_status=show_status,
+            untargeted_unvaluable=untargeted_unvaluable,
+            stale_rows=stale_rows,
+            target_summary=target_summary,
+        )
+    else:
+        lines = render_sleeve_table(
+            rows, plan,
+            as_of=as_of,
+            months=months,
+            show_status=show_status,
+            frozen_unvaluable=untargeted_unvaluable,
+            stale_rows=stale_rows,
+        )
+    for line in lines:
         print(line)
 
     if explain:
@@ -540,6 +799,16 @@ def _parse_target(text: str) -> tuple[str, float]:
     return isin, pct
 
 
+def _positive_amount(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not math.isfinite(value) or value <= 0.0:
+        raise argparse.ArgumentTypeError(f"must be a finite amount > 0 (got {text})")
+    return value
+
+
 def _int_at_least(minimum: int) -> Callable[[str], int]:
     def parse(text: str) -> int:
         try:
@@ -575,6 +844,13 @@ Targets are percentages of the WHOLE VALUED BOOK, not of a named sleeve.
   If Σ targets = 100%% while valued untargeted funds exist, the plan is
   UNAVAILABLE (residual_full) — target those funds or lower the sum below 100%%.
 
+Sleeve plans (ADR-0060): --frozen ISIN (or a scenario's 'frozen' list) names
+  funds that are never bought. Targets are then percents of the non-frozen
+  sleeve and must sum to 100%%; every other held fund must be targeted
+  (else UNAVAILABLE: unclassified). --monthly EUR sets a budget of EUR × months:
+  above C_min it is spread to keep the targets; below C_min it closes the
+  largest gaps first. Without a budget the plan injects C_min.
+
 Buy-only: an overweight fund is diluted by buying more of everything else — it
   is never sold. A badly overweight fund can force a large cash injection.
 
@@ -597,6 +873,8 @@ Examples:
   e1f rebalance --scenario core
   e1f rebalance --scenario core --months 6 --explain
   e1f rebalance --target IE00B4L5Y983:30 --sort buy --reverse
+  e1f rebalance --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --frozen IE00B3YCGJ38
+  e1f rebalance --scenario core --monthly 2500
         """,
     )
     parser.add_argument(
@@ -607,6 +885,21 @@ Examples:
         type=_parse_target,
         help="Target weight — repeatable. PCT is a percent of the whole valued book in "
         "(0, 100] (e.g. 30 = 30%%). Percents are of the WHOLE book.",
+    )
+    parser.add_argument(
+        "--frozen",
+        metavar="ISIN",
+        action="append",
+        help="A held fund that is never bought — repeatable; makes this a sleeve plan "
+        "whose targets are percents of the non-frozen funds and sum to 100 (ADR-0060).",
+    )
+    parser.add_argument(
+        "--monthly",
+        type=_positive_amount,
+        default=None,
+        metavar="EUR",
+        help="Sleeve plans: invest EUR per month (× --months) instead of C_min. "
+        "Overrides a scenario's stored monthly.",
     )
     parser.add_argument(
         "--months",
@@ -670,12 +963,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # Resolve the target source: --scenario or --target (never both).
-    if args.scenario and args.targets:
-        parser.error("--scenario and --target are mutually exclusive")
+    # Resolve the target source: --scenario or --target / --frozen (never both).
+    if args.scenario and (args.targets or args.frozen):
+        parser.error("--scenario and --target / --frozen are mutually exclusive")
 
     targets_raw: list[tuple[str, float]]
     scenario_months: int | None = None
+    frozen: tuple[str, ...] | None
+    monthly: float | None = args.monthly
     if args.scenario:
         try:
             scenario = get_scenario(args.scenario, args.scenarios_file)
@@ -683,8 +978,12 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(e))
         targets_raw = sorted(scenario.targets.items())
         scenario_months = scenario.months
+        frozen = scenario.frozen
+        if monthly is None:
+            monthly = scenario.monthly
     else:
         targets_raw = args.targets or []
+        frozen = tuple(args.frozen) if args.frozen else None
 
     # Post-parse cross-arg checks (cannot live in per-arg type=)
     if not targets_raw:
@@ -693,11 +992,25 @@ def main(argv: list[str] | None = None) -> int:
     if len(isins) != len(set(isins)):
         parser.error("duplicate ISIN in targets")
     total_pct = sum(pct for _, pct in targets_raw)
-    if total_pct > 100.0 + 1e-9:
-        parser.error(f"target percentages sum to {total_pct:.2f}% — must not exceed 100%")
+    if frozen is None:
+        if total_pct > 100.0 + 1e-9:
+            parser.error(f"target percentages sum to {total_pct:.2f}% — must not exceed 100%")
+        if monthly is not None:
+            parser.error("--monthly needs a sleeve plan (--frozen, or a scenario with 'frozen')")
+    else:
+        if abs(total_pct - 100.0) > 1e-6:
+            parser.error(
+                f"target percentages sum to {total_pct:.2f}% — with frozen funds they are "
+                f"of the non-frozen sleeve and must sum to 100%"
+            )
+        if len(set(frozen)) != len(frozen):
+            parser.error("duplicate ISIN in frozen funds")
+        if set(frozen) & set(isins):
+            parser.error("a fund cannot be both targeted and frozen")
 
     # --months (CLI) overrides a scenario's stored months; default lump-sum is 1.
     months = args.months if args.months is not None else (scenario_months or 1)
+    budget = None if monthly is None else monthly * months
 
     try:
         _validate_as_of(args.as_of)
@@ -712,6 +1025,8 @@ def main(argv: list[str] | None = None) -> int:
             explain=args.explain,
             sort_by=args.sort,
             reverse=args.reverse,
+            frozen=frozen,
+            budget=budget,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

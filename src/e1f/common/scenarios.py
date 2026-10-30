@@ -13,15 +13,25 @@ from .persistence import atomic_write_yaml
 
 @dataclass(frozen=True)
 class Scenario:
-    """A named basket: ISIN → target percent (of the whole book), plus an optional
-    default DCA horizon in months (consumed by ``rebalance``; ignored by
-    ``correlation``).  ``targets`` percents are the raw stored values in (0, 100];
-    validation of the set (dupes, Σ ≤ 100) lives with the writers/consumers.
+    """A named basket: ISIN → target percent, plus an optional default DCA horizon
+    in months (consumed by ``rebalance``; ignored by ``correlation``).
+
+    Without ``frozen`` the percents are of the whole book and Σ ≤ 100 (ADR-0017).
+    With ``frozen`` (possibly empty) the scenario is a sleeve plan (ADR-0060): the
+    frozen funds are never bought, the percents are of the non-frozen sleeve and
+    Σ = 100, and ``monthly`` optionally sets the EUR budget per month.
     """
 
     name: str
     targets: dict[str, float]
     months: int | None = None
+    frozen: tuple[str, ...] | None = None
+    monthly: float | None = None
+
+    @property
+    def budget(self) -> float | None:
+        """Total EUR to invest: ``monthly`` × months (1 without months), or None."""
+        return None if self.monthly is None else self.monthly * (self.months or 1)
 
 
 class ScenarioError(Exception):
@@ -57,7 +67,16 @@ def _parse_scenario(name: str, body: Any, path: str) -> Scenario:
             raise ScenarioError(
                 f"{path}: scenario {name!r} target {isin!r} has non-numeric percent {pct!r}"
             ) from None
-    scenario = Scenario(name=name, targets=targets, months=body.get("months"))
+    frozen_raw = body.get("frozen")
+    if frozen_raw is not None and not isinstance(frozen_raw, list):
+        raise ScenarioError(f"{path}: scenario {name!r} 'frozen' must be a list of ISINs")
+    scenario = Scenario(
+        name=name,
+        targets=targets,
+        months=body.get("months"),
+        frozen=None if frozen_raw is None else tuple(str(isin) for isin in frozen_raw),
+        monthly=body.get("monthly"),
+    )
     _validate_scenario(scenario, path)
     return scenario
 
@@ -78,10 +97,31 @@ def _validate_scenario(scenario: Scenario, path: str) -> None:
                 f"{prefix} target {isin!r} percent must be finite and in (0, 100]"
             )
     total = sum(float(pct) for pct in scenario.targets.values())
-    if total > 100.0 + 1e-9:
+    if scenario.frozen is None and total > 100.0 + 1e-9:
         raise ScenarioError(
             f"{prefix} target percentages sum to {total:.2f}% — must not exceed 100%"
         )
+    if scenario.frozen is not None:
+        if abs(total - 100.0) > 1e-6:
+            raise ScenarioError(
+                f"{prefix} target percentages sum to {total:.2f}% — with 'frozen' they "
+                f"are of the non-frozen sleeve and must sum to 100%"
+            )
+        if len(set(scenario.frozen)) != len(scenario.frozen):
+            raise ScenarioError(f"{prefix} lists a frozen ISIN twice")
+        both = sorted(set(scenario.frozen) & set(scenario.targets))
+        if both:
+            raise ScenarioError(f"{prefix} ISIN(s) both targeted and frozen: {', '.join(both)}")
+    if scenario.monthly is not None:
+        if (
+            isinstance(scenario.monthly, bool)
+            or not isinstance(scenario.monthly, (int, float))
+            or not math.isfinite(float(scenario.monthly))
+            or scenario.monthly <= 0.0
+        ):
+            raise ScenarioError(f"{prefix} 'monthly' must be a finite amount > 0")
+        if scenario.frozen is None:
+            raise ScenarioError(f"{prefix} 'monthly' needs 'frozen' (a sleeve plan)")
     if scenario.months is not None and (
         isinstance(scenario.months, bool)
         or not isinstance(scenario.months, int)
@@ -128,5 +168,9 @@ def _scenario_to_yaml(scenario: Scenario) -> dict[str, Any]:
     entry: dict[str, Any] = {}
     if scenario.months is not None:
         entry["months"] = scenario.months
+    if scenario.monthly is not None:
+        entry["monthly"] = scenario.monthly
+    if scenario.frozen is not None:
+        entry["frozen"] = list(scenario.frozen)
     entry["targets"] = dict(scenario.targets)
     return entry

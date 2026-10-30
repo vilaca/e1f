@@ -36,6 +36,10 @@ optional `months` (the DCA horizon `rebalance` accepts). `correlation` reads the
 targets and ignores `months`. No other command-specific knobs are stored — a
 scenario is a *basket*, not a saved command line.
 
+A scenario with a `frozen` list is a sleeve plan (ADR-0060): its percents are of
+the non-frozen funds and sum to 100, and it may store a `monthly` budget. The
+frozen list and the budget describe the basket, so both consumers read them.
+
 ### 2. One file, many scenarios
 
 All scenarios live in a single `data/scenarios.yaml`, keyed by name:
@@ -55,10 +59,10 @@ on the consumers).
 
 ### 3. The `scenario` command only manages the file
 
-`e1f scenario save NAME --target … [--months N]`, `list`, `show NAME`, `delete
+`e1f scenario save NAME --target … [--months N] [--frozen ISIN …] [--monthly EUR]`, `list`, `show NAME`, `delete
 NAME`. It never runs an analysis — recall is the consumers' job. `save` upserts
-one entry (preserving the rest) and re-validates dupes and the Σ ≤ 100 bound, so
-a stored basket is always a legal `rebalance` input.
+one entry (preserving the rest) and re-validates dupes and the Σ bound (≤ 100, or
+= 100 with `frozen`), so a stored basket is always a legal `rebalance` input.
 
 ### 4. Recall is a flag on each consumer, not dispatch from `scenario`
 

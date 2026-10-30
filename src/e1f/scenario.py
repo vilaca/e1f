@@ -7,12 +7,14 @@ own ``--scenario NAME`` flag.
 
 Usage:
     e1f scenario save core --target IE00BM67HK77:12 --target IE0003XJA0J9:40 --months 10
+    e1f scenario save core --target IE0003XJA0J9:100 --frozen IE00B3YCGJ38 --monthly 2500
     e1f scenario list
     e1f scenario show core
     e1f scenario delete core
 """
 
 import argparse
+import math
 import sys
 from collections.abc import Callable
 
@@ -53,6 +55,16 @@ def _parse_target(text: str) -> tuple[str, float]:
     return isin, pct
 
 
+def _positive_amount(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not math.isfinite(value) or value <= 0.0:
+        raise argparse.ArgumentTypeError(f"must be a finite amount > 0 (got {text})")
+    return value
+
+
 def _int_at_least(minimum: int) -> Callable[[str], int]:
     def parse(text: str) -> int:
         try:
@@ -71,6 +83,8 @@ def _cmd_save(
     targets_raw: list[tuple[str, float]],
     months: int | None,
     scenarios_path: str,
+    frozen: list[str] | None = None,
+    monthly: float | None = None,
 ) -> int:
     if not targets_raw:
         print("✗ Error: at least one --target ISIN:PCT is required")
@@ -80,20 +94,38 @@ def _cmd_save(
         print("✗ Error: duplicate ISIN in --target arguments")
         return 1
     total_pct = sum(pct for _, pct in targets_raw)
-    if total_pct > 100.0 + 1e-9:
+    if frozen is None and total_pct > 100.0 + 1e-9:
         print(f"✗ Error: target percentages sum to {total_pct:.2f}% — must not exceed 100%")
         return 1
 
-    scenario = Scenario(name=name, targets=dict(targets_raw), months=months)
+    scenario = Scenario(
+        name=name,
+        targets=dict(targets_raw),
+        months=months,
+        frozen=None if frozen is None else tuple(frozen),
+        monthly=monthly,
+    )
     existed = save_scenario(scenario, scenarios_path)
     verb = "Updated" if existed else "Saved"
-    months_note = f", {months} month(s)" if months is not None else ""
-    print(
-        f"✓ {verb} scenario {name!r} "
-        f"({len(targets_raw)} target(s), Σ {total_pct:.1f}%{months_note})"
-    )
+    print(f"✓ {verb} scenario {name!r} ({_summary(scenario)})")
     print(f"  {scenarios_path}")
     return 0
+
+
+def _summary(scenario: Scenario) -> str:
+    """One-line shape: target count and Σ, frozen count, months, monthly budget."""
+    total = sum(scenario.targets.values())
+    parts = [f"{len(scenario.targets)} target(s)"]
+    if scenario.frozen is None:
+        parts.append(f"Σ {total:.1f}%")
+    else:
+        parts.append(f"Σ {total:.1f}% of sleeve")
+        parts.append(f"{len(scenario.frozen)} frozen")
+    if scenario.months is not None:
+        parts.append(f"{scenario.months} month(s)")
+    if scenario.monthly is not None:
+        parts.append(f"€{scenario.monthly:,.2f}/month")
+    return " · ".join(parts)
 
 
 def _cmd_list(scenarios_path: str) -> int:
@@ -104,10 +136,7 @@ def _cmd_list(scenarios_path: str) -> int:
         return 0
     print(f"Scenarios in {scenarios_path}:\n")
     for name in sorted(scenarios):
-        s = scenarios[name]
-        total = sum(s.targets.values())
-        months_note = f" · {s.months} month(s)" if s.months is not None else ""
-        print(f"  {name:<20} {len(s.targets)} target(s) · Σ {total:.1f}%{months_note}")
+        print(f"  {name:<20} {_summary(scenarios[name])}")
     return 0
 
 
@@ -118,14 +147,25 @@ def _cmd_show(name: str, scenarios_path: str, config_path: str) -> int:
     print(f"Scenario {name!r} (from {scenarios_path}):")
     if scenario.months is not None:
         print(f"  DCA months: {scenario.months}")
+    if scenario.monthly is not None:
+        print(f"  Monthly budget: €{scenario.monthly:,.2f}")
+    if scenario.frozen is not None:
+        print("  Tgt% is of the non-frozen sleeve")
+
+    def fund_name(isin: str) -> str:
+        return str((config.get(isin) or {}).get("name", ""))[:_NAME_W]
+
     print()
     print(f"  {'ISIN':<14} {'Name':<{_NAME_W}} {'Tgt%':>7}")
     print("  " + "-" * (14 + 1 + _NAME_W + 1 + 7))
     for isin, pct in sorted(scenario.targets.items(), key=lambda kv: (-kv[1], kv[0])):
-        fund_name = str((config.get(isin) or {}).get("name", ""))[:_NAME_W]
-        print(f"  {isin:<14} {fund_name:<{_NAME_W}} {pct:>6.1f}%")
+        print(f"  {isin:<14} {fund_name(isin):<{_NAME_W}} {pct:>6.1f}%")
     print("  " + "-" * (14 + 1 + _NAME_W + 1 + 7))
     print(f"  {'TOTAL':<14} {'':<{_NAME_W}} {total:>6.1f}%")
+    if scenario.frozen is not None:
+        print("\n  Frozen (never bought):" + ("" if scenario.frozen else " —"))
+        for isin in scenario.frozen:
+            print(f"  {isin:<14} {fund_name(isin)}")
     return 0
 
 
@@ -143,8 +183,10 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 A scenario is a named basket of target weights (percent of the whole book), with
-an optional default DCA horizon. This command only writes the file; run the plan
-with the consumers:
+an optional default DCA horizon. With --frozen it is a sleeve plan instead: the
+frozen funds are never bought, the targets are percents of the other funds and
+sum to 100, and --monthly stores a monthly budget (ADR-0060). This command only
+writes the file; run the plan with the consumers:
 
   e1f scenario save core --target IE00BM67HK77:12 --target IE0003XJA0J9:40 --months 10
   e1f rebalance --scenario core
@@ -175,6 +217,20 @@ Examples:
         default=None,
         metavar="N",
         help="Default DCA horizon stored with the scenario (rebalance uses it; ≥ 1).",
+    )
+    save_parser.add_argument(
+        "--frozen",
+        metavar="ISIN",
+        action="append",
+        help="A fund that is never bought — repeatable. Makes the scenario a sleeve plan: "
+        "PCT is then a percent of the non-frozen sleeve and the targets sum to 100 (ADR-0060).",
+    )
+    save_parser.add_argument(
+        "--monthly",
+        type=_positive_amount,
+        default=None,
+        metavar="EUR",
+        help="Monthly budget stored with a sleeve scenario (rebalance invests EUR × months).",
     )
     save_parser.add_argument(
         "--file", default=DEFAULT_SCENARIOS, help="Scenarios YAML file path"
@@ -213,7 +269,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "save":
-            return _cmd_save(args.name, args.targets or [], args.months, args.file)
+            return _cmd_save(args.name, args.targets or [], args.months, args.file,
+                             args.frozen, args.monthly)
         if args.command == "list":
             return _cmd_list(args.file)
         if args.command == "show":

@@ -51,10 +51,10 @@ from e1f.common import (
     Status,
     _explain_metric,
     assemble_rebalance_valuations,
-    compute_rebalance,
     eur_return_series,
     fund_eur_value,
     get_scenario,
+    plan_rebalance,
     portfolio_isins,
     post_rebalance_weights,
 )
@@ -753,17 +753,24 @@ def _cmd_correlation(
     pair: list[str],
     scenario_name: str | None = None,
     scenario_targets: dict[str, float] | None = None,
+    scenario_frozen: tuple[str, ...] | None = None,
+    scenario_budget: float | None = None,
 ) -> int:
     isins: list[str] | None = None
     weights: dict[str, float] | None = None
 
     if scenario_targets is not None:
         # Correlate the POST-rebalance portfolio the scenario implies (ADR-0017):
-        # run the buy-only plan, then weight by each fund's final EUR value.
+        # run the buy-only plan (a sleeve plan with frozen funds, ADR-0060), then
+        # weight by each fund's final EUR value.
         values, held_set, _untargeted, _price_dates = assemble_rebalance_valuations(
             db_path, currency_meta_path, scenario_targets, as_of
         )
-        plan = compute_rebalance(scenario_targets, values, held_set)
+        plan = plan_rebalance(
+            scenario_targets, values, held_set,
+            None if scenario_frozen is None else frozenset(scenario_frozen),
+            scenario_budget,
+        )
         if not plan.feasible:
             print(f"\nReturn co-movement — ADR-0015 (as of {as_of})")
             print(
@@ -960,12 +967,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give exactly two held-fund ISINs to reconstruct a pair (or none)")
 
     scenario_targets: dict[str, float] | None = None
+    scenario_frozen: tuple[str, ...] | None = None
+    scenario_budget: float | None = None
     if args.scenario:
         try:
             scenario = get_scenario(args.scenario, args.scenarios_file)
         except Exception as e:  # noqa: BLE001 — surface as a clean parser error
             parser.error(str(e))
         scenario_targets = {isin: pct / 100.0 for isin, pct in scenario.targets.items()}
+        scenario_frozen = scenario.frozen
+        scenario_budget = scenario.budget
 
     try:
         _validate_as_of(args.as_of)
@@ -983,6 +994,8 @@ def main(argv: list[str] | None = None) -> int:
             pair=args.pair,
             scenario_name=args.scenario,
             scenario_targets=scenario_targets,
+            scenario_frozen=scenario_frozen,
+            scenario_budget=scenario_budget,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

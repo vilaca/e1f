@@ -13,6 +13,10 @@ siblings and imports from `common` only the shared valuation/FX/status core
 Slogan: **you name the destination; `rebalance` computes the cheapest way to
 walk there without ever taking a step backward (a sale).**
 
+This ADR defines the **residual plan**: targets are percents of the whole book.
+A plan with frozen funds, sleeve targets and a budget is ADR-0060's **sleeve
+plan**, which reuses decisions 1, 6, 7 and 8.
+
 ## Context
 
 Every analytical command so far — `concentration` (ADR-0012), `overlap`
@@ -199,8 +203,8 @@ reasons (each is a distinct, separately-tested state):
 - **`empty_portfolio`** — no fund has a positive **valued** anchor, i.e. `V = 0`
   (an empty book, *or* every held fund unvaluable). The min-cash formula degenerates
   to weights `0/0` — that is **not a rebalance**; there is no current mix to walk
-  from. Reported UNAVAILABLE. Opening a book from nothing is the deferred **budget
-  mode**, not a degenerate success.
+  from. Reported UNAVAILABLE. Opening a book from nothing needs a budget, which only
+  a sleeve plan has (ADR-0060).
 - **`residual_full`** — `Σt_i = 100%` (`R = 0`) while valued untargeted funds
   exist (`v_rest > 0`): the residual has no room. Reported UNAVAILABLE: either
   target those funds or lower `Σt_i` below 100%.
@@ -554,10 +558,9 @@ argparse failures and IO/parse exceptions exit non-zero (ADR-0009 is the
   `etf_universe.yaml` pattern) with a `rebalance set` helper, so targets are
   stored and reused rather than re-typed. A UX wrapper over this same core;
   chosen against for v1 (decision 2).
-- **A budget / overshoot mode** — injecting *more* than `C_min` (e.g. a fixed
-  monthly amount) and distributing the surplus, or the inverse query "given
-  €X/month, how many months to reach the goal?". Both are straightforward
-  extensions of the `V'_min` core.
+- **A budget for the residual plan, and the inverse query** "given €X/month, how
+  many months to reach the goal?". Sleeve plans take a budget (ADR-0060); the
+  residual plan always injects `C_min`.
 - **Share-denominated buys** — converting EUR buy amounts to whole/fractional
   shares at current prices (needs a price for every targeted fund and a rounding
   policy); v1 states buys in EUR only.

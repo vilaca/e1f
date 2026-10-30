@@ -91,6 +91,15 @@ def test_get_missing_raises(tmp_path):
             "must not exceed 100%",
         ),
         ({"scenarios": {"core": {"targets": {A: 50}, "months": 0}}}, "integer >= 1"),
+        ({"scenarios": {"core": {"targets": {A: 90}, "frozen": []}}}, "must sum to 100%"),
+        ({"scenarios": {"core": {"targets": {A: 100}, "frozen": B}}}, "list of ISINs"),
+        ({"scenarios": {"core": {"targets": {A: 100}, "frozen": [B, B]}}}, "frozen ISIN twice"),
+        ({"scenarios": {"core": {"targets": {A: 100}, "frozen": [A]}}}, "targeted and frozen"),
+        ({"scenarios": {"core": {"targets": {A: 50}, "monthly": 100}}}, "needs 'frozen'"),
+        (
+            {"scenarios": {"core": {"targets": {A: 100}, "frozen": [], "monthly": 0}}},
+            "finite amount > 0",
+        ),
     ],
 )
 def test_malformed_file_raises(tmp_path, body, match):
@@ -98,6 +107,20 @@ def test_malformed_file_raises(tmp_path, body, match):
     path.write_text(yaml.dump(body))
     with pytest.raises(ScenarioError, match=match):
         load_scenarios(str(path))
+
+
+def test_sleeve_scenario_roundtrip_and_budget(tmp_path):
+    path = str(tmp_path / "s.yaml")
+    save_scenario(Scenario("s", {A: 60.0, B: 40.0}, months=12, frozen=(C,), monthly=250.0),
+                  path)
+    stored = yaml.safe_load((tmp_path / "s.yaml").read_text())["scenarios"]["s"]
+    assert stored == {"months": 12, "monthly": 250.0, "frozen": [C],
+                      "targets": {A: 60.0, B: 40.0}}
+    loaded = get_scenario("s", path)
+    assert loaded.frozen == (C,) and loaded.monthly == 250.0
+    assert loaded.budget == 3000.0
+    assert Scenario("x", {A: 100.0}, frozen=(), monthly=250.0).budget == 250.0
+    assert Scenario("x", {A: 50.0}).budget is None
 
 
 def test_save_rejects_invalid_scenario(tmp_path):
@@ -212,3 +235,27 @@ def test_parse_target_rejections():
         scn._parse_target(f"{A}:x")
     with pytest.raises(scn.argparse.ArgumentTypeError):
         scn._parse_target(f"{A}:0")
+
+
+def test_cmd_save_show_list_sleeve_scenario(tmp_path, capsys):
+    path = str(tmp_path / "s.yaml")
+    config = _cfg(tmp_path, {A: "Fund A", C: "Fund C"})
+    assert scn.main(["save", "s", "--target", f"{A}:100", "--frozen", C,
+                     "--monthly", "250", "--months", "12", "--file", path]) == 0
+    assert ("1 target(s) · Σ 100.0% of sleeve · 1 frozen · 12 month(s) · €250.00/month"
+            in capsys.readouterr().out)
+
+    assert scn.main(["show", "s", "--file", path, "--config", config]) == 0
+    out = capsys.readouterr().out
+    assert "Monthly budget: €250.00" in out and "of the non-frozen sleeve" in out
+    assert "Frozen (never bought):" in out and "Fund C" in out
+
+    assert scn.main(["list", "--file", path]) == 0
+    assert "1 frozen" in capsys.readouterr().out
+
+
+def test_cmd_save_sleeve_rejects_sum_not_100(tmp_path, capsys):
+    code = scn.main(["save", "s", "--target", f"{A}:90", "--frozen", C,
+                     "--file", str(tmp_path / "s.yaml")])
+    assert code == 1
+    assert "must sum to 100%" in capsys.readouterr().out
