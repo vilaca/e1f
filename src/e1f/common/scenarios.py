@@ -14,7 +14,8 @@ from .persistence import atomic_write_yaml
 @dataclass(frozen=True)
 class Category:
     """A named group of a sleeve scenario's funds (ADR-0061): ``pct`` percent of the
-    sleeve, split by fixed ``funds`` shares (ISIN → percent of the category, Σ 100)."""
+    sleeve, split by fixed ``funds`` shares (ISIN → percent of the category, Σ 100).
+    A share of 0 lists a fund under the category without buying it (it is frozen)."""
 
     name: str
     pct: float
@@ -22,12 +23,21 @@ class Category:
 
 
 def category_targets(categories: tuple[Category, ...]) -> dict[str, float]:
-    """The flat sleeve targets the categories imply: ``pct × share / 100`` per fund."""
+    """The flat sleeve targets the categories imply: ``pct × share / 100`` per fund,
+    leaving out the funds a category lists at share 0."""
     return {
         isin: category.pct * share / 100.0
         for category in categories
         for isin, share in category.funds.items()
+        if share > 0.0
     }
+
+
+def zero_share_funds(categories: tuple[Category, ...]) -> tuple[str, ...]:
+    """The funds listed at share 0 in some category, in scenario order."""
+    return tuple(
+        isin for category in categories for isin, share in category.funds.items() if share == 0.0
+    )
 
 
 @dataclass(frozen=True)
@@ -61,7 +71,10 @@ class Scenario:
         frozen: tuple[str, ...] | None = None,
         monthly: float | None = None,
     ) -> Scenario:
-        """A scenario whose ``targets`` are derived from ``categories``."""
+        """A scenario whose ``targets`` are derived from ``categories``; the funds at
+        share 0 are added to ``frozen`` (the plan never buys them)."""
+        if frozen is not None:
+            frozen = (*frozen, *zero_share_funds(categories))
         return cls(name, category_targets(categories), months, frozen, monthly, categories)
 
     @property
@@ -177,8 +190,8 @@ def _validate_categories(scenario: Scenario, prefix: str) -> None:
         if not category.funds:
             raise ScenarioError(f"{label} needs a non-empty 'funds' mapping")
         for isin, share in category.funds.items():
-            if not _is_percent(share):
-                raise ScenarioError(f"{label} fund {isin!r} share must be finite and in (0, 100]")
+            if not (share == 0.0 or _is_percent(share)):
+                raise ScenarioError(f"{label} fund {isin!r} share must be finite and in [0, 100]")
             if isin in seen:
                 raise ScenarioError(f"{prefix} fund {isin!r} is in more than one category")
             seen.add(isin)
@@ -199,6 +212,9 @@ def _validate_categories(scenario: Scenario, prefix: str) -> None:
         for isin, pct in implied.items()
     ):
         raise ScenarioError(f"{prefix} targets do not match its categories")
+    unfrozen = sorted(set(zero_share_funds(categories)) - set(scenario.frozen))
+    if unfrozen:
+        raise ScenarioError(f"{prefix} share-0 fund(s) must be frozen: {', '.join(unfrozen)}")
 
 
 def _validate_scenario(scenario: Scenario, path: str) -> None:
@@ -288,7 +304,8 @@ def _scenario_to_yaml(scenario: Scenario) -> dict[str, Any]:
     if scenario.monthly is not None:
         entry["monthly"] = scenario.monthly
     if scenario.frozen is not None:
-        entry["frozen"] = list(scenario.frozen)
+        implied = set(zero_share_funds(scenario.categories or ()))
+        entry["frozen"] = [isin for isin in scenario.frozen if isin not in implied]
     if scenario.categories is None:
         entry["targets"] = dict(scenario.targets)
     else:

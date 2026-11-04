@@ -7,6 +7,8 @@ exit 0); `correlation` gains a disclosed `BOUNDED` status on every pair involvin
 a flagged fund. No change to stored prices, no auto-correction, no substitution of
 one horizon's ρ for another's.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 `validate`'s existing checks are all **coverage and level** checks: duplicate

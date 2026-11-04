@@ -6,6 +6,8 @@ at which EUR returns are sampled before any statistic is computed. Default stays
 `daily` — no existing output changes. Resampling is non-overlapping and anchored
 at the window end.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 Every return statistic in e1f is computed from **daily** EUR returns. That was an

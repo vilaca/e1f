@@ -4,7 +4,7 @@
 Where `concentration` (v1a) reports *within-fund* concentration one fund at a
 time and deliberately refuses to sum a name across funds, `overlap` establishes
 *cross-fund* single-name exposure: "how much Apple do I really hold when several
-funds each carry it?" New module `src/e1f/overlap.py` at the command layer
+funds each carry it?" New module `src/e1f/experimental/overlap.py` at the command layer
 (ADR-0003: `cli → command → common`). Builds directly on v1a's immutable
 look-through snapshots (ADR-0012 decision 5) and the EUR valuation path from
 `performance` (ADR-0011), both consumed through `common`.
@@ -387,7 +387,7 @@ no numbering collision and no gap (CLAUDE.md: one ADR per decision, no gaps).
 
 ## Consequences
 
-- New module `src/e1f/overlap.py` with subcommands `resolve`, `candidates`, and
+- New module `src/e1f/experimental/overlap.py` with subcommands `resolve`, `candidates`, and
   the bare floor report; wired into `cli.py` `COMMANDS` / `PARSER_FACTORIES`, the
   import-linter `layers` list (`pyproject.toml`), the CLI epilog, and autocomplete;
   `tests/test_contracts.py::test_cli_commands_surface` updated.

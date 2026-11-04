@@ -1306,6 +1306,32 @@ def test_main_category_table_groups_funds_under_subtotals(tmp_path, capsys):
                                       "76.9%"]
 
 
+def test_main_share_zero_fund_is_listed_under_its_category_and_never_bought(tmp_path, capsys):
+    # The same sleeve as above with F listed in "rest" at share 0: the plan is
+    # unchanged (F stays frozen, 3000 of V' = 13000 → 23.1%) and F's row sits under
+    # "rest" instead of in the frozen block; the category subtotal ignores it.
+    from e1f.common import Category, Scenario, save_scenario
+    db, config, meta = _sleeve_seed(tmp_path)
+    sf = str(tmp_path / "s.yaml")
+    save_scenario(Scenario.from_categories(
+        "g",
+        (Category("core", 60.0, {A: 100.0}),
+         Category("rest", 40.0, {B: 75.0, D: 25.0, F: 0.0})),
+        frozen=(),
+    ), sf)
+    code = reb.main(_args(db, config, meta, "--scenario", "g", "--scenarios-file", sf,
+                          "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    block = _plan_block(out)
+    assert [ln.split()[0] for ln in block] == ["core", A, "rest", B, D, F]
+    assert block[2].split() == ["rest", "1,000.00", "14.3%", "40.0%", "3,000.00", "4,000.00",
+                                "30.8%"]
+    assert block[5].split()[-6:] == ["3,000.00", "—", "—", "0.00", "3,000.00", "23.1%"]
+    tail = out.split("SLEEVE", 1)[1]
+    assert F not in tail  # not repeated in the frozen block
+
+
 def test_main_category_monthly_column_and_sort_within_category(tmp_path, capsys):
     db, config, meta = _sleeve_seed(tmp_path)
     sf = _category_scenario(tmp_path, months=2)

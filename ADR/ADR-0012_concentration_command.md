@@ -4,7 +4,7 @@
 (HHI, effective holdings, top-N share), sector concentration, and asset-class
 split for the held ETFs, each reported with an explicit coverage figure and, for
 the security dimension, rank-constrained bounds on the unobserved tail. New
-module `src/e1f/concentration.py` at the command layer (ADR-0003:
+module `src/e1f/experimental/concentration.py` at the command layer (ADR-0003:
 `cli → command → common`). Builds on the yfinance dependency (ADR-0001) and the
 EUR valuation / weight path from `performance` (ADR-0011).
 

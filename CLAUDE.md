@@ -31,14 +31,14 @@ src/e1f/
   rebalance.py      — buy-only target rebalance + DCA plan
   scenario.py       — CRUD for named ISIN:pct baskets
   glossary.py       — metric definitions (data/glossary.md)
-  backtest.py       — contribution-timing strategy evaluation (ADR-0019 through ADR-0023)
-  lookthrough.py    — refresh cached yfinance look-through snapshots for held funds
-  concentration.py  — within-fund concentration (security, sector, asset-class)
-  overlap.py        — cross-fund single-name exposure floor
-  seasonality.py    — calendar-month effects and pre-specified/frozen-OOS rules (ADR-0026 through ADR-0028)
-  limitbuy.py       — buy-limit orders: close-only bound + daily-bar estimate (ADR-0055, ADR-0057)
   common/           — shared primitives; commands import from `e1f.common` (ADR-0025)
   experimental/     — isolated experimental tier; one-way import boundary (ADR-0024)
+    backtest.py       — contribution-timing strategy evaluation (ADR-0019 through ADR-0023)
+    lookthrough.py    — refresh cached yfinance look-through snapshots for held funds
+    concentration.py  — within-fund concentration (security, sector, asset-class)
+    overlap.py        — cross-fund single-name exposure floor
+    seasonality.py    — calendar-month effects and pre-specified/frozen-OOS rules (ADR-0026 through ADR-0028)
+    limitbuy.py       — buy-limit orders: close-only bound + daily-bar estimate (ADR-0055, ADR-0057)
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
   currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs

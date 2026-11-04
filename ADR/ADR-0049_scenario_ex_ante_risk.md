@@ -6,6 +6,8 @@ risk consequence, not just its cash requirement. Static-weight, in-sample,
 explicitly not a backtest. Reuses ADR-0017 scenario resolution and the same
 final-EUR weighting `correlation --scenario` (ADR-0015) already established.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 The scenario toolchain currently answers *what to buy* and *what moves together*,

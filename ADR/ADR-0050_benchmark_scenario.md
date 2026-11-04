@@ -5,6 +5,8 @@ information ratio, RelStr and Out% can be computed for the book a scenario
 implies, against the same benchmark ETFs. No new statistics — the existing
 estimators, applied to the ADR-0049 static-weight series.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 `--scenario` reached `rebalance` (ADR-0016/0017) and `correlation` (ADR-0015), and

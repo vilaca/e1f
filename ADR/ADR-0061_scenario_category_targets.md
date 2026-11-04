@@ -40,6 +40,11 @@ scenarios:
   renormalised, so the stored numbers are the ones the plan uses.
 - A fund sits in only one category, and a frozen fund in none. A one-fund category
   is written `{ISIN: 100}`. There is no shorthand.
+- A share of 0 lists a fund under its category without buying it, such as a held
+  fund of that kind. It has no target and counts as frozen: `Scenario.from_categories`
+  adds it to `frozen`, and a save leaves it out of the stored `frozen` list, so the
+  category is its one home. It must be a valid ISIN in no other category. A 0
+  category percent is still refused.
 - The effective sleeve target is `pct × share / 100`. Load, save and every consumer
   use these flat `targets`, so ADR-0060's plan, feasibility checks and `--explain`
   apply unchanged.
@@ -60,11 +65,13 @@ one, as any save replaces the stored scenario.
   order, between the header and the `SLEEVE` subtotal. The row shows `Current€`,
   `Sleeve%`, `Tgt%` (the category percent), `Buy€`, `Monthly€`, `Final€` and `Book%`
   for the category. Fund rows are indented under it and show their effective
-  sleeve `Tgt%`. `--sort` and `--reverse` reorder funds within their category, and
+  sleeve `Tgt%`. A share-0 fund's row follows its funds, shown as frozen, and is
+  left out of the subtotal and of the frozen block below `SLEEVE`. `--sort` and `--reverse` reorder funds within their category, and
   categories keep scenario order. When the plan is UNAVAILABLE, the target recap is
   grouped the same way.
 - **`scenario show`** prints the tree: each category with its percent, then its
-  funds with the effective `Tgt%` and their `Share%` of the category. `scenario
+  funds with the effective `Tgt%` and their `Share%` of the category. Share-0 funds
+  are not repeated under `Frozen`. `scenario
   list` adds the category count.
 
 ## Consequences

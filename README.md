@@ -66,7 +66,7 @@ walled off so no stable command depends on them:
 - **`e1f transactions`** — ingest ETF trades from broker exports (Trade Republic CSV, XTB Excel) and list stored trades.
 - **`e1f portfolio`** — open ETF holdings per broker from `transactions`; `--show-cost-basis` adds FX-converted EUR market value, and the estimated annual fee and weighted-average TER are weighted by market value (ADR-0032).
 - **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; see `e1f glossary` for metric definitions and `e1f performance --help` for report modes.
-- **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs; see the glossary for the reported metrics and ADR-0033 for the benchmark set and overlap policy.
+- **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs; see the glossary for the reported metrics and ADR-0033 and ADR-0039 for the benchmark set and overlap policy.
 - **`e1f deposits`** — compare invested capital with reported value and inspect each deposit's impact. `--against` / `--against-portfolio` / `--against-all` replay those buys onto other ISINs (ADR-0054). Buy-and-hold totals reconcile with the `performance` TOTAL (ADR-0033).
 - **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 - **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
@@ -136,7 +136,7 @@ e1f performance --show-status        # + per-holding provenance Status column (A
 e1f performance --explain            # + per-holding provenance blocks (implies --show-status)
 
 # Benchmark the book against broad indices (EUR, time-weighted; ADR-0033)
-e1f benchmark                        # vs the seven defaults (MSCI World, MSCI Europe, WEBN, S&P 500, MSCI ACWI, ACWI IMI, FTSE All-World)
+e1f benchmark                        # vs the default benchmark set (_DEFAULT_BENCHMARK_LABELS in src/e1f/benchmark.py)
 e1f benchmark --against IE00B5BMR087,IE00B4K48X80  # a custom benchmark set by ISIN
 e1f benchmark --all                  # every ISIN in the price DB (ADR-0044)
 e1f benchmark --min-overlap 60       # demand ~a quarter-year of shared history
@@ -212,13 +212,7 @@ e1f limitbuy --isin IE0003XJA0J9 --explain             # + assumptions/provenanc
 Defaults (from `src/e1f/common/defaults.py`): config `data/etf_universe.yaml`, database
 `data/e1f.db`, fetch start date `2000-01-01` (earlier than any ETF inception, so
 the first fetch returns each ETF's full history). Paths resolve against the
-project root, so commands work from any directory. Flag overrides are per command
-— `e1f config --help`, `e1f fetch --help`, `e1f transactions --help`,
-`e1f portfolio --help`, `e1f performance --help`, `e1f correlation --help`,
-`e1f rebalance --help`, `e1f scenario --help`, `e1f validate --help`, and for the
-experimental tier `e1f lookthrough --help`, `e1f concentration --help`,
-`e1f overlap --help`, `e1f backtest --help`, `e1f seasonality --help`,
-`e1f limitbuy --help`.
+project root, so commands work from any directory. Flag overrides are per command — see `e1f <command> --help`.
 
 ## Price sources
 

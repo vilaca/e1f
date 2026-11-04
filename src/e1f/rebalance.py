@@ -323,10 +323,10 @@ def render_sleeve_targets(
     ]
 
     def fund_lines(isins: list[str], indent: str) -> list[str]:
-        ordered = sorted(isins, key=lambda isin: (-targets[isin], isin))
+        ordered = sorted(isins, key=lambda isin: (-targets.get(isin, 0.0), isin))
         return [
             f"{indent + isin:<14} {names.get(isin, ''):<{_NAME_W}}"
-            f" {_fmt_pct(targets[isin] * 100):>{_PCT_W}}"
+            f" {_fmt_pct(targets.get(isin, 0.0) * 100):>{_PCT_W}}"
             for isin in ordered
         ]
 
@@ -395,10 +395,12 @@ def render_sleeve_table(
         for category in categories:
             members = [r for r in active if r.isin in category.funds]
             current = sum(r.v for r in members)
+            held_back = [r for r in rows if r.is_frozen and r.isin in category.funds]
             cur = _fmt_pct(100.0 * current / plan.sleeve_v if plan.sleeve_v > 0.0 else 0.0)
             lines.append(total(category.name, current, cur, _fmt_pct(category.pct),
                                sum(r.buy for r in members), sum(r.final_v for r in members)))
             lines.extend(fund_line(row, indent=True) for row in members)
+            lines.extend(fund_line(row, indent=True) for row in held_back)
     lines.append(rule)
 
     frozen_rows = [r for r in rows if r.is_frozen]
@@ -406,9 +408,12 @@ def render_sleeve_table(
         lines.append(total("SLEEVE", plan.sleeve_v, _fmt_pct(100.0), _fmt_pct(100.0),
                            plan.injection, plan.level))
         lines.append(rule)
-        for row in frozen_rows:
+        listed = {isin for c in categories or () for isin in c.funds}
+        apart = [r for r in frozen_rows if r.isin not in listed]
+        for row in apart:
             lines.append(_format_row(row, months=months, show_status=show_status, sleeve=True))
-        lines.append(rule)
+        if apart:
+            lines.append(rule)
     lines.append(total("TOTAL", plan.v, "", "", plan.injection, v_final))
     lines.append("")
 

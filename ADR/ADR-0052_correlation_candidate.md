@@ -6,6 +6,8 @@ current book, without requiring a scenario to be saved first. Candidates carry
 zero weight and are reported in their own section, never mixed into the
 weight-gated redundancy flags.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 `correlation` reports the held book; `correlation --scenario` reports a

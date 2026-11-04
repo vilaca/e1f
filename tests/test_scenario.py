@@ -293,6 +293,26 @@ def test_category_scenario_derives_targets_and_roundtrips(tmp_path):
     assert get_scenario("g", path) == scenario
 
 
+def test_share_zero_fund_is_listed_but_frozen_and_roundtrips(tmp_path):
+    from e1f.common import Category
+    path = str(tmp_path / "s.yaml")
+    scenario = Scenario.from_categories(
+        "g", (Category("core", 60.0, {A: 100.0}), Category("rest", 40.0, {B: 100.0, C: 0.0})),
+        frozen=(),
+    )
+    assert scenario.targets == {A: 60.0, B: 40.0}
+    assert scenario.frozen == (C,)
+    save_scenario(scenario, path)
+    stored = yaml.safe_load((tmp_path / "s.yaml").read_text())["scenarios"]["g"]
+    assert stored["frozen"] == []  # the share-0 fund is implied by its category
+    assert stored["categories"]["rest"]["funds"] == {B: 100.0, C: 0.0}
+    assert get_scenario("g", path) == scenario
+    unfrozen = Scenario("g", {A: 60.0, B: 40.0}, frozen=(),
+                        categories=scenario.categories)
+    with pytest.raises(ScenarioError, match=r"share-0 fund.*must be frozen"):
+        save_scenario(unfrozen, path)
+
+
 def test_category_scenario_keeps_yaml_order(tmp_path):
     path = tmp_path / "s.yaml"
     path.write_text(
@@ -321,7 +341,7 @@ def _cat(pct, funds):
         ({"frozen": [], "categories": {"c": _cat("x", {A: 100})}}, "non-numeric 'pct'"),
         ({"frozen": [], "categories": {"c": _cat(100, {A: "x"})}}, "non-numeric percent"),
         ({"frozen": [], "categories": {"c": _cat(0, {A: 100})}}, "'pct' must be finite"),
-        ({"frozen": [], "categories": {"c": _cat(100, {A: 0})}}, "share must be finite"),
+        ({"frozen": [], "categories": {"c": _cat(100, {A: -5})}}, "share must be finite"),
         ({"frozen": [], "categories": {"c": _cat(90, {A: 100})}},
          "category percentages sum to 90.00%"),
         ({"frozen": [], "categories": {"c": _cat(100, {A: 60, B: 30})}},

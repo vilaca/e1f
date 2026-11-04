@@ -5,6 +5,8 @@ mean, distance from the 200-day mean, and distance from the trailing 52-week hig
 — computed on the gap-bridged EUR series the command already builds. Plus the
 glossary entry that states what they do **not** mean.
 
+**Not yet implemented:** the design below is not in the tree.
+
 ## Context
 
 `funds` reports what a fund *returned* over a window (TWR, Vol, MaxDD) and how

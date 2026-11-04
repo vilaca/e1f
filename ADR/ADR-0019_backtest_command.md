@@ -6,7 +6,7 @@
 return (XIRR), and interim drawdown — so the standing question *"does shifting
 predetermined monthly contributions toward market dips beat a constant DCA,
 after paying the opportunity cost of holding cash?"* can be answered on evidence
-rather than intuition. One self-contained module `src/e1f/backtest.py`, joining
+rather than intuition. One self-contained module `src/e1f/experimental/backtest.py`, joining
 the command siblings under ADR-0003's `cli → command modules → common` contract.
 The period-loop / reserve arithmetic and the XIRR solver live in `common`
 (decisions 2, 9); the command owns EUR-series assembly, the CLI, and rendering.
@@ -304,7 +304,7 @@ MetricContract(
 
 ## Consequences
 
-- One new flat module `src/e1f/backtest.py`; wired into `cli.py`
+- One new module `src/e1f/experimental/backtest.py`; wired into `cli.py`
   `COMMANDS` / `PARSER_FACTORIES`, the CLI epilog,
   `tests/test_contracts.py::test_cli_commands_surface`, and the import-linter
   `layers` command siblings (one line, no new layer).

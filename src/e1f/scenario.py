@@ -161,7 +161,7 @@ def _cmd_show(name: str, scenarios_path: str, config_path: str) -> int:
         return str((config.get(isin) or {}).get("name", ""))[:_NAME_W]
 
     def by_target(isins: list[str]) -> list[str]:
-        return sorted(isins, key=lambda isin: (-scenario.targets[isin], isin))
+        return sorted(isins, key=lambda isin: (-scenario.targets.get(isin, 0.0), isin))
 
     label_w = 14 + 1 + _NAME_W
     share = f" {'Share%':>7}" if scenario.categories is not None else ""
@@ -177,12 +177,14 @@ def _cmd_show(name: str, scenarios_path: str, config_path: str) -> int:
             print(f"  {category.name[:label_w]:<{label_w}} {category.pct:>6.1f}%")
             for isin in by_target(list(category.funds)):
                 print(f"  {'  ' + isin:<14} {fund_name(isin):<{_NAME_W}}"
-                      f" {scenario.targets[isin]:>6.1f}% {category.funds[isin]:>6.1f}%")
+                      f" {scenario.targets.get(isin, 0.0):>6.1f}% {category.funds[isin]:>6.1f}%")
     print(rule)
     print(f"  {'TOTAL':<14} {'':<{_NAME_W}} {total:>6.1f}%")
     if scenario.frozen is not None:
-        print("\n  Frozen (never bought):" + ("" if scenario.frozen else " —"))
-        for isin in scenario.frozen:
+        listed = {isin for c in scenario.categories or () for isin in c.funds}
+        apart = [isin for isin in scenario.frozen if isin not in listed]
+        print("\n  Frozen (never bought):" + ("" if apart else " —"))
+        for isin in apart:
             print(f"  {isin:<14} {fund_name(isin)}")
     return 0
 
