@@ -220,7 +220,9 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
             {
                 "DDdur": "DDdur",
                 "SinceHi": "SinceHi",
-                "Underwtr": "Underwtr",
+                "CurDD": "CurDD",
+                "UnderTot": "UnderTot",
+                "Ulcer": "Ulcer",
                 "RecFac": "RecFac",
                 "Best": "Best",
                 "Worst": "Worst",
@@ -324,7 +326,9 @@ def test_shipped_glossary_column_aliases_resolve():
     assert names("RecFac") == ["Recovery Factor (RecFac)"]
     assert names("SinceHi") == ["Days Since High (SinceHi)"]
     assert names("DDdur") == ["MaxDD Duration (DDdur)"]
-    assert names("Underwtr") == ["Underwater (Underwtr)"]
+    assert names("UnderTot") == ["Underwater (UnderTot)"]
+    assert names("CurDD") == ["Current Drawdown (CurDD)"]
+    assert names("Ulcer") == ["Ulcer Index (Ulcer)"]
     best_worst = ["Best Day / Worst Day (Best / Worst)", "Best Month / Worst Month"]
     assert names("Best") == best_worst
     assert names("Worst") == best_worst

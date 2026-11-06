@@ -57,6 +57,20 @@ data-backed today, and defer the rest **on the record** rather than approximatin
     day is itself a new high), distinct from MaxDD Duration (which tracks the
     *deepest* episode); the two coincide only while the deepest drawdown is also the
     open one. Surfaced in `--metrics` and as the `SinceHi` column under `--series`.
+  - Current Drawdown (`CurDD`, last day's wealth ÷ running peak − 1) and Ulcer Index
+    (`Ulcer`, root-mean-square of the daily drawdown; peak seeded at 1.0 like MaxDD).
+    Both in `--metrics` and `--series`. The series total of underwater days is
+    labelled `UnderTot` there, since it is cumulative and never resets.
+  - Hit Rate (share of daily returns above zero) and historical CVaR 5%
+    (`ceil(5% × n)` worst daily returns averaged, at least one; no distribution
+    assumed). `--metrics` only: the `--series` table is already wide.
+  - Profit/loss split chart (`--series N --chart --chart-split`): per day, the
+    holdings are split by the sign of their EUR P&L into a profit side and a loss
+    side (a fund at zero is on neither). Three panels: summed P&L per side with net,
+    fund count per side, and each side's cost-weighted return (summed P&L ÷ summed
+    cost; loss side as a magnitude) with the share of cost in loss-side funds on a
+    right axis. Reuses the per-holding `pnl_eur`/`cost` series; no new math. A fund
+    switches side as it crosses zero, so the lines can jump without a trade.
   - Best/Worst Month — calendar-month buckets of the daily time-weighted return
     series, chain-linked (partial first/last months included), labelled `YYYY-MM`.
     In the `--metrics` "Extremes" block alongside Best/Worst Day.

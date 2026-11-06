@@ -119,6 +119,40 @@ def test_extended_metrics_drawdown_recovery_and_extremes():
     assert ext.gain_loss_ratio == pytest.approx((132.0 / 90.0 - 1.0) / 0.25)
 
 
+def test_extended_metrics_current_drawdown_and_ulcer_index():
+    # Recovered path: wealth 1.00, 1.20, 0.90, 1.32 → daily drawdowns 0, 0, -25%, 0.
+    ext = extended_metrics(_DD_POINTS, risk_metrics(_DD_POINTS).twr)
+    assert ext.current_drawdown == 0.0
+    assert ext.ulcer_index == pytest.approx((0.25**2 / 4) ** 0.5)  # 0.125
+    # Same path cut before recovery: still 25% under the 1.20 peak, over 3 days.
+    open_dip = _DD_POINTS[:3]
+    ext = extended_metrics(open_dip, risk_metrics(open_dip).twr)
+    assert ext.current_drawdown == pytest.approx(-0.25)
+    assert ext.ulcer_index == pytest.approx((0.25**2 / 3) ** 0.5)
+
+
+def test_extended_metrics_hit_rate_and_cvar():
+    # Daily returns 0 (seed day), +20%, -25%, +46.67%: two of four are up (a flat day is
+    # a miss); with n=4 the 5% tail holds ceil(0.2)=1 observation, so CVaR is the worst day.
+    ext = extended_metrics(_DD_POINTS, risk_metrics(_DD_POINTS).twr)
+    assert ext.hit_rate == pytest.approx(0.5)
+    assert ext.cvar_5 == pytest.approx(-0.25)
+
+
+def test_cvar_averages_the_worst_ceil_tail():
+    returns = [0.01] * 17 + [-0.10, -0.20, -0.02] + [0.0]    # n=21 → ceil(1.05)=2 worst
+    assert perf._cvar(returns, 0.05) == pytest.approx((-0.20 + -0.10) / 2)
+    assert perf._cvar([], 0.05) is None
+
+
+def test_extended_metrics_depth_metrics_none_without_series():
+    ext = extended_metrics([], None)
+    assert ext.current_drawdown is None
+    assert ext.ulcer_index is None
+    assert ext.hit_rate is None
+    assert ext.cvar_5 is None
+
+
 def test_extended_metrics_maxdd_agrees_with_risk_metrics():
     # The two must never disagree — same time-weighted return recurrence.
     risk = risk_metrics(_DD_POINTS)
@@ -1870,8 +1904,10 @@ def _ext_metrics(**overrides):
     base = dict(
         max_drawdown=-0.1, max_dd_duration_days=1, max_dd_peak_date="2024-01-01",
         max_dd_recovery_date="2024-01-02", max_dd_ongoing=False, underwater_days=1,
-        days_since_high=0, recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
+        days_since_high=0, current_drawdown=0.0, ulcer_index=0.05,
+        recovery_factor=1.0, best_day=0.1, best_day_date="2024-01-02",
         worst_day=-0.1, worst_day_date="2024-01-01", gain_loss_ratio=1.0,
+        hit_rate=0.6, cvar_5=-0.1,
         best_month=0.1, best_month_label="2024-01", worst_month=-0.1,
         worst_month_label="2024-01", trailing_1m=0.05, trailing_3m=None, trailing_6m=None,
     )
@@ -2426,3 +2462,85 @@ def test_chart_metric_pweight_with_isin_series_uses_full_book_denominator(tmp_pa
     out = capsys.readouterr().out
     assert code == 0
     assert "Chart saved to" in out
+
+
+def test_fmt_pct_rounds_tiny_negative_to_plain_zero():
+    assert perf._fmt_pct(-0.0004) == "0.0%"      # -0.04% rounds to zero, no sign
+    assert perf._fmt_pct(-0.0006) == "-0.1%"     # -0.06% rounds to -0.1%
+    assert perf._fmt_pct(0.0004) == "0.0%"
+    assert perf._fmt_pct(-0.0004, flag=True) == "0.0%*"
+    assert perf._fmt_pct(None) == "n/a"
+
+
+# ---------------------------------------------------------------------------
+# --chart-split: P&L of holdings in profit vs in loss
+# ---------------------------------------------------------------------------
+
+
+def test_split_pnl_sums_each_side_and_net_is_their_sum():
+    pnl = {
+        "A": [("2024-01-02", 100.0), ("2024-01-03", -20.0)],
+        "B": [("2024-01-02", -30.0), ("2024-01-03", 50.0)],
+        "C": [("2024-01-02", 0.0), ("2024-01-03", 10.0)],
+    }
+    cost = {
+        "A": [("2024-01-02", 500.0), ("2024-01-03", 500.0)],
+        "B": [("2024-01-02", 300.0), ("2024-01-03", 300.0)],
+        "C": [("2024-01-02", 200.0), ("2024-01-03", 200.0)],
+    }
+    # C sits at exactly zero on day 1, so it is on neither side; day 2 has two in profit.
+    assert perf._split_pnl(pnl, cost) == [
+        perf._SplitDay("2024-01-02", 100.0, -30.0, 1, 1, 500.0, 300.0),
+        perf._SplitDay("2024-01-03", 60.0, -20.0, 2, 1, 500.0, 500.0),
+    ]
+
+
+def test_split_day_pct_is_cost_weighted_and_none_without_cost():
+    day = perf._SplitDay("2024-01-03", 60.0, -20.0, 2, 1, 500.0, 500.0)
+    assert day.pct_gain == pytest.approx(12.0)  # 60 / 500
+    assert day.pct_loss == pytest.approx(-4.0)  # -20 / 500
+    assert day.pct_underwater == pytest.approx(50.0)  # 500 of 1000 cost in loss funds
+    empty_side = perf._SplitDay("2024-01-03", 0.0, 0.0, 0, 0, 0.0, 0.0)
+    assert empty_side.pct_gain is None and empty_side.pct_loss is None
+    assert empty_side.pct_underwater is None
+
+
+def test_split_pnl_empty():
+    assert perf._split_pnl({}, {}) == []
+
+
+def test_series_chart_split_renders(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    out_png = tmp_path / "split.png"
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--chart", str(out_png), "--chart-split",
+        )
+    )
+    assert code == 0
+    assert "Chart saved to" in capsys.readouterr().out
+    assert out_png.exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--all-holdings"], ["--chart-overlay"], ["--chart-metric", "twr"]],
+)
+def test_chart_split_refuses_incompatible_flags(tmp_path, capsys, extra):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    code = perf.main(
+        _args(
+            db, config, meta, "--as-of", "2024-12-31", "--series", "10",
+            "--chart", str(tmp_path / "c.png"), "--chart-split", *extra,
+        )
+    )
+    assert code == 1
+    assert "--chart-split does not compose" in capsys.readouterr().out
+
+
+def test_chart_split_requires_series_chart(tmp_path, capsys):
+    db, config, meta = _seed_three_fund_series(tmp_path)
+    code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--chart-split"))
+    assert code == 1
+    assert "--chart-split requires --series N --chart" in capsys.readouterr().out

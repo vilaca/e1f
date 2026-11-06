@@ -128,6 +128,7 @@ e1f performance --series 90          # portfolio TOTAL for each trading day, las
 e1f performance --series 60 --isin IE00B3VSSL01  # that holding's path only (ADR-0038)
 e1f performance --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # compare a subset; repeat --isin (ADR-0047)
 e1f performance --series 90 --chart --all-holdings --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # per-holding comparison chart
+e1f performance --series 90 --chart --chart-split  # EUR P&L of holdings in profit vs in loss, net, and fund counts
 e1f performance --metrics            # portfolio-level extended risk report (ADR-0033)
 e1f performance --metrics --series 14 # that report tabulated per trading day, last 14 days
 e1f performance --contrib            # per-holding return contribution (sums to TOTAL TWR, ADR-0033)

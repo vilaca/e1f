@@ -32,7 +32,7 @@ A quick map before the detail:
 | Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€, ΔGain€ |
 | Attribution | Which holdings drove the return? | Ctr%, P&Lctr |
 | Allocation | Where is capital/risk? | Weight |
-| Risk | How rough was the ride? | Vol, MaxDD, DDdur, SinceHi, Underwtr, RecFac |
+| Risk | How rough was the ride? | Vol, MaxDD, DDdur, SinceHi, CurDD, UnderTot, Ulcer, RecFac |
 | Benchmark-relative | Did I beat the alternative? | Out%, RelStr, IR, Beta, TE, R² |
 | Same-cash alternative | If every buy had gone into one ETF? | ΔGain€, AltROIC, AltGain€ |
 | Fees | What does the fund cost annually? | TER, WTER, Fee€/yr |
@@ -283,6 +283,25 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
 - **Read with:** Weight (the identical non-charted quantity). Cost€ (the
   numerator). WTER (the market-value-weighted blend this is not).
 
+### Profit/Loss split (chart-split)
+- **Where:** `performance --series --chart --chart-split`
+- **Type:** EUR, share of cost
+- **Definition:** Each day the held funds are split by the sign of their unrealized
+  EUR P&L. The top panel sums P&L over the funds in profit and over the funds in
+  loss, with net P&L (their sum) as a line; the middle panel counts the funds on
+  each side; the bottom panel is each side's cost-weighted return, summed P&L ÷
+  summed cost of that side's funds (the loss side drawn as a magnitude, so both
+  compare on one positive axis), plus on the right axis the share of the split
+  funds' cost that sits in loss-side funds. A fund at exactly zero is on neither
+  side. No percentage is drawn for a side with no cost.
+- **Useful for:** whether the net comes from broad strength or a few winners
+  covering losers, and whether the losing side is a deep hole in a small base or a
+  shallow one across much of the book.
+- **Don't:** read a jump as a trade — a fund changes side when it crosses zero. A
+  side holding one small recent buy gives a noisy percentage.
+- **Read with:** P&L€ (the per-fund figure summed here). Cost€ (the denominator).
+  pweight (a fund's cost share).
+
 ## Risk & drawdown
 
 From the TWR wealth index, not the euro line (deposits would paper over a hole). DDdur is the worst hole's length; SinceHi is how long you've been off the current peak.
@@ -354,10 +373,36 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
   deep the worst hole was). Underwater (lifetime time spent recovering). TWR
   (whether new highs have been worth waiting for).
 
-### Underwater (Underwtr)
-- **Where:** `performance --metrics` (`Underwtr`); `--metrics --series`
+### Current Drawdown (CurDD)
+- **Where:** `performance --metrics` (`Current Drawdown`); `--metrics --series`
+  (`CurDD`)
+- **Type:** percent (≤ 0)
+- **Definition:** The as-of / last valued day's wealth index ÷ its running peak − 1.
+  0 means the day is a new high. Resets at every new high, like SinceHi.
+- **Useful for:** "how far down am I *right now*?" — the depth counterpart of
+  SinceHi's duration. Unlike MaxDD it recovers to 0.
+- **Don't:** read it as the worst loss — MaxDD is the deepest it has ever been.
+- **Read with:** SinceHi (how long the current dip has lasted). MaxDD (the worst
+  hole so far). Ulcer (depth and duration over the whole path).
+
+### Ulcer Index (Ulcer)
+- **Where:** `performance --metrics` (`Ulcer Index`); `--metrics --series` (`Ulcer`)
+- **Type:** percent
+- **Definition:** Root-mean-square of the daily drawdown from the running peak,
+  over every valued day of the window (peak seeded at the pre-investment 1.0, as
+  for MaxDD). Deeper and longer dips both raise it; days at a new high add zero.
+- **Useful for:** one number for how painful the path was, where MaxDD ignores
+  how long it lasted and UnderTot ignores how deep it went. A short sharp dip and
+  a long shallow grind can print the same Ulcer.
+- **Don't:** compare windows of very different length without noting the history —
+  a short calm window flatters it. It is not annualized.
+- **Read with:** MaxDD (depth only). UnderTot (time only). CurDD (where you are now).
+  Vol (bumpiness in both directions, not just below the peak).
+
+### Underwater (UnderTot)
+- **Where:** `performance --metrics` (`UnderTot`); `--metrics --series`
 - **Type:** calendar days (a count, not a share)
-- **Definition:** Total days spent below a prior peak, summed across all
+- **Definition:** Cumulative days spent below a prior peak, summed across all
   drawdown episodes. The command prints days, not a percentage of history —
   divide by the window if you want a share.
 - **Useful for:** how much of the path was spent recovering rather than making
@@ -405,6 +450,30 @@ Tails of the same TWR series. A "day" is a gap-bridged period, not always a cale
   steadier). G/L (|best| ÷ |worst| of this pair). Vol / MaxDD (how typical vs
   how deep the path is around those prints). Trailing 1M (recent, not the
   record).
+
+### Hit Rate
+- **Where:** `performance --metrics` (`Hit Rate`)
+- **Type:** percent (share of days)
+- **Definition:** Share of the window's daily time-weighted returns that are above
+  zero. Flat days count as misses.
+- **Useful for:** how *often* the book goes up, which G/L ignores. A book can win
+  55% of days and still lose money if the losers are bigger.
+- **Don't:** read it alone — a high hit rate with a fat loss tail is a bad trade.
+  A "day" is a gap-bridged period, so a long weekend is one observation.
+- **Read with:** G/L and Best/Worst Day (size of the tails). CVaR (how bad the bad
+  days are). Vol (typical size of a move).
+
+### Expected Shortfall (CVaR)
+- **Where:** `performance --metrics` (`CVaR 5% (daily)`)
+- **Type:** time-weighted, daily (≤ 0 in a loss tail)
+- **Definition:** Historical expected shortfall: the mean of the worst 5% of daily
+  returns (`ceil(5% × n)` days, at least one). No distribution is assumed.
+- **Useful for:** "what does a bad day cost on average?" — a tail read built from
+  several days rather than the single Worst Day.
+- **Don't:** trust it on a short window: with under 20 days it is just the one
+  worst day, and with ~80 days it averages four. Not annualized, and not a forecast.
+- **Read with:** Worst Day (the single extreme it averages toward). Hit Rate (how
+  often days are up). Vol (symmetric bumpiness) and MaxDD (path, not single days).
 
 ### Best Month / Worst Month
 - **Where:** `performance --metrics`
