@@ -39,6 +39,7 @@ src/e1f/
     overlap.py        — cross-fund single-name exposure floor
     seasonality.py    — calendar-month effects and pre-specified/frozen-OOS rules (ADR-0026 through ADR-0028)
     limitbuy.py       — buy-limit orders: close-only bound + daily-bar estimate (ADR-0055, ADR-0057)
+    pick.py           — tilt a month's rebalance buys toward funds below average cost (ADR-0062)
 data/
   etf_universe.yaml      — ETF config (ISINs, names, tickers)
   currency_metadata.yaml — pinned ftgo resolutions incl. FX pairs

@@ -81,6 +81,7 @@ Experimental tier (ADR-0024):
 - **`e1f backtest`** — evaluate contribution-timing strategies against controlled DCA and blind-deployment baselines (ADR-0019 through ADR-0023).
 - **`e1f seasonality`** — analyze calendar-month effects and pre-specified or frozen-OOS rules without auto-trading the weakest in-sample month (ADR-0026 through ADR-0028).
 - **`e1f limitbuy`** — a buy-limit order placed under the price against buying at the close: a worst-case bound from closes (ADR-0055) and an estimate from daily bars (ADR-0057).
+- **`e1f pick`** — one month of a scenario's rebalance buys, with a chosen share moved toward the funds below their average cost and a buy-limit (max unit price) for every order; `--record` / `--review` track whether the tilt pays (ADR-0062). An untested timing tilt.
 
 ```bash
 # 1. Add ETFs by ISIN (OpenFIGI resolution; config shape in src/e1f/common/universe.py)
@@ -208,6 +209,11 @@ e1f seasonality --isin IE00B3YLTY66 --evaluate   # frozen Aug/Nov vs DCA (ADR-00
 e1f limitbuy --isin IE0003XJA0J9                       # 0.5–5% under, open 5 or 21 trading days
 e1f limitbuy --isin IE0003XJA0J9 --limit 13.00 --expiry 5   # a EUR limit price vs the last close
 e1f limitbuy --isin IE0003XJA0J9 --explain             # + assumptions/provenance block
+
+# 13. Tilt this month's rebalance buys toward funds below average cost (experimental, ADR-0062)
+e1f pick --scenario core --tilt 30                     # move 30% of the donor buys
+e1f pick --scenario core --tilt 50 --pull 3 --record   # up to 3 months pulled forward; store it
+e1f pick --review                                      # each recorded tilt vs its plain plan
 ```
 
 Defaults (from `src/e1f/common/defaults.py`): config `data/etf_universe.yaml`, database
@@ -424,6 +430,20 @@ same orders from each day's open and low (`Status` CALCULATED,
 `ADR/ADR-0057_limitbuy_daily_bar_estimate.md`). Windows with a day lacking a usable
 bar are left out and counted in `Excl`, and the estimate assumes the order rests on
 the listing whose bars ftgo reports. Flags: `e1f limitbuy --help`.
+
+Pick (experimental tier, ADR-0024): `ADR/ADR-0062_pick_below_cost_tilt.md`
+(`src/e1f/experimental/pick.py`). `e1f pick --scenario NAME --tilt PCT` starts from
+one month of the scenario's rebalance plan and moves PCT of the money planned for
+the other funds to the funds at least `--min-depth` (default 2%) below their average
+cost, weighted by plan buy × depth below cost. Each can pull forward at most `--pull`
+months of its plan buy (default 1, i.e. at most 2×). The month's total is kept, and
+frozen or overweight funds (plan buy 0) are never picked. Every order gets a
+max unit price: the plan buy at the last close + `--buffer` (default 0.5%), and the
+extra at the highest price still below cost by the minimum depth, never above the
+plan buy's limit.
+`--record` stores the month's pick in the DB and `--review` reports each record's
+gain against its plain plan since. The average cost says when you bought, not where
+the price goes, so this is a user-chosen tilt, not a tested signal. Flags: `e1f pick --help`.
 
 Provenance disclosure: `ADR/ADR-0014_provenance_generalization.md`. `concentration`
 and `overlap` always speak the shared provenance vocabulary — a four-state `Status`

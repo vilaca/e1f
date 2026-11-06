@@ -122,6 +122,7 @@ def test_cli_commands_surface():
         "lookthrough",
         "seasonality",
         "limitbuy",
+        "pick",
     }
 
 

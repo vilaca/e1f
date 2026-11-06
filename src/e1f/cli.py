@@ -40,6 +40,7 @@ from e1f.experimental import (
     limitbuy,
     lookthrough,
     overlap,
+    pick,
     seasonality,
 )
 
@@ -70,6 +71,7 @@ EXPERIMENTAL_PARSER_FACTORIES = {
     "lookthrough": lookthrough._build_parser,
     "seasonality": seasonality._build_parser,
     "limitbuy": limitbuy._build_parser,
+    "pick": pick._build_parser,
 }
 PARSER_FACTORIES = {**STABLE_PARSER_FACTORIES, **EXPERIMENTAL_PARSER_FACTORIES}
 
@@ -100,6 +102,7 @@ EXPERIMENTAL_COMMANDS: dict[str, Command] = {
     "lookthrough": lookthrough.main,
     "seasonality": seasonality.main,
     "limitbuy": limitbuy.main,
+    "pick": pick.main,
 }
 COMMANDS: dict[str, Command] = {**STABLE_COMMANDS, **EXPERIMENTAL_COMMANDS}
 
@@ -133,6 +136,7 @@ Experimental (ADR-0024 — isolated tier; may change or give wrong results):
   backtest      Contribution-timing backtest: dip-reserve vs constant-DCA over one ETF's history
   seasonality   Calendar-month seasonality: --isin, --portfolio consensus, or --evaluate
   limitbuy      Worst-case bound on a buy-limit under the close vs buying at it
+  pick          Tilt this month's rebalance buys toward funds below average cost
 
 Run 'e1f <command> --help' for command-specific options.
         """,
