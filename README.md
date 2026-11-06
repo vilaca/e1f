@@ -353,7 +353,9 @@ bought, and the targets are percents of the other funds and sum to 100. Every ot
 held fund must be targeted, or the plan is UNAVAILABLE (`unclassified`). A budget
 (`--monthly EUR`, or a scenario's `monthly`, × months) replaces `C_min`. Above
 `C_min` the budget keeps every target; below it, buys close the largest gaps first
-and the summary states the shortfall. The table adds a `SLEEVE` subtotal, the
+and the summary states the shortfall. Buys already made in the as-of month come off this
+month's instalment; `--this-month` lists them per fund with the month's goal
+(the plan as of the previous month-end) and what is left to buy (goal − bought). The table adds a `SLEEVE` subtotal, the
 frozen rows and `Book%`, each fund's share of the whole book after buying.
 A sleeve scenario can group its funds into **categories**, each with a percent of
 the sleeve and fixed shares for its funds

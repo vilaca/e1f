@@ -18,7 +18,7 @@ import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from e1f.common import (
     DEFAULT_CONFIG,
@@ -35,7 +35,11 @@ from e1f.common import (
     assemble_rebalance_valuations as _assemble,
     compute_rebalance as compute_rebalance,  # re-exported (ADR-0017)
     get_scenario,
+    load_price_series,
+    load_trades,
     plan_rebalance,
+    position_asof,
+    position_timeline,
 )
 
 _NAME_W = 24   # name column width; " (resid)" / " (frozen)" fit within it
@@ -142,13 +146,22 @@ def _header_line(*, months: int, show_status: bool, sleeve: bool = False) -> str
     )
 
 
+def _per_month(amount: float, months: int, first_share: float | None) -> float:
+    """The buy for the coming month: an equal 1/months, or ``first_share`` of the plan
+    when this month's earlier buys shrank the first instalment."""
+    return amount / months if first_share is None else amount * first_share
+
+
 def _format_row(
     row: RebalanceRow, *, months: int, show_status: bool, sleeve: bool = False,
-    marker: str = "◄ binds", indent: bool = False,
+    marker: str = "◄ binds", indent: bool = False, first_share: float | None = None,
 ) -> str:
     name_cell = _display_name(row.name, is_residual=row.is_residual, is_frozen=row.is_frozen)
     money_cur = _fmt_money(row.v, stale=row.estimated)
-    monthly = f" {_fmt_money(row.buy / months):>{_EUR_W}}" if months > 1 else ""
+    monthly = (
+        f" {_fmt_money(_per_month(row.buy, months, first_share)):>{_EUR_W}}"
+        if months > 1 else ""
+    )
     binder = f"  {marker}" if row.is_binder else ""
     status = f" {row.status.value:>{_STATUS_W}}" if show_status else ""
     cur, tgt = (
@@ -306,6 +319,165 @@ def _cash_phrase(amount: float, months: int) -> str:
     return phrase
 
 
+def _budget_phrase(budget: float, months: int, monthly: float | None, spent: float) -> str:
+    """The budget with its schedule; says so when this month's buys already took a share."""
+    if monthly is None or spent <= 0.0:
+        return _cash_phrase(budget, months)
+    if months < 2:
+        return f"€{_fmt_money(budget)}"
+    return (
+        f"€{_fmt_money(budget)} (€{_fmt_money(monthly - spent)} this month,"
+        f" then €{_fmt_money(monthly)} / month × {months - 1})"
+    )
+
+
+def _first_share(plan: RebalancePlan, monthly: float | None, spent: float) -> float | None:
+    """This month's share of the plan when earlier buys shrank its instalment, else None."""
+    if monthly is None or spent <= 0.0 or not plan.budget:
+        return None
+    return max(0.0, monthly - spent) / plan.budget
+
+
+@dataclass(frozen=True)
+class FundCost:
+    """A fund's cost basis against its price at the as-of date, netted across brokers."""
+
+    avg_paid: float | None   # cost basis / shares (EUR, fees included); None if not held
+    last_px: float | None    # latest close on or before as-of, native currency
+    chg_pct: float | None    # EUR value / cost basis − 1, in percent; None if unvaluable
+
+
+_NO_COST = FundCost(avg_paid=None, last_px=None, chg_pct=None)
+
+
+def fund_costs(
+    db_path: str, isins: set[str], values: dict[str, float | None], as_of: str
+) -> dict[str, FundCost]:
+    """Avg paid, Last px and Chg% per ISIN, the same figures `portfolio` shows per broker."""
+    timeline = position_timeline(load_trades(db_path))
+    costs: dict[str, FundCost] = {}
+    for isin in isins:
+        shares, cost = position_asof(timeline.get(isin, []), as_of)
+        _dates, closes = load_price_series(db_path, isin, as_of)
+        value = values.get(isin)
+        held = shares > 1e-9 and cost > 0.0
+        costs[isin] = FundCost(
+            avg_paid=cost / shares if held else None,
+            last_px=closes[-1] if closes else None,
+            chg_pct=100.0 * (value / cost - 1.0) if held and value is not None else None,
+        )
+    return costs
+
+
+def render_month(
+    rows: list[RebalanceRow],
+    plan: RebalancePlan,
+    *,
+    as_of: str,
+    months: int,
+    monthly: float,
+    spent: float,
+    bought: dict[str, float],
+    names: dict[str, str],
+    start_plan: RebalancePlan,
+    costs: dict[str, FundCost],
+    categories: tuple[Category, ...] | None = None,
+) -> list[str]:
+    """The as-of month of a budgeted sleeve plan, in ``rows`` order (under each category
+    when it has them): each fund's goal — this month's buy in ``start_plan``, the plan as
+    stated at the previous month-end, before this month's buys — what it already got and
+    what is left to buy: goal − bought, floored at 0 (the live plan's Monthly€ when there
+    is no goal)."""
+    goals = (
+        {isin: buy / months for isin, buy in start_plan.buys.items()}
+        if start_plan.feasible else None
+    )
+    if goals is None:
+        first_share = _first_share(plan, monthly, spent)
+        to_buy = {r.isin: _per_month(r.buy, months, first_share) for r in rows}
+    else:
+        to_buy = {isin: max(0.0, goal - bought.get(isin, 0.0)) for isin, goal in goals.items()}
+
+    def any_amount(isin: str) -> bool:
+        amounts = (to_buy.get(isin, 0.0), bought.get(isin, 0.0), (goals or {}).get(isin, 0.0))
+        return max(amounts) >= 0.005
+
+    shown = [r.isin for r in rows if any_amount(r.isin)]
+    shown += sorted(isin for isin in {*bought, *(goals or {})}
+                    if isin not in to_buy and any_amount(isin))
+    frozen = {r.isin for r in rows if r.is_frozen}
+    total_bought = sum(bought.values())
+    left = sum(to_buy.values())
+    over = total_bought - monthly
+    bought_text = f"€{_fmt_money(total_bought)} already bought"
+    if over >= 0.005:
+        bought_text += f" (€{_fmt_money(over)} over the instalment)"
+    width = 14 + 1 + _NAME_W + 3 * (1 + _EUR_W) + (1 + 10) + (1 + 8) + (1 + _PCT_W)
+    rule = "-" * width
+    lines = [
+        f"\nThis month ({as_of[:7]}): €{_fmt_money(monthly)} instalment, {bought_text},"
+        f" €{_fmt_money(left)} left to buy.",
+        "",
+        f"{'ISIN':<14} {'Name':<{_NAME_W}} {'Goal€':>{_EUR_W}} {'Bought€':>{_EUR_W}}"
+        f" {'To buy€':>{_EUR_W}} {'Avg paid':>10} {'Last px':>8} {'Chg%':>{_PCT_W}}",
+        rule,
+    ]
+
+    def goal(*isins: str) -> float | None:
+        return None if goals is None else sum(goals.get(isin, 0.0) for isin in isins)
+
+    def line(label: str, target: float | None, got: float, buy: float,
+             *, off_plan: bool = False, cost: FundCost | None = None) -> str:
+        target_cell = (
+            "---" if off_plan else "—" if target is None else _fmt_money(target)
+        )
+        price = ""
+        if cost is not None:
+            avg = "—" if cost.avg_paid is None else f"{cost.avg_paid:.4f}"
+            px = "—" if cost.last_px is None else f"{cost.last_px:.2f}"
+            chg = "n/a" if cost.chg_pct is None else f"{cost.chg_pct:+.1f}%"
+            price = f" {avg:>10} {px:>8} {chg:>{_PCT_W}}"
+        return (
+            f"{label[:14 + 1 + _NAME_W]:<{14 + 1 + _NAME_W}} {target_cell:>{_EUR_W}}"
+            f" {_fmt_money(got):>{_EUR_W}} {_fmt_money(buy):>{_EUR_W}}{price}"
+        )
+
+    def fund(isin: str, indent: str = "") -> str:
+        name = _display_name(names.get(isin, ""), is_residual=False, is_frozen=isin in frozen)
+        target, got = goal(isin), bought.get(isin, 0.0)
+        off_plan = target is not None and target < 0.005 and got >= 0.005  # bought, no goal
+        return line(f"{indent + isin:<14} {name}", target, got, to_buy.get(isin, 0.0),
+                    off_plan=off_plan, cost=costs.get(isin, _NO_COST))
+
+    if categories is None:
+        lines.extend(fund(isin) for isin in shown)
+    else:
+        listed: set[str] = set()
+        for category in categories:
+            members = [isin for isin in shown if isin in category.funds]
+            listed.update(category.funds)
+            if not members:
+                continue
+            lines.append(line(category.name, goal(*members),
+                              sum(bought.get(i, 0.0) for i in members),
+                              sum(to_buy.get(i, 0.0) for i in members)))
+            lines.extend(fund(isin, "  ") for isin in members)
+        lines.extend(fund(isin) for isin in shown if isin not in listed)
+    lines.append(rule)
+    lines.append(line("TOTAL", goal(*shown), total_bought, left))
+    if goals is None:
+        lines.append(
+            f"Goal€ unavailable — no plan as of {_month_start_eve(as_of)}: "
+            f"{_reason_message(start_plan, {})}  To buy€ is the plan's Monthly€."
+        )
+    return lines
+
+
+def _month_start_eve(as_of: str) -> str:
+    """The day before ``as_of``'s month began: the snapshot of this month's stated plan."""
+    return (date.fromisoformat(as_of).replace(day=1) - timedelta(days=1)).isoformat()
+
+
 def render_sleeve_targets(
     targets: dict[str, float],
     frozen: tuple[str, ...],
@@ -355,6 +527,8 @@ def render_sleeve_table(
     frozen_unvaluable: list[str],
     stale_rows: list[RebalanceRow],
     categories: tuple[Category, ...] | None = None,
+    monthly: float | None = None,
+    spent: float = 0.0,
 ) -> list[str]:
     """Render a feasible sleeve plan (ADR-0060): active rows, a SLEEVE subtotal,
     frozen rows and the book TOTAL.  With categories (ADR-0061) each category's
@@ -373,19 +547,22 @@ def render_sleeve_table(
 
     v_final = plan.v_final
     status = f" {'':>{_STATUS_W}}" if show_status else ""
+    first_share = _first_share(plan, monthly, spent)
 
     def total(label: str, current: float, cur: str, tgt: str, buy: float, final: float) -> str:
-        monthly = f" {_fmt_money(buy / months):>{_EUR_W}}" if months > 1 else ""
+        per_month = (
+            f" {_fmt_money(_per_month(buy, months, first_share)):>{_EUR_W}}" if months > 1 else ""
+        )
         book = _fmt_pct(100.0 * final / v_final if v_final > 0.0 else 0.0)
         return (
             f"{label[:14 + 1 + _NAME_W]:<{14 + 1 + _NAME_W}} {_fmt_money(current):>{_EUR_W}}"
             f" {cur:>{_PCT_W}} {tgt:>{_PCT_W}} {_fmt_money(buy):>{_EUR_W}}"
-            f"{monthly} {_fmt_money(final):>{_EUR_W}} {book:>{_PCT_W}}{status}"
+            f"{per_month} {_fmt_money(final):>{_EUR_W}} {book:>{_PCT_W}}{status}"
         )
 
     def fund_line(row: RebalanceRow, *, indent: bool = False) -> str:
         return _format_row(row, months=months, show_status=show_status, sleeve=True,
-                           marker=marker, indent=indent)
+                           marker=marker, indent=indent, first_share=first_share)
 
     lines.append(rule)
     active = [r for r in rows if not r.is_frozen]
@@ -411,12 +588,17 @@ def render_sleeve_table(
         listed = {isin for c in categories or () for isin in c.funds}
         apart = [r for r in frozen_rows if r.isin not in listed]
         for row in apart:
-            lines.append(_format_row(row, months=months, show_status=show_status, sleeve=True))
+            lines.append(_format_row(row, months=months, show_status=show_status, sleeve=True,
+                                     first_share=first_share))
         if apart:
             lines.append(rule)
     lines.append(total("TOTAL", plan.v, "", "", plan.injection, v_final))
     lines.append("")
 
+    budget_text = (
+        "" if plan.budget is None
+        else _budget_phrase(plan.budget, months, monthly, spent)
+    )
     if plan.budget is None:
         if plan.c_min <= 0.0:
             lines.append("Sleeve already at target — no purchases needed.")
@@ -426,13 +608,13 @@ def render_sleeve_table(
             )
     elif plan.shortfall > 0.0:
         lines.append(
-            f"Budget {_cash_phrase(plan.budget, months)} is €{_fmt_money(plan.shortfall)}"
+            f"Budget {budget_text} is €{_fmt_money(plan.shortfall)}"
             f" short of the €{_fmt_money(plan.c_min)} that reaches the targets: buys close"
             f" the largest gaps first and ◄ funds stay above target."
         )
     else:
         lines.append(
-            f"Budget {_cash_phrase(plan.budget, months)} reaches the targets buy-only"
+            f"Budget {budget_text} reaches the targets buy-only"
             f" (minimum €{_fmt_money(plan.c_min)})."
         )
 
@@ -735,6 +917,27 @@ def _reason_message(plan: RebalancePlan, targets: dict[str, float]) -> str:
     return plan.reason or "unknown"
 
 
+_BUY_SIDES = frozenset({"BUY", "SAVINGS_PLAN"})
+
+
+def bought_in_month(db_path: str, as_of: str) -> dict[str, float]:
+    """EUR bought per ISIN (shares × price + fee) in ``as_of``'s calendar month,
+    up to ``as_of``."""
+    month = as_of[:7]
+    bought: dict[str, float] = {}
+    for _broker, dt, isin, side, shares, price, fee in load_trades(db_path):
+        day = str(dt)[:10]
+        if side in _BUY_SIDES and day[:7] == month and day <= as_of and (shares or 0.0) > 0.0:
+            cost = (shares or 0.0) * (price or 0.0) + (fee or 0.0)
+            bought[isin] = bought.get(isin, 0.0) + cost
+    return bought
+
+
+def spent_in_month(db_path: str, as_of: str) -> float:
+    """EUR bought (shares × price + fee) in ``as_of``'s calendar month, up to ``as_of``."""
+    return sum(bought_in_month(db_path, as_of).values())
+
+
 def _cmd_rebalance(
     db_path: str,
     config_path: str,
@@ -750,6 +953,7 @@ def _cmd_rebalance(
     frozen: tuple[str, ...] | None = None,
     budget: float | None = None,
     categories: tuple[Category, ...] | None = None,
+    this_month: bool = False,
 ) -> int:
     show_status = show_status or explain
 
@@ -757,6 +961,15 @@ def _cmd_rebalance(
     values, held, untargeted_unvaluable, price_dates = _assemble(
         db_path, currency_meta_path, targets, as_of
     )
+    spent = 0.0
+    bought: dict[str, float] = {}
+    monthly = None if budget is None else budget / months
+    if budget is not None and monthly is not None:
+        # This month's buys are already in `values`; they also used up part of this
+        # month's instalment, so only the remainder is left to plan.
+        bought = bought_in_month(db_path, as_of)
+        spent = min(sum(bought.values()), monthly)
+        budget -= spent
     plan = plan_rebalance(
         targets, values, held, None if frozen is None else frozenset(frozen), budget
     )
@@ -804,9 +1017,34 @@ def _cmd_rebalance(
             frozen_unvaluable=untargeted_unvaluable,
             stale_rows=stale_rows,
             categories=categories,
+            monthly=monthly,
+            spent=spent,
         )
     for line in lines:
         print(line)
+    if spent > 0.0:
+        print(
+            f"Already bought in {as_of[:7]}: €{_fmt_money(spent)}"
+            " — deducted from this month's instalment."
+        )
+    if this_month and monthly is not None and frozen is not None:
+        # The goal is the plan as stated before this month's buys: the full instalment
+        # on the holdings at the previous month-end, whatever was actually bought since.
+        eve = _month_start_eve(as_of)
+        values0, held0, _unvaluable0, _dates0 = _assemble(db_path, currency_meta_path,
+                                                           targets, eve)
+        start_plan = plan_rebalance(targets, values0, held0, frozenset(frozen),
+                                    monthly * months)
+        month_names = {r.isin: r.name for r in rows}
+        month_names.update(
+            (isin, _etf_name(config_path, isin))
+            for isin in {*bought, *start_plan.buys} if isin not in month_names
+        )
+        costs = fund_costs(db_path, set(month_names), values, as_of)
+        for line in render_month(rows, plan, as_of=as_of, months=months, monthly=monthly,
+                                 spent=spent, bought=bought, names=month_names,
+                                 start_plan=start_plan, costs=costs, categories=categories):
+            print(line)
 
     if explain:
         for line in render_explain(plan, targets, as_of=as_of, months=months):
@@ -894,6 +1132,9 @@ Sleeve plans (ADR-0060): --frozen ISIN (or a scenario's 'frozen' list) names
   (else UNAVAILABLE: unclassified). --monthly EUR sets a budget of EUR × months:
   above C_min it is spread to keep the targets; below C_min it closes the
   largest gaps first. Without a budget the plan injects C_min.
+  Buys already made in the as-of month are deducted from this month's instalment;
+  --this-month lists them per fund with this month's goal (the plan at the
+  previous month-end) and what is left to buy: goal − bought, floored at 0.
   A sleeve scenario may group its funds into categories (ADR-0061): each
   category row totals its funds, which --sort reorders only within it.
 
@@ -921,6 +1162,7 @@ Examples:
   e1f rebalance --target IE00B4L5Y983:30 --sort buy --reverse
   e1f rebalance --target IE00B4L5Y983:60 --target IE00BK5BQT80:40 --frozen IE00B3YCGJ38
   e1f rebalance --scenario core --monthly 2500
+  e1f rebalance --scenario core --this-month
         """,
     )
     parser.add_argument(
@@ -946,6 +1188,12 @@ Examples:
         metavar="EUR",
         help="Sleeve plans: invest EUR per month (× --months) instead of C_min. "
         "Overrides a scenario's stored monthly.",
+    )
+    parser.add_argument(
+        "--this-month",
+        action="store_true",
+        help="Budgeted sleeve plans: add a per-fund list of what was already bought in "
+        "the as-of month and what is left to buy in it.",
     )
     parser.add_argument(
         "--months",
@@ -1055,6 +1303,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("duplicate ISIN in frozen funds")
         if set(frozen) & set(isins):
             parser.error("a fund cannot be both targeted and frozen")
+    if args.this_month and monthly is None:
+        parser.error("--this-month needs a budget (--monthly, or a scenario's 'monthly')")
 
     # --months (CLI) overrides a scenario's stored months; default lump-sum is 1.
     months = args.months if args.months is not None else (scenario_months or 1)
@@ -1076,6 +1326,7 @@ def main(argv: list[str] | None = None) -> int:
             frozen=frozen,
             budget=budget,
             categories=categories,
+            this_month=args.this_month,
         )
     except Exception as e:  # noqa: BLE001 — CLI top-level; all errors become exit code 1
         print(f"✗ Error: {e}")

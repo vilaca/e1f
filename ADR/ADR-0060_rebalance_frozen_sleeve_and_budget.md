@@ -69,7 +69,21 @@ sleeve value `L` solves
   shortfall `C_min − B` is a typed field (`RebalancePlan.shortfall`), and the summary
   line states it.
 
-`B = monthly × months`, or `monthly` alone without months. `rebalance --monthly`
+`B = monthly × months − spent`, where `spent` is what the book already bought in the
+as-of calendar month (BUY and SAVINGS_PLAN, shares × price + fee, up to the as-of day),
+capped at `monthly`. Those buys are already in the holdings, and they used part of this
+month's instalment, so the Monthly€ column shows `monthly − spent` for this month and
+`monthly` for each later month, and the summary says so
+(`Already bought in YYYY-MM: €X — deducted from this month's instalment.`).
+`--this-month` adds a per-fund list of the as-of month: `Goal€` (this month's buy in
+the plan as stated at the previous month-end, the full instalment on the holdings and
+prices of that day, so buys made since, in or out of the scenario, do not move it; `---`
+for a fund bought with no goal; `—` with the reason when that plan is UNAVAILABLE), `Bought€` (that month's buys, frozen and
+off-scenario funds included) and `To buy€` (`Goal€ − Bought€`, floored at 0, so a
+frozen or off-scenario buy does not reduce another fund's buy; the plan's Monthly€ when
+there is no goal), then each fund's `Avg paid`, `Last px` and `Chg%` netted across
+brokers (as `portfolio` shows them per broker), with category subtotals,
+and states the excess when the month's buys passed the instalment. `rebalance --monthly`
 overrides the stored value. A budget needs a sleeve plan: the residual plan has no
 budget (`--monthly` without frozen funds is a usage error).
 

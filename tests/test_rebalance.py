@@ -1190,13 +1190,45 @@ def test_main_sleeve_budget_short_of_minimum_is_disclosed(tmp_path, capsys):
     db, config, meta = _sleeve_seed(tmp_path)
     code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
                           "--frozen", F, "--monthly", "500", "--months", "2",
-                          "--as-of", "2024-01-01"))
+                          "--as-of", "2024-02-01"))
     out = capsys.readouterr().out
     assert code == 0
     assert ("Budget €1,000.00 (€500.00 / month × 2) is €2,000.00 short of the €3,000.00"
             in out)
+    assert "Already bought" not in out
     a_row = next(line for line in out.splitlines() if line.startswith(A))
     assert a_row.endswith("◄ no buy")
+
+
+def test_main_sleeve_budget_deducts_buys_already_made_this_month(tmp_path, capsys):
+    # The seed buys €1,000 of B (100 × 10) on 2024-01-01, more than the €500 instalment:
+    # this month is spent (capped at €500), leaving €500 for the second month only.
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--monthly", "500", "--months", "2",
+                          "--as-of", "2024-01-01"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Already bought in 2024-01: €500.00 — deducted from this month's instalment." in out
+    assert "Budget €500.00 (€0.00 this month, then €500.00 / month × 1)" in out
+    total_row = next(line for line in out.splitlines() if line.startswith("TOTAL"))
+    assert total_row.split()[-4:-2] == ["500.00", "0.00"]
+
+
+def test_spent_in_month_counts_only_buys_in_the_as_of_month(tmp_path):
+    db, _config, _meta = _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2024-01-31", A, 10.0, 10.0),
+            _buy("t2", "2024-02-02", A, 10.0, 10.0),
+            _buy("t3", "2024-02-20", A, 5.0, 10.0),
+        ],
+        prices=[(A, "2024-02-20", 10.0)],
+        currencies={A: "EUR"},
+        names={A: "Fund A"},
+    )
+    assert reb.spent_in_month(db, "2024-02-10") == pytest.approx(100.0)
+    assert reb.spent_in_month(db, "2024-02-29") == pytest.approx(150.0)
 
 
 def test_main_sleeve_scenario_with_monthly(tmp_path, capsys):
@@ -1204,7 +1236,7 @@ def test_main_sleeve_scenario_with_monthly(tmp_path, capsys):
     sf = _write_scenario(tmp_path, name="s", targets={A: 60.0, B: 40.0}, months=2,
                          frozen=(F,), monthly=2500.0)
     code = reb.main(_args(db, config, meta, "--scenario", "s", "--scenarios-file", sf,
-                          "--as-of", "2024-01-01", "--explain"))
+                          "--as-of", "2024-02-01", "--explain"))
     out = capsys.readouterr().out
     assert code == 0
     assert "Budget €5,000.00 (€2,500.00 / month × 2) reaches the targets" in out
@@ -1389,3 +1421,147 @@ def test_categories_reproduce_the_flat_residual_buys():
     sleeve = plan_rebalance(sleeve_targets, values, held, frozenset({F, G}), residual.c_min)
     assert sleeve.buys == pytest.approx(residual.buys, rel=1e-12, abs=1e-9)
     assert sleeve.v_final == pytest.approx(residual.v_prime)
+
+
+# ---------------------------------------------------------------------------
+# --this-month: the as-of month's buys so far and what is left to buy in it.
+# ---------------------------------------------------------------------------
+
+
+def _month_seed(tmp_path):
+    # Held since 2023-12: A €6000, B €1000, F €3000 (frozen); this month B +€100, F +€30.
+    return _seed(
+        tmp_path,
+        transactions=[
+            _buy("t1", "2023-12-01", A, 100.0, 60.0),
+            _buy("t2", "2023-12-01", B, 100.0, 10.0),
+            _buy("t3", "2023-12-01", F, 100.0, 30.0),
+            _buy("t4", "2024-01-02", B, 10.0, 10.0),
+            _buy("t5", "2024-01-02", F, 1.0, 30.0),
+        ],
+        prices=[(A, "2023-12-01", 60.0), (B, "2023-12-01", 10.0), (F, "2023-12-01", 30.0),
+                (A, "2024-01-02", 60.0), (B, "2024-01-02", 10.0), (F, "2024-01-02", 30.0)],
+        currencies={A: "EUR", B: "EUR", F: "EUR"},
+        names={A: "Fund A", B: "Fund B", F: "Fund F"},
+    )
+
+
+def _month_block(out):
+    lines = out.splitlines()
+    header = next(i for i, ln in enumerate(lines) if "Bought€" in ln)
+    return lines[header + 2:]
+
+
+def test_this_month_lists_bought_and_left_to_buy_per_fund(tmp_path, capsys):
+    # Goal: the plan at 2023-12-31 (A 6000, B 1000, budget 1000) puts all of it in B, as
+    # A (6000) is above its 60% at any reachable level → B €500 this month, A €0.
+    # To buy = goal − bought: B 500 − 100 = 400; F's off-plan €30 does not reduce it.
+    db, config, meta = _month_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--monthly", "500", "--months", "2",
+                          "--as-of", "2024-01-02", "--this-month"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert ("This month (2024-01): €500.00 instalment, €130.00 already bought,"
+            " €400.00 left to buy.") in out
+    block = _month_block(out)
+    assert [ln.split()[0] for ln in block] == [B, F, "-" * len(block[2]), "TOTAL"]
+    assert block[0].split()[-6:] == ["500.00", "100.00", "400.00", "10.0000", "10.00", "+0.0%"]
+    # F was bought with no goal: off plan, shown as ---.
+    assert "Fund F (frozen)" in block[1] and block[1].split()[-6:-3] == ["---", "30.00", "0.00"]
+    assert block[3].split() == ["TOTAL", "500.00", "130.00", "400.00"]
+    assert "Goal€ unavailable" not in out
+
+
+def test_this_month_discloses_buys_over_the_instalment(tmp_path, capsys):
+    # The seed buys €10,000 on 2024-01-01 against a €500 instalment: nothing is left. The
+    # book was empty at 2023-12-31; the stated plan then opens the sleeve 60 / 40.
+    db, config, meta = _sleeve_seed(tmp_path)
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--monthly", "500", "--months", "2",
+                          "--as-of", "2024-01-01", "--this-month"))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert ("€10,000.00 already bought (€9,500.00 over the instalment), €0.00 left to buy."
+            in out)
+    block = _month_block(out)
+    assert block[-1].split() == ["TOTAL", "500.00", "10,000.00", "0.00"]
+    assert [ln.split()[-6] for ln in block[:2]] == ["300.00", "200.00"]  # A, B goals
+
+
+def test_this_month_goal_unavailable_is_disclosed(tmp_path, capsys):
+    # Held since 2023-12 but first priced on 2024-01-02: no stated plan at 2023-12-31.
+    db, config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2023-12-01", A, 100.0, 60.0),
+                      _buy("t2", "2023-12-01", B, 100.0, 10.0),
+                      _buy("t3", "2024-01-02", B, 10.0, 10.0)],
+        prices=[(A, "2024-01-02", 60.0), (B, "2024-01-02", 10.0)],
+        currencies={A: "EUR", B: "EUR"},
+        names={A: "Fund A", B: "Fund B"},
+    )
+    code = reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                          "--frozen", F, "--monthly", "500", "--months", "2",
+                          "--as-of", "2024-01-02", "--this-month"))
+    out = capsys.readouterr().out
+    assert code == 0
+    block = _month_block(out)
+    assert block[0].split()[0] == B and block[0].split()[-6:-3] == ["—", "100.00", "400.00"]
+    assert block[-2].split() == ["TOTAL", "—", "100.00", "400.00"]
+    assert block[-1].startswith("Goal€ unavailable — no plan as of 2023-12-31: target_unvaluable")
+    assert block[-1].endswith("To buy€ is the plan's Monthly€.")
+
+
+def test_this_month_groups_funds_under_their_categories(tmp_path, capsys):
+    db, config, meta = _month_seed(tmp_path)
+    sf = _category_scenario(tmp_path, months=2, monthly=500.0)
+    code = reb.main(_args(db, config, meta, "--scenario", "g", "--scenarios-file", sf,
+                          "--as-of", "2024-01-02", "--this-month"))
+    out = capsys.readouterr().out
+    assert code == 0
+    block = _month_block(out)
+    assert [ln.split()[0] for ln in block[:4]] == ["rest", B, D, F]  # A: nothing either way
+    assert block[2].split()[-3:] == ["—", "—", "n/a"]  # D: not held, never priced
+    rest = block[0].split()[-3:]  # category rows carry no price columns
+    b, d = (ln.split()[-6:-3] for ln in block[1:3])
+    assert rest[1] == "100.00" and b[1] == "100.00" and d[1] == "0.00"
+    goals = [float(x[0]) for x in (b, d)]
+    to_buy = [float(x[2]) for x in (b, d)]
+    assert float(rest[0]) == pytest.approx(sum(goals)) and sum(goals) == pytest.approx(500.0)
+    assert to_buy == pytest.approx([goals[0] - 100.0, goals[1]])
+    assert float(rest[2]) == pytest.approx(sum(to_buy), abs=0.01)
+    assert block[-1].split() == ["TOTAL", "500.00", "130.00", "400.00"]
+
+
+def test_this_month_needs_a_budget(tmp_path, capsys):
+    db, config, meta = _month_seed(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        reb.main(_args(db, config, meta, "--target", f"{A}:60", "--target", f"{B}:40",
+                       "--frozen", F, "--this-month"))
+    assert exc.value.code == 2
+    assert "--this-month needs a budget" in capsys.readouterr().err
+
+
+def test_bought_in_month_splits_by_fund(tmp_path):
+    db, _config, _meta = _month_seed(tmp_path)
+    assert reb.bought_in_month(db, "2024-01-02") == {B: pytest.approx(100.0),
+                                                     F: pytest.approx(30.0)}
+    assert reb.bought_in_month(db, "2024-01-01") == {}
+
+
+def test_fund_costs_nets_brokers_and_prices_against_cost(tmp_path):
+    # A: 10 @ 10 at one broker + 10 @ 14 (+ €2 fee) at another → cost 242, avg 12.10;
+    # closes 13 then 15 by the as-of day → Last px 15, value 300 → Chg% = 300/242 − 1.
+    db, _config, _meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", A, 10.0, 10.0),
+                      _buy("t2", "2024-01-05", A, 10.0, 14.0, fee=2.0, broker="xtb")],
+        prices=[(A, "2024-01-05", 13.0), (A, "2024-01-10", 15.0), (A, "2024-02-01", 99.0)],
+        currencies={A: "EUR"},
+        names={A: "Fund A"},
+    )
+    costs = reb.fund_costs(db, {A, D}, {A: 300.0, D: 0.0}, "2024-01-10")
+    assert costs[A].avg_paid == pytest.approx(12.10)
+    assert costs[A].last_px == pytest.approx(15.0)
+    assert costs[A].chg_pct == pytest.approx(100.0 * (300.0 / 242.0 - 1.0))
+    assert costs[D] == reb.FundCost(avg_paid=None, last_px=None, chg_pct=None)
