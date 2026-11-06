@@ -275,7 +275,8 @@ same file is idempotent (duplicate `(broker, transaction_id)` rows are skipped).
 Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
-(output in `src/e1f/portfolio.py`). `--show-cost-basis` adds an FX-converted EUR
+(output in `src/e1f/portfolio.py`). Every row shows `Avg paid`, the native `Last px` and
+`Chg%` (EUR value against total paid). `--show-cost-basis` adds units, total paid, an FX-converted EUR
 market value and market-value-weighted fee / TER (`ADR/ADR-0032_portfolio_fx_market_value.md`);
 holdings with no price or FX are excluded from those totals with a warning.
 `--show-status` / `--explain` add opt-in provenance disclosure (ADR-0014; see below).

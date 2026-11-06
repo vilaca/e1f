@@ -59,6 +59,7 @@ def test_completes_nested_commands_and_options(capsys):
         "units",
         "avg",
         "last_px",
+        "chg",
         "cost",
         "value",
     }

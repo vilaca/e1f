@@ -368,6 +368,25 @@ def test_sort_holdings_by_value_none_last_when_reversed():
     assert [h.symbol for h in result] == ["BBB", "AAA", "CCC"]
 
 
+def test_sort_holdings_by_chg_pct_puts_unvaluable_last_when_ascending():
+    # Change = value / total_paid − 1: AAA 90/100 → −10%, BBB 130/100 → +30%, CCC unvalued.
+    holdings = [
+        Holding(BROKER_TRADE_REPUBLIC, "AAA", 1.0, 100.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "BBB", 1.0, 100.0, 100.0),
+        Holding(BROKER_TRADE_REPUBLIC, "CCC", 1.0, 100.0, 100.0),
+    ]
+    values = {
+        (BROKER_TRADE_REPUBLIC, "AAA"): 90.0,
+        (BROKER_TRADE_REPUBLIC, "BBB"): 130.0,
+        (BROKER_TRADE_REPUBLIC, "CCC"): None,
+    }
+    result = sort_holdings(
+        holdings, sort_by="chg", reverse=True,
+        config_path="unused", total_invested=300.0, eur_values=values,
+    )
+    assert [h.symbol for h in result] == ["BBB", "AAA", "CCC"]
+
+
 def test_sort_holdings_by_last_px_and_class(tmp_path):
     config = tmp_path / "config.yaml"
     config.write_text(
@@ -468,8 +487,16 @@ def test_main_portfolio_shows_weight_column(tmp_path, capsys):
     assert "25.0%" in out
     assert "75.0%" in out
     assert "Units" not in out
-    assert "Avg paid" not in out
     assert "Total paid" not in out
+    # Avg paid, Last px and Chg% show without --show-cost-basis too; no price → n/a.
+    header = next(line for line in out.splitlines() if line.startswith("ISIN"))
+    assert header.split()[-6:] == ["Weight", "Avg", "paid", "Last", "px", "Chg%"]
+    rows = [line for line in out.splitlines() if line.startswith(ISIN_ETF)]
+    assert [row.split()[-4:] for row in rows] == [
+        ["25.0%", "100.0000", "—", "n/a"], ["75.0%", "300.0000", "—", "n/a"],
+    ]
+    rule = next(line for line in out.splitlines() if line.startswith("---"))
+    assert len(rule) == len(header)
 
 
 def test_main_portfolio_empty(tmp_path, capsys):

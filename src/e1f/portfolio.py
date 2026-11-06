@@ -35,7 +35,7 @@ _SHARE_EPSILON = 1e-9
 # Canonical tokens (ADR-0037): cost=Total paid, value=Value€.
 SORT_FIELDS = (
     "broker", "isin", "name", "class", "ccy", "dist", "ter", "fee_yr",
-    "weight", "units", "avg", "last_px", "cost", "value",
+    "weight", "units", "avg", "last_px", "chg", "cost", "value",
 )
 _STATUS_COL = 11
 
@@ -259,7 +259,6 @@ def _distribution_label(distribution: str) -> str:
 _BROKER_LABELS = {"trade_republic": "tr"}
 _ASSET_CLASS_LABELS = {"Real Estate": "REITs", "Equity": "Eqty"}
 _BROKER_COL = 4
-_TABLE_WIDTH = _BROKER_COL + 158  # remaining columns + inter-column spaces
 
 
 def _broker_label(broker: str) -> str:
@@ -268,6 +267,13 @@ def _broker_label(broker: str) -> str:
 
 def _asset_class_label(asset_class: str) -> str:
     return _ASSET_CLASS_LABELS.get(asset_class, asset_class)
+
+
+def _change_pct(value: float | None, total_paid: float) -> float | None:
+    """EUR value against total paid, in percent; None when unvaluable or nothing paid."""
+    if value is None or total_paid <= 0.0:
+        return None
+    return 100.0 * (value / total_paid - 1.0)
 
 
 def _sort_key(
@@ -310,6 +316,9 @@ def _sort_key(
     if sort_by == "last_px":
         px = last_prices.get(holding.symbol)
         return float("-inf") if px is None else px
+    if sort_by == "chg":
+        chg = _change_pct(eur_values.get((holding.broker, holding.symbol)), holding.total_paid)
+        return float("-inf") if chg is None else chg
     if sort_by == "ter":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
         return float(ter) if isinstance(ter, (int, float)) else float("-inf")
@@ -389,13 +398,14 @@ def _table_header(*, show_broker: bool, show_cost_basis: bool, show_status: bool
         f"{'ISIN':<14} {'Name':<32} {'Class':<6} "
         f"{'CCY':<8} {'Dist':<4} {'TER':>6}"
     )
+    price_cols = f" {'Avg paid':>10} {'Last px':>8} {'Chg%':>7}"
     if show_cost_basis:
         header += (
-            f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10} {'Avg paid':>10}"
-            f" {'Last px':>8} {'Dir':>4} {'Total':>8} {'Value€':>9}"
+            f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10}{price_cols}"
+            f" {'Total':>8} {'Value€':>9}"
         )
     else:
-        header += f" {'Weight':>7}"
+        header += f" {'Weight':>7}{price_cols}"
     if show_status:
         header += f" {'Status':>{_STATUS_COL}}"
     return header
@@ -699,12 +709,7 @@ def _cmd_portfolio(
         show_status=show_status,
     )
     print(header)
-    rule = _TABLE_WIDTH if show_cost_basis else _TABLE_WIDTH - 58
-    if show_status:
-        rule += _STATUS_COL + 1
-    if not show_broker:
-        rule -= _BROKER_COL + 1
-    print("-" * rule)
+    print("-" * len(header.lstrip("\n")))
     fee_inputs: list[tuple[float | None, float | None]] = []
     excluded: list[str] = []
     for holding in holdings:
@@ -726,18 +731,20 @@ def _cmd_portfolio(
             f"{_asset_class_label(asset_class):<6} {fund_currency:<8} "
             f"{_distribution_label(distribution):<4} {ter:>6}"
         )
+        last_px = last_prices[holding.symbol]
+        last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
+        chg = _change_pct(value, holding.total_paid)
+        chg_str = "n/a" if chg is None else f"{chg:+.1f}%"
+        price_cells = f" {holding.avg_cost:>10.4f} {last_px_str} {chg_str:>7}"
         if show_cost_basis:
             fee_str = f"€{fee:.2f}" if fee is not None else "—"
-            last_px = _last_known_price(db_path, holding.symbol, as_of)
-            last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
-            dir_str = "n/a" if last_px is None else ("+" if last_px >= holding.avg_cost else "-")
             value_str = f"{value:>9.2f}" if value is not None else f"{'—':>9}"
             row += (
-                f" {fee_str:>8} {weight:>6.1f}% {holding.shares:>10.4f} {holding.avg_cost:>10.4f}"
-                f" {last_px_str} {dir_str:>4} {holding.total_paid:>8.2f} {value_str}"
+                f" {fee_str:>8} {weight:>6.1f}% {holding.shares:>10.4f}{price_cells}"
+                f" {holding.total_paid:>8.2f} {value_str}"
             )
         else:
-            row += f" {weight:>6.1f}%"
+            row += f" {weight:>6.1f}%{price_cells}"
         if show_status:
             row += f" {Status.CALCULATED.value:>{_STATUS_COL}}"
         print(row)
@@ -825,7 +832,7 @@ Examples:
     parser.add_argument(
         "--show-cost-basis",
         action="store_true",
-        help="Show units, average paid, and total paid columns",
+        help="Add fee/yr, units, total paid and EUR value columns",
     )
     parser.add_argument(
         "--show-status",

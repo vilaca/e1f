@@ -240,6 +240,7 @@ def test_stable_metric_headers_have_glossary_entries_with_matching_where():
                 "TER": "TER",
                 "Fee/yr": "Fee€/yr",
                 "Weight": "Weight",
+                "Chg%": "Chg%",
                 "Value€": "Value€",
             },
         ),
@@ -363,7 +364,7 @@ def test_special_char_single_queries_resolve():
         "ΔGain€",
         "Fee€/yr",
     ]
-    percent = ["P&L%", "Ctr%", "Ret% (per deposit)", "%P&L (per deposit)", "Out%"]
+    percent = ["P&L%", "Chg%", "Ctr%", "Ret% (per deposit)", "%P&L (per deposit)", "Out%"]
     assert names("€") == names("e") == eur
     assert names("%") == names("pct") == percent
 

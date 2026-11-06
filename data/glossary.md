@@ -29,7 +29,7 @@ A quick map before the detail:
 |---|---|---|
 | Personal return | What did my cash earn? | XIRR |
 | Investment return | What did the holdings earn? | TWR, Daily TWR, CAGR |
-| Money outcome | How many euros up/down? | P&L€, P&L%, MktVal€, Cost€, Amount€, ΔGain€ |
+| Money outcome | How many euros up/down? | P&L€, P&L%, Chg%, MktVal€, Cost€, Amount€, ΔGain€ |
 | Attribution | Which holdings drove the return? | Ctr%, P&Lctr |
 | Allocation | Where is capital/risk? | Weight |
 | Risk | How rough was the ride? | Vol, MaxDD, DDdur, SinceHi, CurDD, UnderTot, Ulcer, RecFac |
@@ -215,6 +215,22 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
   fund). P&L€ (the euros this percentage is of). P&Lctr (size *and* gap; a
   modest P&L% on a huge lot can still be most of the book's euros). Ret% (the
   same idea per deposit, not per holding).
+
+### Chg%
+- **Where:** `portfolio` per-fund table (with or without `--show-cost-basis`);
+  `rebalance --this-month` (per fund, netted across brokers)
+- **Type:** money, snapshot, cost basis
+- **Definition:** `Value€ ÷ Total paid − 1`, in percent: the row's EUR market value
+  at the as-of date against what its remaining shares cost (average cost, buy fees
+  included). One row per broker and fund in `portfolio`, per fund in `rebalance`. `n/a` when the row has no price or FX, or
+  nothing was paid.
+- **Useful for:** seeing at a glance which lots are under water and by how much —
+  the input to "buy more of what is below its average cost".
+- **Don't:** read it as `Last px ÷ Avg paid − 1`. `Last px` is the native close and
+  `Avg paid` includes fees, so for a USD fund the two differ by the FX move and the
+  fees. Nor is it a return over time — like P&L%, it has no time dimension.
+- **Read with:** P&L% (the same ratio per holding in `performance`). Value€ (the
+  numerator). Weight (how big the lot is — a deep Chg% on a tiny lot barely matters).
 
 ### P&Lctr
 - **Where:** `performance` table
