@@ -9,11 +9,10 @@ from datetime import UTC, datetime
 from typing import Any, Self
 
 import requests
-import yaml
 from ftgo import get_fund_stats, get_xid
 
 from .defaults import DEFAULT_CONFIG, KNOWN_FUND_CURRENCIES, XTB_EXCHANGE_SUFFIX
-from .persistence import atomic_write_yaml
+from .persistence import atomic_write_yaml, load_yaml
 from .retry import call_with_retry
 
 logger = logging.getLogger(__name__)
@@ -372,8 +371,7 @@ class ConfigManager:
 
     def _load_config(self) -> dict[str, Any]:
         if os.path.exists(self.config_path):
-            with open(self.config_path) as f:
-                return yaml.safe_load(f) or {"etfs": {}}
+            return load_yaml(self.config_path) or {"etfs": {}}
         return {"etfs": {}}
 
     def _save_config(self) -> None:

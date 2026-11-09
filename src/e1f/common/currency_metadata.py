@@ -5,10 +5,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import yaml
 
 from .defaults import DEFAULT_CURRENCY_META
-from .persistence import atomic_write_yaml
+from .persistence import atomic_write_yaml, load_yaml
 
 
 _FX_PAIR_RE = re.compile(r"^[A-Z]{6}$")
@@ -29,8 +28,7 @@ class CurrencyMetadata:
     def load(cls, path: str = DEFAULT_CURRENCY_META) -> CurrencyMetadata:
         if not os.path.exists(path):
             return cls()
-        with open(path) as stream:
-            loaded = yaml.safe_load(stream)
+        loaded = load_yaml(path)
         raw = {} if loaded is None else loaded
         if not isinstance(raw, dict):
             raise CurrencyMetadataError(f"{path}: root must be a mapping")

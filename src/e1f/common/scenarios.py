@@ -5,10 +5,9 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-import yaml
 
 from .defaults import DEFAULT_SCENARIOS
-from .persistence import atomic_write_yaml
+from .persistence import atomic_write_yaml, load_yaml
 
 
 @dataclass(frozen=True)
@@ -91,8 +90,7 @@ def load_scenarios(path: str = DEFAULT_SCENARIOS) -> dict[str, Scenario]:
     """Load every scenario from ``path`` (missing file → empty dict)."""
     if not os.path.exists(path):
         return {}
-    with open(path) as f:
-        loaded = yaml.safe_load(f)
+    loaded = load_yaml(path)
     raw = {} if loaded is None else loaded
     if not isinstance(raw, dict):
         raise ScenarioError(f"{path}: root must be a mapping")
