@@ -557,6 +557,14 @@ def test_sort_rows_by_twr_and_pnl_pct():
     assert by_pct == ["B", "A"]
 
 
+def test_sort_rows_by_sincehi_none_last():
+    near, far, unknown = _perf_row("A", 1.0), _perf_row("B", 1.0), _perf_row("C", 1.0)
+    near.days_since_high, far.days_since_high, unknown.days_since_high = 3, 90, None
+    rows = [near, unknown, far]
+    assert [r.isin for r in sort_rows(rows, sort_by="sincehi", reverse=True)] == ["B", "A", "C"]
+    assert [r.isin for r in sort_rows(rows, sort_by="sincehi")] == ["C", "A", "B"]
+
+
 def test_sort_rows_by_ctr_uses_contrib_map():
     a, b = _perf_row("A", 100.0), _perf_row("B", 100.0)
     ordered = sort_rows([a, b], sort_by="ctr", reverse=True, ctr_by_isin={"A": 0.02, "B": 0.10})
@@ -1324,10 +1332,11 @@ def test_series_main_invariance_row_equals_as_of_total(tmp_path, capsys):
 
     # snapshot TOTAL carries an extra P&Lctr column (index 4) the series drops;
     # the series adds Daily TWR (index 7) plus WTER + Fee€/yr the snapshot lacks.
-    # Compare the nine shared columns (MktVal … TWR, Vol, MaxDD).
+    # Compare the nine shared columns (MktVal … TWR, Vol, MaxDD); the snapshot's
+    # trailing SinceHi column has no series counterpart.
     series_vals = _row_numbers(series_line)
     series_vals = series_vals[:7] + series_vals[8:10]
-    total_vals = _row_numbers(total_line, drop_index=4)
+    total_vals = _row_numbers(total_line, drop_index=4)[:9]
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
         if isinstance(want, float):
@@ -1550,7 +1559,7 @@ def test_series_isin_invariance_row_equals_as_of_isin_total(tmp_path, capsys):
 
     series_vals = _row_numbers(series_line)
     series_vals = series_vals[:7] + series_vals[8:10]
-    total_vals = _row_numbers(total_line, drop_index=4)
+    total_vals = _row_numbers(total_line, drop_index=4)[:9]
     assert len(series_vals) == len(total_vals)
     for got, want in zip(series_vals, total_vals, strict=True):
         if isinstance(want, float):
@@ -2477,36 +2486,32 @@ def test_fmt_pct_rounds_tiny_negative_to_plain_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_split_pnl_sums_each_side_and_net_is_their_sum():
+def test_split_pnl_sums_each_side_and_cumulates_top_winners():
     pnl = {
         "A": [("2024-01-02", 100.0), ("2024-01-03", -20.0)],
         "B": [("2024-01-02", -30.0), ("2024-01-03", 50.0)],
         "C": [("2024-01-02", 0.0), ("2024-01-03", 10.0)],
+        "D": [("2024-01-03", 40.0)],
     }
-    cost = {
-        "A": [("2024-01-02", 500.0), ("2024-01-03", 500.0)],
-        "B": [("2024-01-02", 300.0), ("2024-01-03", 300.0)],
-        "C": [("2024-01-02", 200.0), ("2024-01-03", 200.0)],
-    }
-    # C sits at exactly zero on day 1, so it is on neither side; day 2 has two in profit.
-    assert perf._split_pnl(pnl, cost) == [
-        perf._SplitDay("2024-01-02", 100.0, -30.0, 1, 1, 500.0, 300.0),
-        perf._SplitDay("2024-01-03", 60.0, -20.0, 2, 1, 500.0, 500.0),
+    # C sits at exactly zero on day 1, so it is on neither side. With fewer than k
+    # winners the top-k sum is just all of them.
+    assert perf._split_pnl(pnl) == [
+        perf._SplitDay("2024-01-02", 100.0, -30.0, (100.0,) * 5),
+        perf._SplitDay("2024-01-03", 100.0, -20.0, (50.0, 90.0, 100.0, 100.0, 100.0)),
     ]
 
 
-def test_split_day_pct_is_cost_weighted_and_none_without_cost():
-    day = perf._SplitDay("2024-01-03", 60.0, -20.0, 2, 1, 500.0, 500.0)
-    assert day.pct_gain == pytest.approx(12.0)  # 60 / 500
-    assert day.pct_loss == pytest.approx(-4.0)  # -20 / 500
-    assert day.pct_underwater == pytest.approx(50.0)  # 500 of 1000 cost in loss funds
-    empty_side = perf._SplitDay("2024-01-03", 0.0, 0.0, 0, 0, 0.0, 0.0)
-    assert empty_side.pct_gain is None and empty_side.pct_loss is None
-    assert empty_side.pct_underwater is None
+def test_split_day_derived_metrics():
+    day = perf._SplitDay("2024-01-03", 100.0, -20.0, (50.0, 90.0, 100.0, 100.0, 100.0))
+    assert day.net == pytest.approx(80.0)
+    assert day.top_share(1) == pytest.approx(50.0)
+    assert day.top_share(2) == pytest.approx(90.0)
+    assert day.top_share(5) == pytest.approx(100.0)
+    assert perf._SplitDay("2024-01-03", 0.0, 0.0, (0.0,) * 5).top_share(1) is None
 
 
 def test_split_pnl_empty():
-    assert perf._split_pnl({}, {}) == []
+    assert perf._split_pnl({}) == []
 
 
 def test_series_chart_split_renders(tmp_path, capsys):
@@ -2544,3 +2549,41 @@ def test_chart_split_requires_series_chart(tmp_path, capsys):
     code = perf.main(_args(db, config, meta, "--as-of", "2024-12-31", "--chart-split"))
     assert code == 1
     assert "--chart-split requires --series N --chart" in capsys.readouterr().out
+
+
+
+def test_split_pnl_sums_another_metric_by_pnl_sign():
+    pnl = {"A": [("2024-01-02", 10.0)], "B": [("2024-01-02", -4.0)], "C": [("2024-01-02", 6.0)]}
+    value = {
+        "A": [("2024-01-02", 100.0)],
+        "B": [("2024-01-02", 50.0)],
+        "C": [("2024-01-02", 30.0)],
+    }
+    assert perf._split_pnl(pnl, value) == [
+        perf._SplitDay("2024-01-02", 130.0, 50.0, (100.0, 130.0, 130.0, 130.0, 130.0)),
+    ]
+
+
+def test_split_pnl_pct_is_cost_weighted_per_side():
+    pnl = {"A": [("2024-01-02", 10.0)], "B": [("2024-01-02", -4.0)], "C": [("2024-01-02", 20.0)]}
+    cost = {
+        "A": [("2024-01-02", 100.0)],
+        "B": [("2024-01-02", 200.0)],
+        "C": [("2024-01-02", 300.0)],
+    }
+    (day,) = perf._split_pnl_pct(pnl, cost)
+    assert day.gains == pytest.approx(30.0 / 400.0 * 100.0)  # 7.5% on A+C cost
+    assert day.losses == pytest.approx(-2.0)  # -4 on 200
+    assert day.net == pytest.approx(26.0 / 600.0 * 100.0)  # whole book, not gains+losses
+
+
+def test_split_pnl_pct_drops_days_without_cost():
+    assert perf._split_pnl_pct({"A": [("2024-01-02", 5.0)]}, {}) == []
+
+
+def test_risk_metrics_max_drawdown_peak_is_first_valued_day_not_seed():
+    # Day 1: 100 paid -> 90 (-10%); day 2: 90 -> 81 (-10%). Index 0.90 -> 0.81.
+    # Peak while held is 0.90, so MaxDD = 0.81/0.90 - 1 = -10% (a 1.0 seed gave -19%).
+    risk = perf.risk_metrics([("2024-01-01", 90.0, 100.0), ("2024-01-02", 81.0, 0.0)])
+    assert risk.max_drawdown == pytest.approx(-0.10)
+    assert risk.twr == pytest.approx(0.81 - 1.0)

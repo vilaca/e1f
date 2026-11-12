@@ -353,6 +353,7 @@ def test_special_char_single_queries_resolve():
     eur = [
         "MktVal€",
         "Cost€",
+        "Paid€",
         "P&L€",
         "ΔMktVal€ / ΔCost€ / ΔP&L€",
         "Amount€",

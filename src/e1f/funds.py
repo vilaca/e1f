@@ -87,7 +87,7 @@ def risk_from_returns(
     if not returns:
         return None, None, None
     wealth = 1.0
-    peak = 1.0
+    peak = float("-inf")  # best point of the window, not a 1.0 seed
     max_drawdown = 0.0
     for period_return in returns:
         wealth *= 1.0 + period_return

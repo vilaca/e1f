@@ -742,3 +742,31 @@ def test_bisect_finds_root_and_reports_no_sign_change():
     flows = [(0.0, -1000.0), (1.0, 1100.0)]
     assert _bisect(flows) == pytest.approx(0.10, rel=1e-4)
     assert _bisect([(0.0, 100.0), (1.0, 100.0)]) is None  # both endpoints positive
+
+
+def test_days_since_high_counts_open_drawdown_from_running_peak():
+    from e1f.common import days_since_high, drawdown_episodes
+
+    path = [("2024-01-01", 1.1), ("2024-01-03", 1.0), ("2024-01-10", 1.2), ("2024-01-15", 1.1)]
+    # Peak 1.2 on 01-10, still below it on 01-15 → 5 calendar days.
+    assert days_since_high(path) == 5
+    episodes = drawdown_episodes(path)
+    assert [(e.peak_date, e.end_date, e.recovered) for e in episodes] == [
+        ("2024-01-01", "2024-01-10", True),
+        ("2024-01-10", "2024-01-15", False),
+    ]
+    # A last day at a new high (including a flat re-touch) is 0 days off the peak.
+    assert days_since_high([*path, ("2024-01-20", 1.3)]) == 0
+    assert days_since_high([("2024-01-01", 1.0)]) == 0
+    assert days_since_high([]) is None
+
+
+def test_peak_is_best_point_while_held_not_a_one_point_zero_seed():
+    from e1f.common import days_since_high, drawdown_episodes
+
+    # Never above its first valued day: the peak is 2024-01-01 (0.99), not a 1.0 seed.
+    path = [("2024-01-01", 0.99), ("2024-01-02", 0.98), ("2024-01-05", 0.985)]
+    assert days_since_high(path) == 4
+    (episode,) = drawdown_episodes(path)
+    assert (episode.peak_date, episode.recovered) == ("2024-01-01", False)
+    assert episode.trough == pytest.approx(0.98 / 0.99 - 1.0)

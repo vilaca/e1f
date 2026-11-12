@@ -39,6 +39,7 @@ token. The contract is pinned by `tests/test_contracts.py`, not a shared
 | `pnl_ctr` | Share of book P&L | P&Lctr / %P&L |
 | `weight` | Row weight | Weight / Cur% |
 | `twr` / `xirr` / `cagr` / `vol` / `maxdd` | Return/risk | TWR / XIRR / CAGR / Vol / MaxDD |
+| `sincehi` | Days off the peak (`performance`, `portfolio`) | SinceHi |
 | `ctr` | Cariño return contribution | Ctr% (`--contrib` only) |
 | `ter` / `fee_yr` | Fee | TER / Fee/yr / Fee€/yr |
 | `units` | Share count | Units / Shares |

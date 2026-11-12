@@ -60,6 +60,7 @@ def test_completes_nested_commands_and_options(capsys):
         "avg",
         "last_px",
         "chg",
+        "sincehi",
         "cost",
         "value",
     }

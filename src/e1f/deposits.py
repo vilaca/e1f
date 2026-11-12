@@ -65,6 +65,14 @@ class DepositImpact:
     amount: float  # EUR contributed by this buy (shares × price + fee)
     value: float | None  # EUR value of its shares at as-of, or None if unvaluable
     pnl_share: float | None = None  # % of total P&L, assigned once the total is known
+    shares: float | None = None  # shares bought (summed in grouped rows); None on totals
+
+    @property
+    def paid(self) -> float | None:
+        """EUR paid per share, fee included (``amount / shares``); None when unknown."""
+        if self.shares is None or self.shares <= 0.0:
+            return None
+        return self.amount / self.shares
 
     @property
     def valuable(self) -> bool:
@@ -159,6 +167,7 @@ def deposit_impacts(
             name=str((config.get(isin) or {}).get("name", ""))[:24],
             amount=amount,
             value=None if unit is None else qty * unit,
+            shares=qty,
         ))
     _assign_pnl_shares(impacts)
     return impacts
@@ -213,6 +222,7 @@ def group_impacts(impacts: list[DepositImpact], by: str) -> list[DepositImpact]:
             name=members[0].name,
             amount=sum(m.amount for m in members),
             value=None if unvaluable else sum(m.value or 0.0 for m in members),
+            shares=sum(m.shares or 0.0 for m in members),
         ))
     _assign_pnl_shares(grouped)
     return grouped
@@ -462,7 +472,7 @@ def _fmt_pct(value: float | None) -> str:
 
 
 _COLUMNS = (
-    f"{'ISIN':<14} {'Fund':<24} {'Amount€':>10} {'Value€':>10} "
+    f"{'ISIN':<14} {'Fund':<24} {'Paid€':>9} {'Amount€':>10} {'Value€':>10} "
     f"{'Gain€':>10} {'Ret%':>7} {'%P&L':>7}"
 )
 _AGAINST_HEADER = (
@@ -483,7 +493,8 @@ def _grouped_header() -> str:
 def _row_cells(impact: DepositImpact) -> str:
     return (
         f"{impact.isin:<14} {impact.name:<24} "
-        f"{_fmt_money(impact.amount):>10} {_fmt_money(impact.value):>10} "
+        f"{_fmt_money(impact.paid):>9} {_fmt_money(impact.amount):>10} "
+        f"{_fmt_money(impact.value):>10} "
         f"{_fmt_signed(impact.gain):>10} {_fmt_pct(impact.ret_pct):>7} "
         f"{_fmt_pct(impact.pnl_share):>7}"
     )

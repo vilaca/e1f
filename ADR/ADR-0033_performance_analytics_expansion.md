@@ -56,9 +56,9 @@ data-backed today, and defer the rest **on the record** rather than approximatin
   - Days Since High — calendar days since the *current* running peak (0 = the last
     day is itself a new high), distinct from MaxDD Duration (which tracks the
     *deepest* episode); the two coincide only while the deepest drawdown is also the
-    open one. Surfaced in `--metrics` and as the `SinceHi` column under `--series`.
+    open one. Surfaced in `--metrics`, as the `SinceHi` column under `--series`, and per fund (and TOTAL) in the default table, where `--sort sincehi` orders by it. `portfolio` shows the same per-fund figure (netted across brokers) from the shared `common.days_since_high`, so the two commands agree by construction (pinned by a reconciliation test).
   - Current Drawdown (`CurDD`, last day's wealth ÷ running peak − 1) and Ulcer Index
-    (`Ulcer`, root-mean-square of the daily drawdown; peak seeded at 1.0 like MaxDD).
+    (`Ulcer`, root-mean-square of the daily drawdown; peak is the best point while held, like MaxDD — no 1.0 pre-investment seed).
     Both in `--metrics` and `--series`. The series total of underwater days is
     labelled `UnderTot` there, since it is cumulative and never resets.
   - Hit Rate (share of daily returns above zero) and historical CVaR 5%
@@ -66,10 +66,9 @@ data-backed today, and defer the rest **on the record** rather than approximatin
     assumed). `--metrics` only: the `--series` table is already wide.
   - Profit/loss split chart (`--series N --chart --chart-split`): per day, the
     holdings are split by the sign of their EUR P&L into a profit side and a loss
-    side (a fund at zero is on neither). Three panels: summed P&L per side with net,
-    fund count per side, and each side's cost-weighted return (summed P&L ÷ summed
-    cost; loss side as a magnitude) with the share of cost in loss-side funds on a
-    right axis. Reuses the per-holding `pnl_eur`/`cost` series; no new math. A fund
+    side (a fund at zero is on neither). Three panels: summed P&L per side with net; net P&L
+    drawdown from its running peak (EUR); share of the profit side's P&L from its
+    top 1…5 funds (%, cumulative). Reuses the per-holding `pnl_eur` series; no new math. A fund
     switches side as it crosses zero, so the lines can jump without a trade.
   - Best/Worst Month — calendar-month buckets of the daily time-weighted return
     series, chain-linked (partial first/last months included), labelled `YYYY-MM`.

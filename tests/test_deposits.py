@@ -947,3 +947,12 @@ def test_cmd_group_exclusive_with_against_portfolio(tmp_path, capsys):
     assert "--group cannot be combined with --against-portfolio" in (
         capsys.readouterr().out
     )
+
+
+def test_paid_is_amount_per_share_and_groups_weight_by_shares():
+    a = DepositImpact("2024-01-05", "A", "", amount=100.0, value=110.0, shares=4.0)
+    b = DepositImpact("2024-01-20", "A", "", amount=150.0, value=165.0, shares=5.0)
+    assert a.paid == 25.0
+    assert DepositImpact("d", "A", "", amount=1.0, value=None).paid is None
+    (month,) = dep.group_impacts([a, b], "month")
+    assert month.paid == pytest.approx(250.0 / 9.0)  # share-weighted, not mean of 25 and 30

@@ -11,6 +11,8 @@ comparison never disagree on how a return is defined.
 
 import itertools
 import math
+from dataclasses import dataclass
+from datetime import date
 
 from .defaults import UNSUPPORTED_FX_CURRENCIES
 from .holdings import (
@@ -32,6 +34,27 @@ _SHARE_EPSILON = 1e-9
 def contribution_on(events: list[PositionEvent], day: str) -> float:
     """EUR contributed by the events dated exactly ``day`` (0.0 for none)."""
     return sum(event.cash_flow for event in events if event.date == day)
+
+
+def breakpoint_days(series: HoldingSeries, first_day: str, as_of: str) -> list[str]:
+    """Trading days plus contribution days within ``[first_day, as_of]``, sorted."""
+    days = {d for d in series.price_dates if first_day <= d <= as_of}
+    days.update(e.date for e in series.events if first_day <= e.date <= as_of)
+    days.add(as_of)
+    return sorted(days)
+
+
+def isin_series_points(
+    series: HoldingSeries, first_day: str, as_of: str, db_path: str
+) -> list[tuple[str, float, float]]:
+    """One fund's ``(date, EUR value, contribution)`` triples; unvaluable days dropped."""
+    points: list[tuple[str, float, float]] = []
+    for day in breakpoint_days(series, first_day, as_of):
+        value = value_on(series, day, db_path)
+        if value is None:
+            continue
+        points.append((day, value, contribution_on(series.events, day)))
+    return points
 
 
 def aggregate_value_series(
@@ -93,6 +116,77 @@ def wealth_and_returns(
             wealth_path.append((day, wealth))
         previous_value = value
     return wealth_path, returns
+
+
+@dataclass(frozen=True)
+class DrawdownEpisode:
+    """One peak-to-recovery drawdown of the wealth index.
+
+    ``peak_date`` is the last all-time-high before the decline; ``end_date`` is the
+    day the index regained that peak, or — when ``recovered`` is False — the last
+    day in the series (the drawdown is still open as of that day). ``trough`` is the
+    deepest ``wealth/peak − 1`` reached within the episode (≤ 0).
+    """
+
+    peak_date: str
+    end_date: str
+    recovered: bool
+    trough: float
+
+
+def drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[DrawdownEpisode]:
+    """Peak-to-recovery drawdown episodes of the wealth index, in chronological order.
+
+    The running peak is the best index value while held (no 1.0 pre-investment
+    seed), matching ``risk_metrics``, so a first-day loss is not itself a drawdown. An episode
+    opens on the first day the index sits below its running peak and closes when it
+    regains that peak; a still-open episode at the end is emitted with
+    ``recovered=False`` and ``end_date`` = the last day.
+    """
+    if not wealth_path:
+        return []
+    episodes: list[DrawdownEpisode] = []
+    peak = float("-inf")
+    peak_date = wealth_path[0][0]
+    open_trough: float | None = None  # None while the index is at/above its peak
+    for day, wealth in wealth_path:
+        if wealth >= peak:
+            if open_trough is not None:
+                episodes.append(DrawdownEpisode(peak_date, day, True, open_trough))
+                open_trough = None
+            peak, peak_date = wealth, day
+        else:
+            drawdown = wealth / peak - 1.0
+            open_trough = drawdown if open_trough is None else min(open_trough, drawdown)
+    if open_trough is not None:
+        episodes.append(DrawdownEpisode(peak_date, wealth_path[-1][0], False, open_trough))
+    return episodes
+
+
+def days_since_high(wealth_path: list[tuple[str, float]]) -> int | None:
+    """Calendar days since the wealth index's highest point *while held* (SinceHi).
+
+    The peak is the best index value among the valued days themselves — with no
+    pre-investment seed (the same peak ``drawdown_episodes`` and MaxDD use), so a
+    fund that never beat its first valued day counts from that day. A tie keeps the
+    latest day; 0 when the last day is itself the high. ``None`` when no return is
+    defined. The single definition behind ``performance`` and ``portfolio``'s SinceHi.
+    """
+    if not wealth_path:
+        return None
+    peak_date, peak = wealth_path[0]
+    for day, wealth in wealth_path[1:]:
+        if wealth >= peak:
+            peak, peak_date = wealth, day
+    return (date.fromisoformat(wealth_path[-1][0]) - date.fromisoformat(peak_date)).days
+
+
+def holding_days_since_high(series: HoldingSeries, as_of: str, db_path: str) -> int | None:
+    """SinceHi of one held fund's TWR wealth index as of ``as_of``."""
+    if not series.events:
+        return None
+    points = isin_series_points(series, series.events[0].date, as_of, db_path)
+    return days_since_high(wealth_and_returns(points)[0])
 
 
 def eur_close_series(

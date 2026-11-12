@@ -21,7 +21,6 @@ from datetime import UTC, date, datetime, timedelta
 from typing import NamedTuple
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
 
 from e1f.common import (
     DEFAULT_CONFIG,
@@ -37,8 +36,10 @@ from e1f.common import (
     annual_fee_estimate,
     build_series as _build_series,
     close_asof as _close_asof,
-    contribution_on as _contribution_on,
     contribution_to_return,
+    days_since_high,
+    drawdown_episodes,
+    isin_series_points,
     load_price_series,
     load_trades,
     position_asof as _position_asof,
@@ -53,7 +54,7 @@ from e1f.common import (
 # Canonical tokens (ADR-0037); ctr/weight are --contrib columns, still accepted here.
 SORT_FIELDS = (
     "isin", "name", "value", "cost", "pnl", "pnl_pct", "pnl_ctr",
-    "xirr", "twr", "vol", "maxdd", "cagr", "weight", "ctr",
+    "xirr", "twr", "vol", "maxdd", "sincehi", "cagr", "weight", "ctr",
 )
 _TRADING_DAYS = 252
 _SHARE_EPSILON = 1e-9
@@ -123,7 +124,7 @@ def risk_metrics(series: list[tuple[str, float, float]]) -> RiskMetrics:
     returns: list[float] = []
     previous_value = 0.0
     wealth = 1.0
-    peak = 1.0
+    peak = float("-inf")  # the best point while held, not the 1.0 pre-investment seed
     max_drawdown = 0.0
 
     for _day, value, contribution in series:
@@ -158,22 +159,6 @@ def annualize(twr: float | None, days: int) -> float | None:
 # MaxDD they report is identical; these add its duration, the total underwater
 # time, the recovery factor, and the best/worst single-period moves. Pure, no DB.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _DrawdownEpisode:
-    """One peak-to-recovery drawdown of the wealth index.
-
-    ``peak_date`` is the last all-time-high before the decline; ``end_date`` is the
-    day the index regained that peak, or — when ``recovered`` is False — the last
-    day in the series (the drawdown is still open as of that day). ``trough`` is the
-    deepest ``wealth/peak − 1`` reached within the episode (≤ 0).
-    """
-
-    peak_date: str
-    end_date: str
-    recovered: bool
-    trough: float
 
 
 @dataclass(frozen=True)
@@ -225,35 +210,6 @@ class ExtendedMetrics:
     trailing_6m: float | None
 
 
-def _drawdown_episodes(wealth_path: list[tuple[str, float]]) -> list[_DrawdownEpisode]:
-    """Peak-to-recovery drawdown episodes of the wealth index, in chronological order.
-
-    The running peak is seeded at 1.0 (the pre-investment wealth), matching
-    ``risk_metrics``, so a first-day loss already counts as a drawdown. An episode
-    opens on the first day the index sits below its running peak and closes when it
-    regains that peak; a still-open episode at the end is emitted with
-    ``recovered=False`` and ``end_date`` = the last day.
-    """
-    if not wealth_path:
-        return []
-    episodes: list[_DrawdownEpisode] = []
-    peak = 1.0
-    peak_date = wealth_path[0][0]
-    open_trough: float | None = None  # None while the index is at/above its peak
-    for day, wealth in wealth_path:
-        if wealth >= peak:
-            if open_trough is not None:
-                episodes.append(_DrawdownEpisode(peak_date, day, True, open_trough))
-                open_trough = None
-            peak, peak_date = wealth, day
-        else:
-            drawdown = wealth / peak - 1.0
-            open_trough = drawdown if open_trough is None else min(open_trough, drawdown)
-    if open_trough is not None:
-        episodes.append(_DrawdownEpisode(peak_date, wealth_path[-1][0], False, open_trough))
-    return episodes
-
-
 _CVAR_TAIL = 0.05  # the worst 5% of daily returns
 
 
@@ -272,13 +228,13 @@ def _cvar(returns: list[float], tail: float) -> float | None:
 def _depth_metrics(wealth_path: list[tuple[str, float]]) -> tuple[float | None, float | None]:
     """``(current drawdown, Ulcer Index)`` of the wealth index; both ``None`` when empty.
 
-    Drawdown is ``wealth/peak − 1`` against the running peak seeded at 1.0 (as in
-    ``_drawdown_episodes``). The current drawdown is the last day's; the Ulcer Index is
+    Drawdown is ``wealth/peak − 1`` against the running peak of the held period (as in
+    ``drawdown_episodes``). The current drawdown is the last day's; the Ulcer Index is
     the root-mean-square of the daily drawdowns, so depth and duration both count.
     """
     if not wealth_path:
         return None, None
-    peak = 1.0
+    peak = float("-inf")
     squares = 0.0
     drawdown = 0.0
     for _day, wealth in wealth_path:
@@ -369,7 +325,7 @@ def extended_metrics(
     )
     cvar_5 = _cvar([r for _day, r in returns], _CVAR_TAIL)
 
-    episodes = _drawdown_episodes(wealth_path)
+    episodes = drawdown_episodes(wealth_path)
     if episodes:
         deepest = min(episodes, key=lambda episode: episode.trough)
         max_drawdown: float | None = deepest.trough
@@ -391,17 +347,8 @@ def extended_metrics(
         max_dd_peak_date = max_dd_recovery_date = None
         max_dd_ongoing = False
 
-    # Days since the current running peak: the last episode when it is still open
-    # (its peak is the running high), else 0 — the index sits at a new high as of
-    # the last day. Distinct from the deepest episode's duration above.
-    days_since_high: int | None
-    if not wealth_path:
-        days_since_high = None
-    elif episodes and not episodes[-1].recovered:
-        current = episodes[-1]
-        days_since_high = _window_days(current.peak_date, current.end_date)
-    else:
-        days_since_high = 0
+    # Distinct from the deepest episode's duration above; one shared definition.
+    since_high = days_since_high(wealth_path)
 
     current_drawdown, ulcer_index = _depth_metrics(wealth_path)
 
@@ -436,7 +383,7 @@ def extended_metrics(
         max_dd_recovery_date=max_dd_recovery_date,
         max_dd_ongoing=max_dd_ongoing,
         underwater_days=underwater_days,
-        days_since_high=days_since_high,
+        days_since_high=since_high,
         current_drawdown=current_drawdown,
         ulcer_index=ulcer_index,
         recovery_factor=recovery_factor,
@@ -462,26 +409,6 @@ def extended_metrics(
 # ``common``, ADR-0013 decision 4). Breakpoint-day assembly and per-point series
 # stay here — they are performance's own return-metric machinery.
 # ---------------------------------------------------------------------------
-
-
-def _breakpoint_days(series: HoldingSeries, first_day: str, as_of: str) -> list[str]:
-    """Trading days plus contribution days within ``[first_day, as_of]``, sorted."""
-    days = {d for d in series.price_dates if first_day <= d <= as_of}
-    days.update(e.date for e in series.events if first_day <= e.date <= as_of)
-    days.add(as_of)
-    return sorted(days)
-
-
-def _isin_series_points(
-    series: HoldingSeries, first_day: str, as_of: str, db_path: str
-) -> list[tuple[str, float, float]]:
-    points: list[tuple[str, float, float]] = []
-    for day in _breakpoint_days(series, first_day, as_of):
-        value = _value_on(series, day, db_path)
-        if value is None:
-            continue
-        points.append((day, value, _contribution_on(series.events, day)))
-    return points
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +448,8 @@ class PerformanceRow:
     # Share of the WHOLE book's cost basis (not just this view's holdings),
     # assigned post-hoc like pnl_contribution; see ``_assign_cost_weights``.
     cost_weight: float | None = None
+    # Calendar days since the holding's running TWR peak (0 at a new high).
+    days_since_high: int | None = None
 
     @property
     def valuable(self) -> bool:
@@ -591,9 +520,10 @@ def _build_row(
         return None
 
     market_value = _value_on(series, as_of, db_path)
-    points = _isin_series_points(series, first_day, as_of, db_path)
+    points = isin_series_points(series, first_day, as_of, db_path)
     window_days = _window_days(first_day, as_of)
     risk, cagr = _metrics_from_series(points, window_days)
+    since_high = days_since_high(_wealth_and_returns(points)[0])
 
     first_priced = series.price_dates[0] if series.price_dates else None
     short_history = window_days < _SHORT_HISTORY_DAYS or (
@@ -620,6 +550,7 @@ def _build_row(
         last_close=_close_asof(series, as_of),
         currency=series.currency,
         ter=_etf_ter(config_path, isin),
+        days_since_high=since_high,
     )
 
 
@@ -649,6 +580,7 @@ def _total_row(
     points = _aggregate_series(valuable, first_day, as_of, db_path)
     window_days = _window_days(first_day, as_of)
     risk, cagr = _metrics_from_series(points, window_days)
+    since_high = days_since_high(_wealth_and_returns(points)[0])
 
     flows: list[tuple[str, float]] = []
     for series in valuable:
@@ -677,6 +609,7 @@ def _total_row(
         last_close=solo.last_close if solo else None,
         currency=solo.currency if solo else None,
         ter=solo.ter if solo else None,
+        days_since_high=since_high,
     )
 
 
@@ -880,6 +813,7 @@ def _sort_key(
             "twr": row.twr,
             "vol": row.volatility,
             "maxdd": row.max_drawdown,
+            "sincehi": row.days_since_high,
             "cagr": row.cagr,
             "weight": row.market_value,
         }[sort_by]
@@ -978,9 +912,9 @@ def _fmt_pct(
 _HEADER = (
     f"\n{'ISIN':<14} {'Name':<28} {'MktVal€':>10} {'Cost€':>10} {'P&L€':>10} "
     f"{'P&L%':>8} {'P&Lctr':>7} {'XIRR':>7} {'CAGR':>8} {'TWR':>7} {'Vol':>7} "
-    f"{'MaxDD':>7}"
+    f"{'MaxDD':>7} {'SinceHi':>8}"
 )
-_RULE_WIDTH = 14 + 28 + 10 * 3 + 8 + 7 * 4 + 7 + 8 + 11
+_RULE_WIDTH = 14 + 28 + 10 * 3 + 8 + 7 * 4 + 7 + 8 + 11 + 9
 _STATUS_COL = 11
 
 
@@ -1006,7 +940,8 @@ def _format_row(row: PerformanceRow, *, show_status: bool = False) -> str:
         f"{_fmt_pct(row.pnl_contribution, scaled=True):>7} "
         f"{_fmt_pct(row.xirr):>7} {_fmt_pct(row.cagr, flag=flag):>8} "
         f"{_fmt_pct(row.twr):>7} "
-        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>7}"
+        f"{_fmt_pct(row.volatility, flag=flag):>7} {_fmt_pct(row.max_drawdown):>7} "
+        f"{_fmt_duration(row.days_since_high):>8}"
     )
     if show_status:
         base += f" {row_status(row).value:>{_STATUS_COL}}"
@@ -1466,7 +1401,7 @@ def _cmd_performance_series(
     chart_metrics: list[str] | None = None,
     all_holdings: bool = False,
     chart_overlay: bool = False,
-    chart_split: bool = False,
+    chart_split: str | None = None,
 ) -> int:
     timeline = _require_timeline(db_path, config_path, isins)
     if timeline is None:
@@ -1509,14 +1444,19 @@ def _cmd_performance_series(
                 "Holdings without TER metadata contribute 0 (dilutes)."
             )
     metrics = chart_metrics or ["pnl"]
-    if chart is not None and chart_split:
+    if chart is not None and chart_split is not None:
         per_isin_pnl = _per_isin_series(
             db_path, config_path, currency_meta_path, timeline,
-            start=start, end=as_of, metrics=["pnl_eur", "cost"],
+            start=start, end=as_of, metrics=_SPLIT_FETCH[chart_split],
         )
-        _render_split_pnl_chart(
-            _split_pnl(per_isin_pnl["pnl_eur"], per_isin_pnl["cost"]), chart
-        )
+        pnl_eur = per_isin_pnl["pnl_eur"]
+        if chart_split == "pnl":
+            split = _split_pnl_pct(pnl_eur, per_isin_pnl["cost"])
+        elif chart_split == "value":
+            split = _split_pnl(pnl_eur, per_isin_pnl["value"])
+        else:
+            split = _split_pnl(pnl_eur)
+        _render_split_pnl_chart(split, chart, metric=chart_split)
     elif chart is not None:
         if all_holdings:
             # One line per holding (whole book, or the --isin subset). pweight's
@@ -2118,135 +2058,177 @@ def _render_holdings_series_chart(
     print(f"Chart saved to {output}")
 
 
+_SPLIT_TOP_K = 5  # how many biggest winners the concentration panel cumulates
+
+
 class _SplitDay(NamedTuple):
-    """One day of the profit/loss split: per side, summed EUR P&L, fund count and cost."""
+    """One day of the profit/loss split over the valued holdings.
+
+    ``gains``/``losses`` sum EUR P&L per side; ``top_gains[k-1]`` is the P&L of the
+    *k* biggest winners together (all of them once fewer than *k* are in profit).
+    """
 
     day: str
     gains: float
     losses: float
-    n_gain: int
-    n_loss: int
-    cost_gain: float
-    cost_loss: float
+    top_gains: tuple[float, ...]
+    total: float | None = None  # set when gains + losses is not the net (ratio metrics)
 
     @property
-    def pct_gain(self) -> float | None:
-        """Profit side's cost-weighted return in %, or ``None`` with no cost on the side."""
-        return self.gains / self.cost_gain * 100.0 if self.cost_gain > 0.0 else None
+    def net(self) -> float:
+        """Net over both sides (sum of the sides unless *total* overrides it)."""
+        return self.gains + self.losses if self.total is None else self.total
 
-    @property
-    def pct_loss(self) -> float | None:
-        """Loss side's cost-weighted return in % (≤ 0), or ``None`` with no cost."""
-        return self.losses / self.cost_loss * 100.0 if self.cost_loss > 0.0 else None
-
-    @property
-    def pct_underwater(self) -> float | None:
-        """Share of the split funds' cost sitting in loss-side funds, in %.
-
-        ``None`` when neither side has cost (every fund at exactly zero or none valued).
-        """
-        total = self.cost_gain + self.cost_loss
-        return self.cost_loss / total * 100.0 if total > 0.0 else None
+    def top_share(self, k: int) -> float | None:
+        """Share of the profit side's P&L from the *k* biggest winners, in %."""
+        return self.top_gains[k - 1] / self.gains * 100.0 if self.gains > 0.0 else None
 
 
 def _split_pnl(
     pnl: dict[str, list[tuple[str, float]]],
-    cost: dict[str, list[tuple[str, float]]],
+    amount: dict[str, list[tuple[str, float]]] | None = None,
 ) -> list[_SplitDay]:
     """Chronological per-day split of per-holding EUR P&L into profit and loss sides.
 
     ``gains`` sums the holdings whose P&L is above zero that day, ``losses`` those
-    below zero (≤ 0), with ``n_gain``/``n_loss`` counting them and ``cost_gain``/
-    ``cost_loss`` summing their cost basis (from *cost*, the same day). A holding at
-    exactly zero is on neither side. A holding flips side as it crosses zero, so the
-    lines can jump without any position change; ``gains + losses`` is the net P&L.
+    below zero (≤ 0); a holding at exactly zero is on neither side. A holding flips
+    side as it crosses zero, so the lines can jump without any position change.
+
+    The side is always decided by the sign of ``pnl``; *amount* (per-holding series
+    of another additive metric, e.g. market value) is what gets summed per side,
+    defaulting to the P&L itself.
     """
-    cost_by_day = {isin: dict(points) for isin, points in cost.items()}
-    days: dict[str, list[float]] = {}
-    for isin, points in pnl.items():
+    winners: dict[str, list[float]] = {}
+    losses: dict[str, float] = {}
+    for isin_, points in pnl.items():
+        by_day = None if amount is None else dict(amount.get(isin_, []))
         for day, value in points:
-            acc = days.setdefault(day, [0.0, 0.0, 0, 0, 0.0, 0.0])
-            basis = cost_by_day.get(isin, {}).get(day, 0.0)
+            day_winners = winners.setdefault(day, [])
+            summed = value if by_day is None else by_day.get(day)
+            if summed is None:
+                continue
             if value > 0.0:
-                acc[0] += value
-                acc[2] += 1
-                acc[4] += basis
+                day_winners.append(summed)
             elif value < 0.0:
-                acc[1] += value
-                acc[3] += 1
-                acc[5] += basis
+                losses[day] = losses.get(day, 0.0) + summed
     return [
-        _SplitDay(day, acc[0], acc[1], int(acc[2]), int(acc[3]), acc[4], acc[5])
-        for day, acc in sorted(days.items())
+        _SplitDay(
+            day,
+            sum(day_winners),
+            losses.get(day, 0.0),
+            tuple(
+                sum(sorted(day_winners, reverse=True)[:k])
+                for k in range(1, _SPLIT_TOP_K + 1)
+            ),
+        )
+        for day, day_winners in sorted(winners.items())
     ]
 
 
-def _render_split_pnl_chart(split: list[_SplitDay], output: str) -> None:
-    """Save the profit/loss split chart: EUR P&L by side + net, fund counts, P&L %."""
+def _split_pnl_pct(
+    pnl: dict[str, list[tuple[str, float]]], cost: dict[str, list[tuple[str, float]]]
+) -> list[_SplitDay]:
+    """Per-day P&L % on cost for the profit side, the loss side and the whole book.
+
+    Each side is its holdings' summed P&L over their summed cost (cost-weighted, not
+    an average of percentages). Days with no cost basis are dropped.
+    """
+    sides: dict[str, list[float]] = {}  # day -> [gain_pnl, gain_cost, loss_pnl, loss_cost]
+    for isin_, points in pnl.items():
+        cost_by_day = dict(cost.get(isin_, []))
+        for day, value in points:
+            basis = cost_by_day.get(day)
+            if basis is None:
+                continue
+            acc = sides.setdefault(day, [0.0, 0.0, 0.0, 0.0])
+            if value > 0.0:
+                acc[0] += value
+                acc[1] += basis
+            elif value < 0.0:
+                acc[2] += value
+                acc[3] += basis
+    zero_top = (0.0,) * _SPLIT_TOP_K
+    return [
+        _SplitDay(
+            day,
+            acc[0] / acc[1] * 100.0 if acc[1] > 0.0 else 0.0,
+            acc[2] / acc[3] * 100.0 if acc[3] > 0.0 else 0.0,
+            zero_top,
+            total=(acc[0] + acc[2]) / (acc[1] + acc[3]) * 100.0,
+        )
+        for day, acc in sorted(sides.items())
+        if acc[1] + acc[3] > 0.0
+    ]
+
+
+# metric → (top-panel ylabel, drawdown ylabel); concentration panel only for additive metrics
+_SPLIT_LABELS = {
+    "pnl_eur": ("Unrealized P&L (EUR)", "Net P&L below peak (EUR)"),
+    "value": ("Market value (EUR)", "Total value below peak (EUR)"),
+    "pnl": ("P&L on cost (%)", "Net P&L % below peak (pp)"),
+}
+# per-holding series each split metric needs from _per_isin_series
+_SPLIT_FETCH = {
+    "pnl_eur": ["pnl_eur"],
+    "value": ["pnl_eur", "value"],
+    "pnl": ["pnl_eur", "cost"],
+}
+
+
+def _render_split_pnl_chart(
+    split: list[_SplitDay], output: str, *, metric: str = "pnl_eur"
+) -> None:
+    """Save the profit/loss split chart: metric by side, net drawdown, gain concentration."""
     if not split:
         print("No valued days to chart")
         return
     days = [point.day for point in split]
     xs = list(range(len(days)))
-    gains = [point.gains for point in split]
-    losses = [point.losses for point in split]
-    net = [point.gains + point.losses for point in split]
+    net = [point.net for point in split]
 
-    fig, (ax, ax_n, ax_p) = plt.subplots(
-        3, 1, figsize=(12, 9), sharex=True, gridspec_kw={"height_ratios": [3, 1, 1.5]}
+    top_label, dd_label = _SPLIT_LABELS[metric]
+    with_concentration = metric != "pnl"
+    ratios = [3, 1.2, 1.2] if with_concentration else [3, 1.2]
+    fig, axes = plt.subplots(
+        len(ratios), 1, figsize=(12, 10 if with_concentration else 8), sharex=True,
+        gridspec_kw={"height_ratios": ratios},
     )
-    ax.fill_between(xs, gains, 0.0, color="#2ecc71", alpha=0.35, label="Holdings in profit")
-    ax.fill_between(xs, losses, 0.0, color="#e74c3c", alpha=0.35, label="Holdings in loss")
+    ax, ax_d = axes[0], axes[1]
+    ax_c = axes[2] if with_concentration else axes[1]
+    ax.fill_between(xs, [p.gains for p in split], 0.0, color="#2ecc71", alpha=0.35,
+                    label="Holdings in profit")
+    ax.fill_between(xs, [p.losses for p in split], 0.0, color="#e74c3c", alpha=0.35,
+                    label="Holdings in loss")
     ax.plot(xs, net, color="#2c3e50", linewidth=1.8, label="Net P&L")
     ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
-    ax.set_ylabel("Unrealized P&L (EUR)", fontsize=9)
+    ax.set_ylabel(top_label, fontsize=9)
     ax.legend(fontsize=9, loc="best", framealpha=0.7)
 
-    ax_n.step(xs, [point.n_gain for point in split], where="post", color="#2ecc71",
-              linewidth=1.5, label="In profit")
-    ax_n.step(xs, [point.n_loss for point in split], where="post", color="#e74c3c",
-              linewidth=1.5, label="In loss")
-    ax_n.set_ylabel("Funds", fontsize=9)
-    ax_n.yaxis.set_major_locator(MaxNLocator(integer=True))
-    ax_n.set_ylim(bottom=0)
-    ax_n.legend(fontsize=8, loc="best", framealpha=0.7)
+    peak = float("-inf")
+    drawdown = []
+    for value in net:
+        peak = max(peak, value)
+        drawdown.append(value - peak)
+    ax_d.fill_between(xs, drawdown, 0.0, color="#e67e22", alpha=0.4)
+    ax_d.set_ylabel(dd_label, fontsize=9)
 
-    # Both sides as magnitudes so their sizes compare directly on one positive axis.
-    pct_sides = (
-        ([point.pct_gain for point in split], "#2ecc71", "Profit side (% of cost)"),
-        (
-            [None if v is None else abs(v) for v in (point.pct_loss for point in split)],
-            "#e74c3c",
-            "Loss side, magnitude (% of cost)",
-        ),
-    )
-    for pcts, color, label in pct_sides:
-        dated = [(i, v) for i, v in enumerate(pcts) if v is not None]
-        if dated:
-            ax_p.plot([i for i, _ in dated], [v for _, v in dated], color=color,
-                      linewidth=1.5, label=label)
-    ax_p.set_ylabel("Return on cost (%)", fontsize=9)
-    ax_p.set_ylim(bottom=0)
-    handles, labels = ax_p.get_legend_handles_labels()
+    for k in range(1, _SPLIT_TOP_K + 1) if with_concentration else ():
+        shares = [(i, p.top_share(k)) for i, p in enumerate(split) if p.top_share(k) is not None]
+        if shares:
+            ax_c.plot([i for i, _ in shares], [v for _, v in shares], linewidth=1.3,
+                      color=plt.cm.viridis((k - 1) / max(1, _SPLIT_TOP_K - 1) * 0.9),
+                      label=f"Top {k}")
+    if with_concentration:
+        ax_c.set_ylim(0, 100)
+        ax_c.set_ylabel("Share of gains (%)" if metric == "pnl_eur" else "Share of profit-side (%)",
+                        fontsize=9)
+        ax_c.legend(fontsize=8, loc="best", ncol=_SPLIT_TOP_K, framealpha=0.7)
 
-    # Right axis: share of the split funds' cost that sits in loss-side funds.
-    ax_u = ax_p.twinx()
-    underwater = [(i, point.pct_underwater) for i, point in enumerate(split)]
-    dated_u = [(i, v) for i, v in underwater if v is not None]
-    if dated_u:
-        ax_u.plot([i for i, _ in dated_u], [v for _, v in dated_u], color="#7f8c8d",
-                  linewidth=1.3, linestyle="--", label="Cost underwater (right axis)")
-    ax_u.set_ylim(0, 100)
-    ax_u.set_ylabel("Cost underwater (%)", fontsize=9)
-    ax_u.spines["top"].set_visible(False)
-    u_handles, u_labels = ax_u.get_legend_handles_labels()
-    ax_p.legend(handles + u_handles, labels + u_labels, fontsize=8, loc="best", framealpha=0.7)
-
-    for axis in (ax, ax_n, ax_p):
+    for axis in axes:
         axis.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-    _apply_xticks(ax_p, days)
+    _apply_xticks(ax_c, days)
     fig.suptitle(f"Profit vs loss holdings — {days[0]} → {days[-1]}", fontsize=11)
     plt.tight_layout()
     plt.savefig(output, dpi=150)
@@ -2587,10 +2569,12 @@ Examples:
     )
     parser.add_argument(
         "--isin",
-        action="append",
+        nargs="+",
+        action="extend",
         default=None,
         metavar="ISIN",
-        help="Restrict every view to this holding; repeat to compare a subset "
+        help="Restrict every view to these holdings (space-separated and/or repeated) "
+        "to compare a subset "
         "(ADR-0038, ADR-0047). Each must be a held ISIN. With --series --chart, add "
         "--all-holdings for one line per holding.",
     )
@@ -2645,10 +2629,15 @@ Examples:
     )
     parser.add_argument(
         "--chart-split",
-        action="store_true",
-        help="With --series --chart: plot the summed EUR P&L of holdings in profit, of "
-        "holdings in loss, and the net, instead of --chart-metric. Not with "
-        "--all-holdings/--chart-metric/--chart-overlay.",
+        nargs="?",
+        const="pnl_eur",
+        default=None,
+        choices=sorted(_SPLIT_LABELS),
+        metavar="METRIC",
+        help="With --series --chart: split holdings by sign of P&L and plot the chosen metric "
+        "for the profit side, the loss side and the net: pnl_eur (default; summed EUR P&L), "
+        "value (summed market value) or pnl (P&L %% on cost, cost-weighted per side). "
+        "Replaces --chart-metric; not with --all-holdings/--chart-metric/--chart-overlay.",
     )
     return parser
 
@@ -2689,7 +2678,7 @@ def main(argv: list[str] | None = None) -> int:
         chart_incompatible = diff_n is not None or args.metrics or args.contrib
         if args.chart and chart_incompatible:
             raise ValueError("--chart only composes with the default snapshot view or --series")
-        if args.chart_split:
+        if args.chart_split is not None:
             if not args.chart or series_n is None:
                 raise ValueError("--chart-split requires --series N --chart")
             if args.all_holdings or args.chart_overlay or args.chart_metric != ["pnl"]:
@@ -2697,7 +2686,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--chart-split does not compose with --all-holdings/--chart-overlay/"
                     "--chart-metric"
                 )
-        if args.chart and not args.chart_split:
+        if args.chart and args.chart_split is None:
             requested = set(args.chart_metric)
             isin_only = requested & _ISIN_ONLY_CHART_METRICS
             if isin_only and not (isins is not None and len(isins) == 1):

@@ -31,7 +31,7 @@ The shell is inferred from `$SHELL`; pass `bash` or `zsh` explicitly to override
 | How did the *funds* do, timing stripped out? | `e1f performance` | **TWR** (cumulative) and **CAGR** (that per year) — the holdings' return, comparable to a factsheet |
 | Am I up or down, in euros? | `e1f performance` | **P&L€** (euros vs what you paid), **P&L%** (that over cost) |
 | Which holdings actually drove the return? | `e1f performance --contrib` | **Ctr%** — each holding's share of the book's TWR (sums to TOTAL), beside its **TWR** and value **Weight**; for the euro share **P&Lctr**, see the plain `e1f performance` table |
-| How rough was the ride — worst drop, time underwater? | `e1f performance --metrics` | **MaxDD** (deepest fall), **SinceHi** (days off the current peak), **RecFac** (TWR ÷ that fall — >1 means it paid off) |
+| How rough was the ride — worst drop, time underwater? | `e1f performance --metrics` | **MaxDD** (deepest fall), **SinceHi** (days off the current peak; also a per-fund column in the `performance` and `portfolio` tables, `--sort sincehi`), **RecFac** (TWR ÷ that fall — >1 means it paid off) |
 | What changed over the last N days? | `e1f performance --diff N` | **ΔMktVal€ / ΔP&L€** — a **ΔCost€** spike is cash *in*, not a gain |
 | How did the TOTAL move day by day? | `e1f performance --series N` | one cumulative-since-inception TOTAL snapshot per trading day, plus **Daily TWR** (that day's increment) |
 | How did one fund move day by day? | `e1f performance --series N --isin X` | the same series, restricted to that holding (ADR-0038) |
@@ -129,7 +129,8 @@ e1f performance --series 90          # portfolio TOTAL for each trading day, las
 e1f performance --series 60 --isin IE00B3VSSL01  # that holding's path only (ADR-0038)
 e1f performance --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # compare a subset; repeat --isin (ADR-0047)
 e1f performance --series 90 --chart --all-holdings --isin IE00B3VSSL01 --isin IE00B3YCGJ38  # per-holding comparison chart
-e1f performance --series 90 --chart --chart-split  # EUR P&L of holdings in profit vs in loss, net, and fund counts
+e1f performance --series 90 --chart --chart-split         # EUR P&L of holdings in profit vs in loss, net, drawdown and gain concentration
+e1f performance --series 90 --chart --chart-split pnl     # same split as P&L % on cost (also: value)
 e1f performance --metrics            # portfolio-level extended risk report (ADR-0033)
 e1f performance --metrics --series 14 # that report tabulated per trading day, last 14 days
 e1f performance --contrib            # per-holding return contribution (sums to TOTAL TWR, ADR-0033)
@@ -282,7 +283,7 @@ Use `e1f transactions list` to view stored trades.
 
 Holdings and cost basis: `ADR/ADR-0005_portfolio_holdings_from_transactions.md`
 (output in `src/e1f/portfolio.py`). Every row shows `Avg paid`, the native `Last px` and
-`Chg%` (EUR value against total paid). `--show-cost-basis` adds units, total paid, an FX-converted EUR
+`Chg%` (EUR value against total paid) and `SinceHi` (days since the fund's TWR peak, as in `performance`; `--sort sincehi`). `--show-cost-basis` adds units, total paid, an FX-converted EUR
 market value and market-value-weighted fee / TER (`ADR/ADR-0032_portfolio_fx_market_value.md`);
 holdings with no price or FX are excluded from those totals with a warning.
 `--show-status` / `--explain` add opt-in provenance disclosure (ADR-0014; see below).

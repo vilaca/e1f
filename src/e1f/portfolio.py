@@ -25,8 +25,11 @@ from e1f.common import (
     Status,
     _explain_metric,
     annual_fee_estimate,
+    build_series,
     convert_to_eur,
+    holding_days_since_high,
     pinned_quote_currency,
+    position_timeline,
     weighted_ter_cost,
 )
 
@@ -35,7 +38,7 @@ _SHARE_EPSILON = 1e-9
 # Canonical tokens (ADR-0037): cost=Total paid, value=Value€.
 SORT_FIELDS = (
     "broker", "isin", "name", "class", "ccy", "dist", "ter", "fee_yr",
-    "weight", "units", "avg", "last_px", "chg", "cost", "value",
+    "weight", "units", "avg", "last_px", "chg", "sincehi", "cost", "value",
 )
 _STATUS_COL = 11
 
@@ -285,6 +288,7 @@ def _sort_key(
     eur_values: dict[tuple[str, str], float | None],
     last_prices: dict[str, float | None],
     currency_meta_path: str,
+    since_high: dict[str, int | None],
 ) -> tuple[Any, ...] | str | float:
     if sort_by == "broker":
         return (holding.broker, holding.symbol)
@@ -319,6 +323,9 @@ def _sort_key(
     if sort_by == "chg":
         chg = _change_pct(eur_values.get((holding.broker, holding.symbol)), holding.total_paid)
         return float("-inf") if chg is None else chg
+    if sort_by == "sincehi":
+        days = since_high.get(holding.symbol)
+        return float("-inf") if days is None else days
     if sort_by == "ter":
         ter = (ConfigManager(config_path).get(holding.symbol) or {}).get("ter")
         return float(ter) if isinstance(ter, (int, float)) else float("-inf")
@@ -340,9 +347,11 @@ def sort_holdings(
     eur_values: dict[tuple[str, str], float | None],
     last_prices: dict[str, float | None] | None = None,
     currency_meta_path: str = DEFAULT_CURRENCY_META,
+    since_high: dict[str, int | None] | None = None,
 ) -> list[Holding]:
     """Return holdings ordered by the requested column."""
     prices = last_prices or {}
+    days = since_high or {}
     return sorted(
         holdings,
         key=lambda holding: _sort_key(
@@ -353,6 +362,7 @@ def sort_holdings(
             eur_values=eur_values,
             last_prices=prices,
             currency_meta_path=currency_meta_path,
+            since_high=days,
         ),
         reverse=reverse,
     )
@@ -398,7 +408,7 @@ def _table_header(*, show_broker: bool, show_cost_basis: bool, show_status: bool
         f"{'ISIN':<14} {'Name':<32} {'Class':<6} "
         f"{'CCY':<8} {'Dist':<4} {'TER':>6}"
     )
-    price_cols = f" {'Avg paid':>10} {'Last px':>8} {'Chg%':>7}"
+    price_cols = f" {'Avg paid':>10} {'Last px':>8} {'Chg%':>7} {'SinceHi':>8}"
     if show_cost_basis:
         header += (
             f" {'Fee/yr':>8} {'Weight':>7} {'Units':>10}{price_cols}"
@@ -659,6 +669,23 @@ def _cmd_portfolio_diff(
     return 0
 
 
+def _days_since_high_by_isin(
+    db_path: str,
+    currency_meta_path: str,
+    rows: list[tuple[str, str, str, str, float, float, float]],
+    symbols: set[str],
+    as_of: str,
+) -> dict[str, int | None]:
+    """SinceHi per held ISIN (netted across brokers), from the shared TWR wealth index."""
+    timeline = position_timeline(rows)
+    result: dict[str, int | None] = {}
+    for symbol in symbols:
+        events = [event for event in timeline.get(symbol, []) if event.date <= as_of]
+        series = build_series(db_path, symbol, events, as_of, currency_meta_path)
+        result[symbol] = holding_days_since_high(series, as_of, db_path)
+    return result
+
+
 def _cmd_portfolio(
     db_path: str,
     config_path: str,
@@ -692,6 +719,9 @@ def _cmd_portfolio(
     last_prices = {
         holding.symbol: _last_known_price(db_path, holding.symbol, as_of) for holding in holdings
     }
+    since_high = _days_since_high_by_isin(
+        db_path, currency_meta_path, rows, {h.symbol for h in holdings}, as_of
+    )
     holdings = sort_holdings(
         holdings,
         sort_by=sort_by,
@@ -701,6 +731,7 @@ def _cmd_portfolio(
         eur_values=eur_values,
         last_prices=last_prices,
         currency_meta_path=currency_meta_path,
+        since_high=since_high,
     )
 
     header = _table_header(
@@ -735,7 +766,9 @@ def _cmd_portfolio(
         last_px_str = f"{last_px:>8.2f}" if last_px is not None else f"{'—':>8}"
         chg = _change_pct(value, holding.total_paid)
         chg_str = "n/a" if chg is None else f"{chg:+.1f}%"
-        price_cells = f" {holding.avg_cost:>10.4f} {last_px_str} {chg_str:>7}"
+        days = since_high[holding.symbol]
+        since_str = "n/a" if days is None else f"{days:,}d"
+        price_cells = f" {holding.avg_cost:>10.4f} {last_px_str} {chg_str:>7} {since_str:>8}"
         if show_cost_basis:
             fee_str = f"€{fee:.2f}" if fee is not None else "—"
             value_str = f"{value:>9.2f}" if value is not None else f"{'—':>9}"

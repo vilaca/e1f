@@ -490,10 +490,10 @@ def test_main_portfolio_shows_weight_column(tmp_path, capsys):
     assert "Total paid" not in out
     # Avg paid, Last px and Chg% show without --show-cost-basis too; no price → n/a.
     header = next(line for line in out.splitlines() if line.startswith("ISIN"))
-    assert header.split()[-6:] == ["Weight", "Avg", "paid", "Last", "px", "Chg%"]
+    assert header.split()[-7:] == ["Weight", "Avg", "paid", "Last", "px", "Chg%", "SinceHi"]
     rows = [line for line in out.splitlines() if line.startswith(ISIN_ETF)]
-    assert [row.split()[-4:] for row in rows] == [
-        ["25.0%", "100.0000", "—", "n/a"], ["75.0%", "300.0000", "—", "n/a"],
+    assert [row.split()[-5:] for row in rows] == [
+        ["25.0%", "100.0000", "—", "n/a", "n/a"], ["75.0%", "300.0000", "—", "n/a", "n/a"],
     ]
     rule = next(line for line in out.splitlines() if line.startswith("---"))
     assert len(rule) == len(header)
@@ -780,6 +780,67 @@ def test_eur_value_none_when_unpriced_or_no_fx(tmp_path):
     )
     assert _eur_value(db, meta, ISIN_USD, 10.0) is None        # no FX rate
     assert _eur_value(db, meta, "IE00NOPRICE00", 10.0) is None  # no price / not pinned
+
+
+def _seed_since_high(tmp_path):
+    # FUND_A peaks on 01-02 then slips (8 days off the high at as-of 01-10); FUND_B is
+    # closes at its high on 01-03 and holds it (0 days). Hand-computed from the TWR wealth index.
+    a, b = ISIN_ETF, ISIN_SECOND
+    return _seed_valued(
+        tmp_path,
+        transactions=[
+            _vbuy("t1", "2024-01-01", a, 10.0, 100.0),
+            _vbuy("t2", "2024-01-01", b, 10.0, 100.0),
+        ],
+        prices=[
+            (a, "2024-01-01", 100.0), (a, "2024-01-02", 110.0), (a, "2024-01-03", 105.0),
+            (b, "2024-01-01", 100.0), (b, "2024-01-02", 101.0), (b, "2024-01-03", 120.0),
+        ],
+        currencies={a: "EUR", b: "EUR"},
+        names={a: "Fund A", b: "Fund B"},
+    )
+
+
+def test_main_portfolio_since_high_column_and_sort(tmp_path, capsys):
+    db, config, meta = _seed_since_high(tmp_path)
+    assert portfolio_mod.main(_pargs(db, config, meta, "--as-of", "2024-01-10")) == 0
+    out = capsys.readouterr().out
+    header = next(line for line in out.splitlines() if line.startswith("ISIN"))
+    assert header.split()[-1] == "SinceHi"
+    cells = {line.split()[0]: line.split()[-1] for line in out.splitlines()
+             if line.startswith("IE00")}
+    assert cells == {ISIN_ETF: "8d", ISIN_SECOND: "0d"}
+
+    assert portfolio_mod.main(
+        _pargs(db, config, meta, "--as-of", "2024-01-10", "--sort", "sincehi", "--reverse")
+    ) == 0
+    order = [line.split()[0] for line in capsys.readouterr().out.splitlines()
+             if line.startswith("IE00")]
+    assert order == [ISIN_ETF, ISIN_SECOND]
+
+
+def test_portfolio_since_high_reconciles_with_performance(tmp_path, capsys):
+    from e1f import performance as performance_mod
+
+    db, config, meta = _seed_since_high(tmp_path)
+    args = _pargs(db, config, meta, "--as-of", "2024-01-10")
+    assert portfolio_mod.main(args) == 0
+    held = {line.split()[0]: line.split()[-1] for line in capsys.readouterr().out.splitlines()
+            if line.startswith("IE00")}
+    assert performance_mod.main(args) == 0
+    perf = {line.split()[0]: line.split()[-1] for line in capsys.readouterr().out.splitlines()
+            if line.startswith("IE00")}
+    assert held == perf
+
+
+def test_sort_holdings_by_sincehi_puts_unknown_last_when_descending():
+    holdings = [Holding(BROKER_TRADE_REPUBLIC, s, 1.0, 100.0, 100.0) for s in ("AAA", "BBB", "CCC")]
+    result = sort_holdings(
+        holdings, sort_by="sincehi", reverse=False,
+        config_path="unused", total_invested=300.0, eur_values={},
+        since_high={"AAA": 40, "BBB": None, "CCC": 3},
+    )
+    assert [h.symbol for h in result] == ["BBB", "CCC", "AAA"]  # unknown (-inf) first ascending
 
 
 def test_main_portfolio_value_and_fee_fx_converted(tmp_path, capsys):

@@ -398,3 +398,8 @@ def test_cmd_no_filter_match(tmp_path, capsys):
     )
     assert funds.main(_args(db, config, meta, "--as-of", "2024-01-02", "--class", "Bonds")) == 0
     assert "No funds match the filters" in capsys.readouterr().out
+
+
+def test_risk_from_returns_peak_is_first_return_not_seed():
+    _twr, _vol, maxdd = risk_from_returns([-0.10, -0.10])
+    assert maxdd == pytest.approx(-0.10)  # 0.81 / 0.90 - 1, not 0.81 / 1.0 - 1

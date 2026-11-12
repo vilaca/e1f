@@ -163,7 +163,7 @@ def _max_drawdown(returns: list[float]) -> float | None:
     if not returns:
         return None
     wealth = 1.0
-    peak = 1.0
+    peak = float("-inf")  # best point of the window, not a 1.0 seed
     max_dd = 0.0
     for period_return in returns:
         wealth *= 1.0 + period_return

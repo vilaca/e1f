@@ -358,3 +358,9 @@ def test_cmd_all_empty_prices(tmp_path, capsys):
     assert code == 0
     assert "No price series in database" in out
 
+
+
+def test_max_drawdown_peak_is_first_return_not_seed():
+    from e1f.benchmark import _max_drawdown
+
+    assert _max_drawdown([-0.10, -0.10]) == pytest.approx(-0.10)

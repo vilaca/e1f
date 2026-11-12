@@ -184,6 +184,20 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
   size-normalized). Weight in `portfolio` (a share of *this*, not of market
   value). Invested (the deposits name for the same TOTAL).
 
+
+### Paid€
+- **Where:** `deposits` (per-deposit and `--group` rows)
+- **Type:** money, per share
+- **Definition:** EUR paid per share for the deposit, fee included (Amount€ ÷ shares).
+  A grouped row is share-weighted (Σ Amount€ ÷ Σ shares), not a mean of prices. Blank
+  (—) on the total rows, where funds with different prices would be mixed.
+- **Useful for:** comparing each buy with the fund's current price to see which
+  contributions are up or down.
+- **Don't:** compare it with a native-currency close for a non-EUR fund — it is EUR
+  and includes the fee, so the two differ by the FX move and the fee.
+- **Read with:** Avg paid (the same idea per fund on `portfolio`, native currency).
+  Amount€ (the total this is divided from).
+
 ### P&L€
 - **Where:** `performance` (`P&L€`); `deposits` per-row (`Gain€`); deposits total
   is **Organic gain**
@@ -300,23 +314,25 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
   numerator). WTER (the market-value-weighted blend this is not).
 
 ### Profit/Loss split (chart-split)
-- **Where:** `performance --series --chart --chart-split`
-- **Type:** EUR, share of cost
+- **Where:** `performance --series --chart --chart-split [pnl_eur|value|pnl]`
+- **Type:** EUR, %, share
 - **Definition:** Each day the held funds are split by the sign of their unrealized
-  EUR P&L. The top panel sums P&L over the funds in profit and over the funds in
-  loss, with net P&L (their sum) as a line; the middle panel counts the funds on
-  each side; the bottom panel is each side's cost-weighted return, summed P&L ÷
-  summed cost of that side's funds (the loss side drawn as a magnitude, so both
-  compare on one positive axis), plus on the right axis the share of the split
-  funds' cost that sits in loss-side funds. A fund at exactly zero is on neither
-  side. No percentage is drawn for a side with no cost.
+  EUR P&L; a fund at exactly zero is on neither side. Three panels: (1) P&L summed
+  over the funds in profit and in loss, with net P&L (their sum) as a line; (2) net
+  P&L below its own running peak, EUR; (3) the share of the profit side's P&L that
+  comes from its 1, 2, … 5 biggest winners (cumulative lines; blank on days with no
+  profit side, and 100% once fewer funds than *k* are in profit).
+  `--chart-split value` sums market value per side instead of P&L (the sides are
+  still chosen by P&L sign); `--chart-split pnl` plots P&L % on cost, each side as
+  summed P&L over summed cost (cost-weighted), net as the whole book's ratio, and
+  omits panel 3.
 - **Useful for:** whether the net comes from broad strength or a few winners
-  covering losers, and whether the losing side is a deep hole in a small base or a
-  shallow one across much of the book.
-- **Don't:** read a jump as a trade — a fund changes side when it crosses zero. A
-  side holding one small recent buy gives a noisy percentage.
-- **Read with:** P&L€ (the per-fund figure summed here). Cost€ (the denominator).
-  pweight (a fund's cost share).
+  covering losers (1, 3), and how far net P&L sits below its best (2).
+- **Don't:** read a jump as a trade — a fund changes side when it crosses zero.
+  Panel 2 is a euro gap, so new contributions can lift or deepen it without any
+  market move.
+- **Read with:** P&L€ (the per-fund figure summed here). CurDD/MaxDD (the same
+  idea on the TWR index, which deposits don't distort).
 
 ## Risk & drawdown
 
@@ -343,7 +359,9 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
 - **Type:** time-weighted
 - **Definition:** The deepest peak-to-trough decline of the time-weighted wealth
   index, `min(wealth_t / peak_t − 1)` over the path (sampled daily), where
-  `peak_t` is the running maximum up to `t`. Reported as a negative number
+  `peak_t` is the running maximum up to `t` over the days held (no pre-investment
+  1.0 seed: a fund that only fell since you bought has a MaxDD measured from its first
+  valued day, not from your purchase price). Reported as a negative number
   (`0` = no drawdown); RecFac divides by its magnitude, `|MaxDD|`. On
   `benchmark`, table `MaxDD` is that ETF over the shared window; the Book line
   is the book's full history.
@@ -376,10 +394,13 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
   added up, not just this one). RecFac (return per unit of that depth).
 
 ### Days Since High (SinceHi)
-- **Where:** `performance --metrics` (`SinceHi`); `--metrics --series`
+- **Where:** `performance` table (`SinceHi`, per fund and TOTAL; `--sort sincehi`);
+  `portfolio` per-fund table (`SinceHi`, netted across brokers; `--sort sincehi`);
+  `performance --metrics` (`SinceHi`); `--metrics --series`
 - **Type:** calendar days
 - **Definition:** Days since the *current* running peak (0 = the as-of / last
-  valued day is a new high). Resets at every new high.
+  valued day is a new high). Resets at every new high. Measured on the fund's
+  TWR wealth index (deposits excluded), so `portfolio` and `performance` agree.
 - **Useful for:** "am I in a dip *right now*, and for how long?" — the mood
   number. A long SinceHi with a small MaxDD is a dull sideways stretch; a short
   SinceHi with a huge MaxDD is "the crash was last month." Neither is DDdur.
@@ -405,8 +426,8 @@ From the TWR wealth index, not the euro line (deposits would paper over a hole).
 - **Where:** `performance --metrics` (`Ulcer Index`); `--metrics --series` (`Ulcer`)
 - **Type:** percent
 - **Definition:** Root-mean-square of the daily drawdown from the running peak,
-  over every valued day of the window (peak seeded at the pre-investment 1.0, as
-  for MaxDD). Deeper and longer dips both raise it; days at a new high add zero.
+  over every valued day of the window (peak is the best point while held, as
+  for MaxDD — no pre-investment 1.0 seed). Deeper and longer dips both raise it; days at a new high add zero.
 - **Useful for:** one number for how painful the path was, where MaxDD ignores
   how long it lasted and UnderTot ignores how deep it went. A short sharp dip and
   a long shallow grind can print the same Ulcer.
