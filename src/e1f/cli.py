@@ -11,98 +11,84 @@ forwards the rest (so that, e.g., ``e1f fetch --help`` reaches the fetch parser)
 """
 
 import argparse
+import importlib
 import sys
 from collections.abc import Callable
 
-from e1f import (
-    autocomplete,
-    benchmark,
-    config,
-    correlation,
-    deposits,
-    fetch,
-    funds,
-    glossary,
-    performance,
-    portfolio,
-    rebalance,
-    scenario,
-    transactions,
-    validate,
-)
+Command = Callable[[list[str]], int]
+ParserFactory = Callable[[], argparse.ArgumentParser]
 
+# Each command's module is imported only when that command runs (or, for the
+# parser factories, when completion needs its parser): the heavy dependencies
+# (pandas, matplotlib, yfinance) otherwise cost ~1s of startup on every call.
+STABLE_MODULES = {
+    "autocomplete": "e1f.autocomplete",
+    "config": "e1f.config",
+    "fetch": "e1f.fetch",
+    "funds": "e1f.funds",
+    "validate": "e1f.validate",
+    "transactions": "e1f.transactions",
+    "portfolio": "e1f.portfolio",
+    "performance": "e1f.performance",
+    "benchmark": "e1f.benchmark",
+    "deposits": "e1f.deposits",
+    "correlation": "e1f.correlation",
+    "rebalance": "e1f.rebalance",
+    "scenario": "e1f.scenario",
+    "glossary": "e1f.glossary",
+}
 # Experimental tier (ADR-0024): isolated behind a one-way import boundary — no
 # stable module imports ``e1f.experimental``. The CLI router is the sole exception,
 # so it can register these commands; nothing else may reach experimental code.
-from e1f.experimental import (
-    backtest,
-    concentration,
-    limitbuy,
-    lookthrough,
-    overlap,
-    pick,
-    seasonality,
-)
+EXPERIMENTAL_MODULES = {
+    "concentration": "e1f.experimental.concentration",
+    "overlap": "e1f.experimental.overlap",
+    "backtest": "e1f.experimental.backtest",
+    "lookthrough": "e1f.experimental.lookthrough",
+    "seasonality": "e1f.experimental.seasonality",
+    "limitbuy": "e1f.experimental.limitbuy",
+    "pick": "e1f.experimental.pick",
+}
+MODULES = {**STABLE_MODULES, **EXPERIMENTAL_MODULES}
 
-Command = Callable[[list[str]], int]
+
+def _factory(module: str) -> ParserFactory:
+    def build() -> argparse.ArgumentParser:
+        parser: argparse.ArgumentParser = importlib.import_module(module)._build_parser()
+        return parser
+
+    return build
+
+
+def _command(module: str) -> Command:
+    def run(argv: list[str]) -> int:
+        code: int = importlib.import_module(module).main(argv)
+        return code
+
+    return run
+
 
 # Stable commands and the isolated experimental tier are registered separately so
-# the split has one home (ADR-0024); ``COMMANDS`` merges them for dispatch.
-STABLE_PARSER_FACTORIES = {
-    "autocomplete": autocomplete._build_parser,
-    "config": config._build_parser,
-    "fetch": fetch._build_parser,
-    "funds": funds._build_parser,
-    "validate": validate._build_parser,
-    "transactions": transactions._build_parser,
-    "portfolio": portfolio._build_parser,
-    "performance": performance._build_parser,
-    "benchmark": benchmark._build_parser,
-    "deposits": deposits._build_parser,
-    "correlation": correlation._build_parser,
-    "rebalance": rebalance._build_parser,
-    "scenario": scenario._build_parser,
-    "glossary": glossary._build_parser,
-}
+# the split has one home (ADR-0024); the merged dicts serve dispatch and completion.
+STABLE_PARSER_FACTORIES = {name: _factory(mod) for name, mod in STABLE_MODULES.items()}
 EXPERIMENTAL_PARSER_FACTORIES = {
-    "concentration": concentration._build_parser,
-    "overlap": overlap._build_parser,
-    "backtest": backtest._build_parser,
-    "lookthrough": lookthrough._build_parser,
-    "seasonality": seasonality._build_parser,
-    "limitbuy": limitbuy._build_parser,
-    "pick": pick._build_parser,
+    name: _factory(mod) for name, mod in EXPERIMENTAL_MODULES.items()
 }
 PARSER_FACTORIES = {**STABLE_PARSER_FACTORIES, **EXPERIMENTAL_PARSER_FACTORIES}
 
 
 def _autocomplete_main(argv: list[str]) -> int:
-    return autocomplete.main(argv, PARSER_FACTORIES)
+    autocomplete = importlib.import_module("e1f.autocomplete")
+    code: int = autocomplete.main(argv, PARSER_FACTORIES)
+    return code
+
 
 STABLE_COMMANDS: dict[str, Command] = {
-    "autocomplete": _autocomplete_main,
-    "config": config.main,
-    "fetch": fetch.main,
-    "funds": funds.main,
-    "validate": validate.main,
-    "transactions": transactions.main,
-    "portfolio": portfolio.main,
-    "performance": performance.main,
-    "benchmark": benchmark.main,
-    "deposits": deposits.main,
-    "correlation": correlation.main,
-    "rebalance": rebalance.main,
-    "scenario": scenario.main,
-    "glossary": glossary.main,
+    name: _command(mod) for name, mod in STABLE_MODULES.items()
 }
+STABLE_COMMANDS["autocomplete"] = _autocomplete_main
 EXPERIMENTAL_COMMANDS: dict[str, Command] = {
-    "concentration": concentration.main,
-    "overlap": overlap.main,
-    "backtest": backtest.main,
-    "lookthrough": lookthrough.main,
-    "seasonality": seasonality.main,
-    "limitbuy": limitbuy.main,
-    "pick": pick.main,
+    name: _command(mod) for name, mod in EXPERIMENTAL_MODULES.items()
 }
 COMMANDS: dict[str, Command] = {**STABLE_COMMANDS, **EXPERIMENTAL_COMMANDS}
 

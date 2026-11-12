@@ -1,6 +1,8 @@
 """CLI dispatch: routes the first token, forwards the rest to the subcommand."""
 
 import importlib
+import subprocess
+import sys
 
 import pytest
 
@@ -50,11 +52,36 @@ def test_command_registries_are_complete_disjoint_partitions():
 
 
 @pytest.mark.parametrize("name", cli.COMMANDS)
-def test_real_commands_and_parsers_are_registered(name):
+def test_real_commands_and_parsers_are_registered(name, monkeypatch):
     tier = "" if name in cli.STABLE_COMMANDS else "experimental."
-    module_name = f"e1f.{tier}{name}"
-    module = importlib.import_module(module_name)
-    command = cli._autocomplete_main if name == "autocomplete" else module.main
+    module = importlib.import_module(f"e1f.{tier}{name}")
+    assert cli.MODULES[name] == module.__name__
 
-    assert cli.PARSER_FACTORIES[name] is module._build_parser
-    assert cli.COMMANDS[name] is command
+    # The parser factory resolves to the module's own parser builder.
+    seen = []
+    monkeypatch.setattr(module, "_build_parser", lambda: seen.append(name) or "parser")
+    assert cli.PARSER_FACTORIES[name]() == "parser"
+    assert seen == [name]
+
+    # Dispatch forwards argv to the module's main (autocomplete also gets the factories).
+    calls = []
+    if name == "autocomplete":
+        monkeypatch.setattr(
+            module, "main", lambda argv, factories: calls.append((argv, factories)) or 7
+        )
+        assert cli.COMMANDS[name](["x"]) == 7
+        assert calls == [(["x"], cli.PARSER_FACTORIES)]
+    else:
+        monkeypatch.setattr(module, "main", lambda argv: calls.append(argv) or 7)
+        assert cli.COMMANDS[name](["x"]) == 7
+        assert calls == [["x"]]
+
+
+def test_importing_cli_loads_no_command_module():
+    code = (
+        "import sys, e1f.cli;"
+        "heavy = ('e1f.performance', 'e1f.fetch', 'pandas', 'matplotlib');"
+        "bad = [m for m in heavy if m in sys.modules];"
+        "sys.exit(1 if bad else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
