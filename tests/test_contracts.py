@@ -29,7 +29,6 @@ def _documentation_files() -> list[Path]:
     return [
         ROOT / "README.md",
         ROOT / "CLAUDE.md",
-        ROOT / "metrics-roadmap.md",
         ROOT / "data/glossary.md",
         *(ROOT / "specs").glob("*.md"),
         *(ROOT / "ADR").glob("*.md"),
