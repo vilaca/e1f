@@ -2202,7 +2202,7 @@ def _render_split_pnl_chart(
     ax.plot(xs, net, color="#2c3e50", linewidth=1.8, label="Net P&L")
     ax.axhline(0, color="#555555", linewidth=0.8, linestyle="--")
     ax.set_ylabel(top_label, fontsize=9)
-    ax.legend(fontsize=9, loc="best", framealpha=0.7)
+    ax.legend(fontsize=9, loc="upper left", framealpha=0.7)
 
     peak = float("-inf")
     drawdown = []
@@ -2228,6 +2228,9 @@ def _render_split_pnl_chart(
         axis.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.5)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
+    if len(xs) > 1:  # lines run edge to edge, with a hair of room so line ends aren't clipped
+        pad = 0.01 * (xs[-1] - xs[0])
+        ax_c.set_xlim(xs[0] - pad, xs[-1] + pad)
     _apply_xticks(ax_c, days)
     fig.suptitle(f"Profit vs loss holdings — {days[0]} → {days[-1]}", fontsize=11)
     plt.tight_layout()
