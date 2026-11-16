@@ -673,6 +673,21 @@ minus book gain on the overlapping lots (ADR-0054). Mutually exclusive with
   (holdings skill, not capital skill). P&L% (per-holding version of a similar
   idea).
 
+### Behind€
+- **Where:** `pace`
+- **Type:** money, deposit shortfall
+- **Definition:** Reference − deposited so far this calendar month. The reference
+  is the mean of the previous `--months` full months of BUY / SAVINGS_PLAN cash
+  (months without a buy count as 0), or `--target`. Negative means ahead.
+- **Useful for:** how much of the usual monthly contribution is still to come.
+  The previous-month rows show each month's deviation from that mean, and a
+  year-to-date line totals this calendar year's deposits to the as-of day.
+- **Don't:** read it as a day-by-day pace — it is the whole-month gap, and a plan
+  that buys late in the month shows as behind until it runs. A short history
+  (fewer previous months than asked for) is flagged, and the mean rests on fewer
+  months.
+- **Read with:** Amount€ (the per-buy cash it sums), Invested (all-time total).
+
 ### Amount€
 - **Where:** `deposits` per-deposit table
 - **Type:** money, historical contribution

@@ -32,6 +32,7 @@ STABLE_MODULES = {
     "performance": "e1f.performance",
     "benchmark": "e1f.benchmark",
     "deposits": "e1f.deposits",
+    "pace": "e1f.pace",
     "correlation": "e1f.correlation",
     "rebalance": "e1f.rebalance",
     "scenario": "e1f.scenario",
@@ -110,6 +111,7 @@ Commands:
   performance   Report market value, P&L, and return metrics per holding
   benchmark     Compare the portfolio's returns against benchmark ETFs (beta, R², TE, IR)
   deposits      Organic-vs-reported value, ROIC, per-deposit impact; --against replays buys
+  pace          How far behind (or ahead) this month's deposits are vs previous months
   correlation   Return co-movement redundancy: correlated-pair flags + clustering
   rebalance     Minimum-cash buy-only target rebalance & optional DCA schedule
   scenario      Save/list/show/delete named ISIN:pct baskets (used by rebalance & correlation)

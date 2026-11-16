@@ -106,7 +106,7 @@ name = "Module layers: cli -> command modules -> common"
 type = "layers"
 layers = [
     "e1f.cli",
-    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.funds | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.benchmark | e1f.deposits | e1f.correlation | e1f.rebalance | e1f.scenario | e1f.glossary",
+    "e1f.autocomplete | e1f.config | e1f.fetch | e1f.funds | e1f.validate | e1f.transactions | e1f.portfolio | e1f.performance | e1f.benchmark | e1f.deposits | e1f.pace | e1f.correlation | e1f.rebalance | e1f.scenario | e1f.glossary",
     "e1f.common",
 ]
 
@@ -128,6 +128,7 @@ source_modules = [
     "e1f.performance",
     "e1f.benchmark",
     "e1f.deposits",
+    "e1f.pace",
     "e1f.correlation",
     "e1f.rebalance",
     "e1f.scenario",

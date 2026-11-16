@@ -111,6 +111,7 @@ def test_cli_commands_surface():
         "performance",
         "benchmark",
         "deposits",
+        "pace",
         "correlation",
         "rebalance",
         "scenario",

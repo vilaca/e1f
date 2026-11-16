@@ -68,6 +68,7 @@ walled off so no stable command depends on them:
 - **`e1f performance`** — market value, unrealized P&L, and return metrics (XIRR, TWR, volatility, drawdown, CAGR) in EUR, per holding and portfolio-wide; see `e1f glossary` for metric definitions and `e1f performance --help` for report modes.
 - **`e1f benchmark`** — compare the portfolio's time-weighted EUR returns against benchmark ETFs; see the glossary for the reported metrics and ADR-0033 and ADR-0039 for the benchmark set and overlap policy.
 - **`e1f deposits`** — compare invested capital with reported value and inspect each deposit's impact. `--against` / `--against-portfolio` / `--against-all` replay those buys onto other ISINs (ADR-0054). Buy-and-hold totals reconcile with the `performance` TOTAL (ADR-0033).
+- **`e1f pace`** — how far behind (or ahead) this month's deposits are against the mean of the previous full months (or `--target EUR`); `--months N` sets the lookback (ADR-0063).
 - **`e1f correlation`** — return co-movement redundancy: highly-correlated fund pairs carrying real combined weight, plus a hierarchical clustering of held funds.
 - **`e1f rebalance`** — minimum-cash, buy-only plan to reach user-supplied target weights (never selling), plus an optional N-month DCA schedule.
 - **`e1f scenario`** — save/list/show/delete named ISIN:pct baskets in one YAML file; recall them with `rebalance --scenario` and `correlation --scenario`.

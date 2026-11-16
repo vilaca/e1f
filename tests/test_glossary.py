@@ -356,6 +356,7 @@ def test_special_char_single_queries_resolve():
         "Paid€",
         "P&L€",
         "ΔMktVal€ / ΔCost€ / ΔP&L€",
+        "Behind€",
         "Amount€",
         "Value€ (per deposit)",
         "Gain€ (per deposit)",

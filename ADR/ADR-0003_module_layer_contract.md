@@ -20,7 +20,7 @@ e1f.cli
   ↓
 stable command modules:
   autocomplete, benchmark, config, correlation, deposits, fetch, funds,
-  glossary, performance, portfolio, rebalance, scenario, transactions, validate
+  glossary, pace, performance, portfolio, rebalance, scenario, transactions, validate
   ↓
 e1f.common
 ```
