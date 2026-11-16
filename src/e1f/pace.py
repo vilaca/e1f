@@ -109,30 +109,32 @@ def _fmt(value: float) -> str:
     return f"€{value:,.2f}"
 
 
+def _table_row(label: str, amount: float, reference: float | None, note: str = "") -> str:
+    dev = "—" if reference is None else f"{amount - reference:+,.2f}"
+    return f"  {label:<8} {_fmt(amount):>12} {dev:>12}{note}"
+
+
 def render(result: PaceResult, as_of: str) -> list[str]:
-    lines: list[str] = []
-    if result.previous:
-        mean = _fmt(result.reference or 0.0)
-        lines.append(f"Previous months (deposits, deviation from the {mean} mean):")
-        lines.extend(
-            f"  {key}  {_fmt(amount):>12}  {amount - (result.reference or 0.0):>+12,.2f}"
-            for key, amount in result.previous
-        )
-        lines.append("")
-    if result.reference is None or result.behind is None:
-        lines.append(f"This month ({result.month}, to {as_of}): {_fmt(result.deposited)} deposited")
+    ref = result.reference
+    basis = (
+        "--target"
+        if result.target_given
+        else f"mean of the previous {result.months_used} month(s)"
+    )
+    lines = [f"  {'Month':<8} {'Deposited':>12} {'vs ref':>12}"]
+    lines.extend(_table_row(key, amount, ref) for key, amount in result.previous)
+    lines.append(_table_row(
+        result.month, result.deposited, ref, f"  ← this month, to {as_of}"
+    ))
+    lines.append("")
+    if ref is None or result.behind is None:
+        lines.append(f"Year to date ({as_of[:4]}): {_fmt(result.year_total)} deposited")
         lines.append(
             "Pace unavailable: no deposits before this month to set a reference "
             "(pass --target EUR)."
         )
         return lines
-    basis = (
-        f"--target {_fmt(result.reference)}"
-        if result.target_given
-        else f"mean of the previous {result.months_used} month(s): {_fmt(result.reference)}"
-    )
-    lines.append(f"This month ({result.month}, to {as_of}): {_fmt(result.deposited)} deposited")
-    lines.append(f"Reference: {basis}")
+    lines.append(f"Reference: {basis}: {_fmt(ref)}")
     lines.append(f"Year to date ({as_of[:4]}): {_fmt(result.year_total)} deposited")
     if result.behind > 0.0:
         lines.append(f"Behind by {_fmt(result.behind)}")

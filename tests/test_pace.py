@@ -111,3 +111,20 @@ def test_year_total_and_deviation_rendered():
     out = "\n".join(pace.render(result, "2026-03-10"))
     assert "Year to date (2026): €3,500.00" in out
     assert "-500.00" in out and "+500.00" in out
+
+
+def test_current_month_is_a_row_in_the_same_table():
+    totals = {"2026-09": 2000.0, "2026-10": 1000.0, "2026-11": 400.0}
+    result = pace.compute_pace(totals, "2026-11-16", months=2)
+    lines = pace.render(result, "2026-11-16")
+    rows = [ln.split() for ln in lines[:4]]
+    assert rows[0] == ["Month", "Deposited", "vs", "ref"]
+    assert rows[1][:3] == ["2026-09", "€2,000.00", "+500.00"]
+    assert rows[2][:3] == ["2026-10", "€1,000.00", "-500.00"]
+    assert rows[3][:3] == ["2026-11", "€400.00", "-1,100.00"]  # reference 1500
+    assert "this month, to 2026-11-16" in lines[3]
+
+
+def test_unavailable_still_lists_the_current_month_row():
+    lines = pace.render(pace.compute_pace({"2026-11": 500.0}, "2026-11-16"), "2026-11-16")
+    assert lines[1].split()[:3] == ["2026-11", "€500.00", "—"]
