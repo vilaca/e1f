@@ -1552,7 +1552,7 @@ def test_bought_in_month_splits_by_fund(tmp_path):
 def test_fund_costs_nets_brokers_and_prices_against_cost(tmp_path):
     # A: 10 @ 10 at one broker + 10 @ 14 (+ €2 fee) at another → cost 242, avg 12.10;
     # closes 13 then 15 by the as-of day → Last px 15, value 300 → Chg% = 300/242 − 1.
-    db, _config, _meta = _seed(
+    db, _config, meta = _seed(
         tmp_path,
         transactions=[_buy("t1", "2024-01-01", A, 10.0, 10.0),
                       _buy("t2", "2024-01-05", A, 10.0, 14.0, fee=2.0, broker="xtb")],
@@ -1560,8 +1560,23 @@ def test_fund_costs_nets_brokers_and_prices_against_cost(tmp_path):
         currencies={A: "EUR"},
         names={A: "Fund A"},
     )
-    costs = reb.fund_costs(db, {A, D}, {A: 300.0, D: 0.0}, "2024-01-10")
+    costs = reb.fund_costs(db, {A, D}, {A: 300.0, D: 0.0}, "2024-01-10", meta)
     assert costs[A].avg_paid == pytest.approx(12.10)
     assert costs[A].last_px == pytest.approx(15.0)
     assert costs[A].chg_pct == pytest.approx(100.0 * (300.0 / 242.0 - 1.0))
     assert costs[D] == reb.FundCost(avg_paid=None, last_px=None, chg_pct=None)
+
+
+def test_fund_costs_last_px_is_converted_to_eur(tmp_path):
+    # 10 @ €9 → cost 90, avg 9.00; USD close 120 at EUR/USD 1.2 → Last px €100, value 1000.
+    db, _config, meta = _seed(
+        tmp_path,
+        transactions=[_buy("t1", "2024-01-01", A, 10.0, 9.0)],
+        prices=[(A, "2024-01-10", 120.0)],
+        fx=[("EUR", "USD", "2024-01-10", 1.2)],
+        currencies={A: "USD"},
+        names={A: "Fund A"},
+    )
+    costs = reb.fund_costs(db, {A}, {A: 1000.0}, "2024-01-10", meta)
+    assert costs[A].last_px == pytest.approx(100.0)
+    assert costs[A].avg_paid == pytest.approx(9.0)

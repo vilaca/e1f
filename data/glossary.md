@@ -240,9 +240,11 @@ Snapshots in euros. P&L% is still cost-basis, not TWR. P&Lctr is whose euros; Ct
   nothing was paid.
 - **Useful for:** seeing at a glance which lots are under water and by how much —
   the input to "buy more of what is below its average cost".
-- **Don't:** read it as `Last px ÷ Avg paid − 1`. `Last px` is the native close and
-  `Avg paid` includes fees, so for a USD fund the two differ by the FX move and the
-  fees. Nor is it a return over time — like P&L%, it has no time dimension.
+- **Don't:** read it as `Last px ÷ Avg paid − 1`. In `portfolio`, `Last px` is the
+  native close and `Avg paid` includes fees, so for a USD fund the two differ by
+  the FX move and the fees. In `rebalance`, `Last px` is converted to EUR, so the
+  two differ by the fees only. Nor is it a return over time — like P&L%, it has no
+  time dimension.
 - **Read with:** P&L% (the same ratio per holding in `performance`). Value€ (the
   numerator). Weight (how big the lot is — a deep Chg% on a tiny lot barely matters).
 

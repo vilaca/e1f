@@ -34,12 +34,13 @@ from e1f.common import (
     _FLOAT_CLAMP,
     assemble_rebalance_valuations as _assemble,
     compute_rebalance as compute_rebalance,  # re-exported (ADR-0017)
+    build_series,
     get_scenario,
-    load_price_series,
     load_trades,
     plan_rebalance,
     position_asof,
     position_timeline,
+    unit_value_on,
 )
 
 _NAME_W = 24   # name column width; " (resid)" / " (frozen)" fit within it
@@ -343,7 +344,7 @@ class FundCost:
     """A fund's cost basis against its price at the as-of date, netted across brokers."""
 
     avg_paid: float | None   # cost basis / shares (EUR, fees included); None if not held
-    last_px: float | None    # latest close on or before as-of, native currency
+    last_px: float | None    # latest close on or before as-of, converted to EUR
     chg_pct: float | None    # EUR value / cost basis − 1, in percent; None if unvaluable
 
 
@@ -351,19 +352,23 @@ _NO_COST = FundCost(avg_paid=None, last_px=None, chg_pct=None)
 
 
 def fund_costs(
-    db_path: str, isins: set[str], values: dict[str, float | None], as_of: str
+    db_path: str,
+    isins: set[str],
+    values: dict[str, float | None],
+    as_of: str,
+    currency_meta_path: str,
 ) -> dict[str, FundCost]:
-    """Avg paid, Last px and Chg% per ISIN, the same figures `portfolio` shows per broker."""
+    """Avg paid, Last px (EUR) and Chg% per ISIN; `portfolio` shows its Last px natively."""
     timeline = position_timeline(load_trades(db_path))
     costs: dict[str, FundCost] = {}
     for isin in isins:
         shares, cost = position_asof(timeline.get(isin, []), as_of)
-        _dates, closes = load_price_series(db_path, isin, as_of)
+        series = build_series(db_path, isin, [], as_of, currency_meta_path)
         value = values.get(isin)
         held = shares > 1e-9 and cost > 0.0
         costs[isin] = FundCost(
             avg_paid=cost / shares if held else None,
-            last_px=closes[-1] if closes else None,
+            last_px=unit_value_on(series, as_of, db_path),
             chg_pct=100.0 * (value / cost - 1.0) if held and value is not None else None,
         )
     return costs
@@ -1040,7 +1045,7 @@ def _cmd_rebalance(
             (isin, _etf_name(config_path, isin))
             for isin in {*bought, *start_plan.buys} if isin not in month_names
         )
-        costs = fund_costs(db_path, set(month_names), values, as_of)
+        costs = fund_costs(db_path, set(month_names), values, as_of, currency_meta_path)
         for line in render_month(rows, plan, as_of=as_of, months=months, monthly=monthly,
                                  spent=spent, bought=bought, names=month_names,
                                  start_plan=start_plan, costs=costs, categories=categories):
